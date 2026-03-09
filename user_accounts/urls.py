@@ -1,0 +1,483 @@
+# backend/user_accounts/urls.py
+from __future__ import annotations
+
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+
+from user_accounts.viewsets.team import TeamInvitesViewSet, TeamMembersViewSet
+from user_accounts.viewsets.me import MeViewSet
+
+from user_accounts.viewsets.auth import (
+    LogoutAPIView,
+    MeAPIView,
+    RegisterAPIView,
+    TokenLoginAPIView,
+    UpgradeToSboAPIView,
+    UpgradeToSboPromoAPIView,
+)
+
+from user_accounts.viewsets.platform_billing import (
+    BillingPreviewAPIView,
+    BillingStatusAPIView,
+    CreateOrUpdateMonthlyBillAPIView,
+    CreateSetupCheckoutSessionAPIView,
+    StripeWebhookAPIView,
+    UnlockRequestAPIView,
+    # ✅ NEW (Customer-first)
+    UserBillingStatusAPIView,
+    CreateUserSetupCheckoutSessionAPIView,
+)
+
+# ✅ SUBSCRIPTIONS (modules / multi-line-item)
+from user_accounts.viewsets.subscriptions import (
+    CancelSubscriptionAPIView,
+    CreateSubscriptionCheckoutSessionAPIView,
+    SubscriptionStatusAPIView,
+)
+
+from user_accounts.viewsets.platform_admin import PlatformKPIAPIView
+
+from user_accounts.viewsets.notifications import MeNewsReelViewSet, NotificationViewSet
+from user_accounts.viewsets.platform_broadcasts import (
+    PlatformBroadcastAPIView,
+    PlatformNewsReelAdminViewSet,
+)
+
+from user_accounts.viewsets.platform_console import (
+    PlatformBillingSummaryViewSet,
+    PlatformBusinessesViewSet,
+    PlatformKpiTimeseriesViewSet,
+    PlatformUsersViewSet,
+)
+
+# ✅ NEW: Platform Metrics (God Mode “mission control” summary + alerts)
+from user_accounts.viewsets.platform_metrics import (
+    PlatformMetricsSummaryAPIView,
+    PlatformMetricsAlertsAPIView,
+)
+
+from user_accounts.viewsets.tickets import (
+    InvoiceViewSet,
+    TicketAttachmentViewSet,
+    TicketMessageViewSet,
+    TicketQuoteViewSet,
+    TicketViewSet,
+)
+
+from user_accounts.viewsets.templates import DocumentTemplateViewSet
+from user_accounts.viewsets.categories import ServiceCategoryViewSet
+from user_accounts.viewsets.marketplace import ServiceRequestViewSet
+from user_accounts.viewsets.bootstrap import BootstrapMyBusinessAPIView
+
+from user_accounts.viewsets.business import BusinessMemberViewSet, BusinessViewSet
+from user_accounts.viewsets.me_businesses import MeBusinessesViewSet
+
+from user_accounts.viewsets.promo import PromoCodeViewSet, PromoRedemptionViewSet
+from user_accounts.viewsets.customer_settings import CustomerSettingsViewSet
+from user_accounts.viewsets.favorites import MeFavoriteBusinessViewSet
+
+from user_accounts.viewsets.stripe_connect import (
+    StripeConnectExpressStartAPIView,
+    StripeConnectExpressStatusAPIView,
+)
+
+from user_accounts.viewsets.invoice_checkout import (
+    CreateInvoiceCheckoutSessionAPIView,
+    InvoicePaymentWebhookAPIView,
+)
+
+# ✅ Support Requests (God Mode inbox + USER-facing “message Jake”)
+from user_accounts.viewsets.support_requests import (
+    PlatformSupportRequestViewSet,
+    SupportRequestViewSet,
+)
+
+# ✅ PM MODULE
+from user_accounts.viewsets.pm_properties import PMPropertyViewSet
+from user_accounts.viewsets.pm_units import PMUnitViewSet
+from user_accounts.viewsets.pm_tenants import PMTenantViewSet
+from user_accounts.viewsets.pm_invites import PMInviteViewSet
+from user_accounts.viewsets.pm_documents import PMDocumentViewSet
+
+# ✅ PM Employees
+from user_accounts.viewsets.pm_employees import PMEmployeeViewSet, PMEmployeeInviteViewSet
+
+# ✅ SECTION 8
+from user_accounts.viewsets.pm_section8 import PMSection8CaseViewSet
+
+# ✅ PM OVERVIEW SUMMARY
+from user_accounts.viewsets.pm_overview_summary import PMOverviewSummaryAPIView
+
+# ✅ PM RENT
+from user_accounts.viewsets.pm_rent import (
+    PMBillingSettingsViewSet,
+    PMRentChargeViewSet,
+    PMRentPaymentViewSet,
+)
+
+# ✅ PM RENT WEBHOOK
+from user_accounts.viewsets.pm_rent_webhook import PMRentWebhookAPIView
+
+# ✅ TENANT PORTAL
+from user_accounts.viewsets.tenant_portal import (
+    TenantSummaryViewSet,
+    TenantRentChargeViewSet,
+)
+
+# ✅ TENANT INVITE ACCEPT
+from user_accounts.viewsets.tenant_invites import TenantInviteAcceptAPIView
+
+# ✅ INVESTOR MODULE
+from user_accounts.viewsets.pm_investors import PMInvestorViewSet
+from user_accounts.viewsets.pm_investor_connections import PMInvestorConnectionViewSet
+from user_accounts.viewsets.investor_portal import InvestorDashboardViewSet
+
+# ✅ Inbox
+from user_accounts.viewsets.pm_inbox import PMInboxThreadViewSet
+from user_accounts.viewsets.investor_claim import InvestorClaimAPIView
+from user_accounts.viewsets.investor_inbox import InvestorInboxThreadViewSet
+
+# ✅ PM Work Orders
+from user_accounts.viewsets.pm_workorders import PMWorkOrderViewSet
+
+# ✅ ZIP Metrics
+from user_accounts.viewsets.ticket_metrics import TicketZipMetricsAPIView
+
+# ✅ SALES OS (SAFE IMPORTS)
+from user_accounts.viewsets.sales_os import (
+    SalesPipelineViewSet,
+    SalesPipelineMemberViewSet,
+    ProspectStageViewSet,
+    ProspectViewSet,
+    SalesEventViewSet,
+    SalesKPIViewSet,
+)
+
+# ✅ Cash Fee Invoices
+from user_accounts.viewsets.cash_fee_invoices import CashFeeInvoiceViewSet
+
+# ✅ NEW: Platform locking (manual locks / unlocks via BusinessAccessControl)
+from user_accounts.viewsets.platform_locking import PlatformLockingViewSet
+
+# ✅ NEW: business card code resolver
+from user_accounts.viewsets.me_business_cards import MeBusinessCardResolveAPIView
+
+
+# Optional Sales OS viewsets (only register if present)
+ProspectAttachmentViewSet = None
+ProspectActivityViewSet = None
+try:
+    from user_accounts.viewsets.sales_os import ProspectAttachmentViewSet as _ProspectAttachmentViewSet  # type: ignore
+
+    ProspectAttachmentViewSet = _ProspectAttachmentViewSet
+except Exception:
+    ProspectAttachmentViewSet = None
+
+try:
+    from user_accounts.viewsets.sales_os import ProspectActivityViewSet as _ProspectActivityViewSet  # type: ignore
+
+    ProspectActivityViewSet = _ProspectActivityViewSet
+except Exception:
+    ProspectActivityViewSet = None
+
+
+router = DefaultRouter()
+
+# ----------------------------
+# Core: Team + Me
+# ----------------------------
+router.register(r"team/members", TeamMembersViewSet, basename="team-members")
+router.register(r"team/invites", TeamInvitesViewSet, basename="team-invites")
+router.register(r"me", MeViewSet, basename="me")
+
+router.register(r"customer-settings", CustomerSettingsViewSet, basename="customer-settings")
+router.register(r"me/favorites/businesses", MeFavoriteBusinessViewSet, basename="me-favorite-businesses")
+
+router.register(r"me/notifications", NotificationViewSet, basename="me-notifications")
+router.register(r"me/news-reel", MeNewsReelViewSet, basename="me-news-reel")
+router.register(r"notifications", NotificationViewSet, basename="notifications")
+
+router.register(r"businesses", BusinessViewSet, basename="businesses")
+router.register(r"business-members", BusinessMemberViewSet, basename="business-members")
+router.register(r"me/businesses", MeBusinessesViewSet, basename="me-businesses")
+
+router.register(r"service-categories", ServiceCategoryViewSet, basename="service-categories")
+router.register(r"service-requests", ServiceRequestViewSet, basename="service-requests")
+
+router.register(r"tickets", TicketViewSet, basename="tickets")
+router.register(r"ticket-messages", TicketMessageViewSet, basename="ticket-messages")
+router.register(r"ticket-attachments", TicketAttachmentViewSet, basename="ticket-attachments")
+router.register(r"ticket-quotes", TicketQuoteViewSet, basename="ticket-quotes")
+router.register(r"invoices", InvoiceViewSet, basename="invoices")
+
+router.register(r"doc-templates", DocumentTemplateViewSet, basename="doc-templates")
+
+# ✅ Cash fee invoices (platform → business)
+router.register(r"cash-fee-invoices", CashFeeInvoiceViewSet, basename="cash-fee-invoices")
+
+# ----------------------------
+# ✅ USER SUPPORT (Message Jake / app inbox)
+# ----------------------------
+router.register(r"support/requests", SupportRequestViewSet, basename="support-requests")
+
+# ----------------------------
+# Platform / God Mode
+# ----------------------------
+router.register(r"platform/news-reel", PlatformNewsReelAdminViewSet, basename="platform-news-reel")
+router.register(r"platform/users", PlatformUsersViewSet, basename="platform-users")
+router.register(r"platform/businesses", PlatformBusinessesViewSet, basename="platform-businesses")
+router.register(r"platform/billing/summary", PlatformBillingSummaryViewSet, basename="platform-billing-summary")
+router.register(r"platform/kpis/timeseries", PlatformKpiTimeseriesViewSet, basename="platform-kpis-timeseries")
+router.register(r"platform/support/requests", PlatformSupportRequestViewSet, basename="platform-support-requests")
+
+router.register(r"platform/promos", PromoCodeViewSet, basename="platform-promos")
+router.register(r"platform/promo-redemptions", PromoRedemptionViewSet, basename="platform-promo-redemptions")
+
+# ✅ NEW: Manual lock controls via BusinessAccessControl
+router.register(r"platform/locking", PlatformLockingViewSet, basename="platform-locking")
+
+# ----------------------------
+# Property Management
+# ----------------------------
+router.register(r"pm/properties", PMPropertyViewSet, basename="pm-properties")
+router.register(r"pm/units", PMUnitViewSet, basename="pm-units")
+router.register(r"pm/tenants", PMTenantViewSet, basename="pm-tenants")
+router.register(r"pm/invites", PMInviteViewSet, basename="pm-invites")
+router.register(r"pm/documents", PMDocumentViewSet, basename="pm-documents")
+
+router.register(r"pm/employees", PMEmployeeViewSet, basename="pm-employees")
+router.register(r"pm/workorders", PMWorkOrderViewSet, basename="pm-workorders")
+
+router.register(r"pm/rent/charges", PMRentChargeViewSet, basename="pm-rent-charges")
+router.register(r"pm/rent/payments", PMRentPaymentViewSet, basename="pm-rent-payments")
+router.register(r"pm/settings/billing", PMBillingSettingsViewSet, basename="pm-billing-settings")
+
+router.register(r"pm/section8/cases", PMSection8CaseViewSet, basename="pm-section8-cases")
+
+# Tenant Portal (NO X-Business-Id required)
+router.register(r"tenant/summary", TenantSummaryViewSet, basename="tenant-summary")
+router.register(r"tenant/rent/charges", TenantRentChargeViewSet, basename="tenant-rent-charges")
+
+# Investor (PM-side management)
+router.register(r"pm/investors", PMInvestorViewSet, basename="pm-investors")
+router.register(r"pm/investor-connections", PMInvestorConnectionViewSet, basename="pm-investor-connections")
+
+# Investor dashboard (Investor-side, NO X-Business-Id required)
+router.register(r"investor/dashboard", InvestorDashboardViewSet, basename="investor-dashboard")
+
+# ----------------------------
+# ✅ SALES OS (Canonical Routes)
+# ----------------------------
+router.register(r"sales/pipelines", SalesPipelineViewSet, basename="sales-pipelines")
+router.register(r"sales/members", SalesPipelineMemberViewSet, basename="sales-members")
+router.register(r"sales/stages", ProspectStageViewSet, basename="sales-stages")
+router.register(r"sales/prospects", ProspectViewSet, basename="sales-prospects")
+router.register(r"sales/events", SalesEventViewSet, basename="sales-events")
+
+if ProspectAttachmentViewSet is not None:
+    router.register(r"sales/prospect-attachments", ProspectAttachmentViewSet, basename="sales-prospect-attachments")
+
+if ProspectActivityViewSet is not None:
+    router.register(r"sales/activities", ProspectActivityViewSet, basename="sales-activities")
+
+router.register(r"sales/kpis", SalesKPIViewSet, basename="sales-kpis")
+
+# ----------------------------
+# ✅ SALES OS Compatibility Aliases
+# ----------------------------
+salesos_stage_list = ProspectStageViewSet.as_view({"get": "list", "post": "create"})
+salesos_stage_detail = ProspectStageViewSet.as_view({"get": "retrieve", "patch": "partial_update", "delete": "destroy"})
+
+salesos_prospect_list = ProspectViewSet.as_view({"get": "list", "post": "create"})
+salesos_prospect_detail = ProspectViewSet.as_view({"get": "retrieve", "patch": "partial_update", "delete": "destroy"})
+
+salesos_pipeline_list = SalesPipelineViewSet.as_view({"get": "list", "post": "create"})
+salesos_pipeline_detail = SalesPipelineViewSet.as_view({"get": "retrieve", "patch": "partial_update", "delete": "destroy"})
+
+urlpatterns = [
+    # ✅ NEW: Business Card Code resolver (no router needed)
+    path("me/business-cards/resolve/", MeBusinessCardResolveAPIView.as_view(), name="me-business-cards-resolve"),
+
+    # ----------------------------
+    # ✅ PM Employee Invites (explicit)
+    # ----------------------------
+    path(
+        "pm/employees/invites/",
+        PMEmployeeInviteViewSet.as_view({"get": "list", "post": "create"}),
+        name="pm-employee-invites",
+    ),
+    path(
+        "pm/employees/invites/accept/",
+        PMEmployeeInviteViewSet.as_view({"post": "accept"}),
+        name="pm-employee-invites-accept",
+    ),
+
+    # ----------------------------
+    # ✅ PM Inbox (PM-side)
+    # ----------------------------
+    path(
+        "pm/inbox/threads/",
+        PMInboxThreadViewSet.as_view({"get": "list", "post": "create"}),
+        name="pm-inbox-threads",
+    ),
+    path(
+        "pm/inbox/threads/<int:pk>/",
+        PMInboxThreadViewSet.as_view({"get": "retrieve", "patch": "partial_update"}),
+        name="pm-inbox-thread-detail",
+    ),
+    path(
+        "pm/inbox/threads/<int:pk>/messages/",
+        PMInboxThreadViewSet.as_view({"get": "messages"}),
+        name="pm-inbox-thread-messages",
+    ),
+    path(
+        "pm/inbox/threads/<int:pk>/send/",
+        PMInboxThreadViewSet.as_view({"post": "send"}),
+        name="pm-inbox-thread-send",
+    ),
+    path(
+        "pm/inbox/threads/<int:pk>/close/",
+        PMInboxThreadViewSet.as_view({"post": "close"}),
+        name="pm-inbox-thread-close",
+    ),
+    path(
+        "pm/inbox/threads/<int:pk>/open/",
+        PMInboxThreadViewSet.as_view({"post": "open"}),
+        name="pm-inbox-thread-open",
+    ),
+
+    # ----------------------------
+    # ✅ Investor claim + inbox (Investor-side)
+    # ----------------------------
+    path("investor/claim/", InvestorClaimAPIView.as_view(), name="investor-claim"),
+    path(
+        "investor/inbox/threads/",
+        InvestorInboxThreadViewSet.as_view({"get": "list"}),
+        name="investor-inbox-threads",
+    ),
+    path(
+        "investor/inbox/threads/<int:pk>/messages/",
+        InvestorInboxThreadViewSet.as_view({"get": "messages"}),
+        name="investor-inbox-thread-messages",
+    ),
+    path(
+        "investor/inbox/threads/<int:pk>/send/",
+        InvestorInboxThreadViewSet.as_view({"post": "send"}),
+        name="investor-inbox-thread-send",
+    ),
+
+    # ----------------------------
+    # ✅ ROUTER ENDPOINTS
+    # ----------------------------
+    path("", include(router.urls)),
+
+    # ----------------------------
+    # ✅ Compatibility: /api/v1/me/ (some UI calls this)
+    # ----------------------------
+    path("me/", MeAPIView.as_view(), name="me-alias"),
+
+    # ----------------------------
+    # ✅ Tenant Invite Accept (Tenant-side, no X-Business-Id)
+    # ----------------------------
+    path("tenant/invites/accept/", TenantInviteAcceptAPIView.as_view(), name="tenant-invite-accept"),
+
+    # ----------------------------
+    # ✅ PM Overview Summary
+    # ----------------------------
+    path("pm/overview/summary/", PMOverviewSummaryAPIView.as_view(), name="pm-overview-summary"),
+
+    # ----------------------------
+    # ✅ PM Rent Webhook (Stripe -> Django)
+    # ----------------------------
+    path("pm/rent/webhook/", PMRentWebhookAPIView.as_view(), name="pm-rent-webhook"),
+
+    # ----------------------------
+    # ✅ Tickets ZIP metrics
+    # ----------------------------
+    path("tickets/metrics/zip/", TicketZipMetricsAPIView.as_view(), name="tickets-metrics-zip"),
+
+    # ----------------------------
+    # ✅ Auth
+    # ----------------------------
+    path("auth/register/", RegisterAPIView.as_view(), name="auth-register"),
+    path("auth/login/", TokenLoginAPIView.as_view(), name="auth-login"),
+    path("auth/me/", MeAPIView.as_view(), name="auth-me"),
+    path("auth/logout/", LogoutAPIView.as_view(), name="auth-logout"),
+
+    # Upgrade endpoints
+    path("auth/upgrade-to-sbo/", UpgradeToSboAPIView.as_view(), name="auth-upgrade-to-sbo"),
+    path("auth/upgrade-to-sbo-promo/", UpgradeToSboPromoAPIView.as_view(), name="auth-upgrade-to-sbo-promo"),
+
+    # Bootstrap (dev)
+    path("bootstrap/my-business/", BootstrapMyBusinessAPIView.as_view(), name="bootstrap-my-business"),
+
+    # ----------------------------
+    # ✅ USER billing (Customer-first)
+    # ----------------------------
+    path("billing/user/status/", UserBillingStatusAPIView.as_view(), name="billing-user-status"),
+    path("billing/user/setup-card/", CreateUserSetupCheckoutSessionAPIView.as_view(), name="billing-user-setup-card"),
+    path("billing/user/setup/", CreateUserSetupCheckoutSessionAPIView.as_view(), name="billing-user-setup"),
+
+    # ----------------------------
+    # Billing (SBO/platform billing)
+    # ----------------------------
+    path("billing/status/", BillingStatusAPIView.as_view(), name="billing-status"),
+    path("billing/setup-card/", CreateSetupCheckoutSessionAPIView.as_view(), name="billing-setup-card"),
+    path("billing/setup/", CreateSetupCheckoutSessionAPIView.as_view(), name="billing-setup"),
+
+    path("billing/monthly/preview/", BillingPreviewAPIView.as_view(), name="billing-preview"),
+    path("billing/monthly/create/", CreateOrUpdateMonthlyBillAPIView.as_view(), name="billing-create"),
+    path("billing/unlock-request/", UnlockRequestAPIView.as_view(), name="billing-unlock-request"),
+
+    # Subscription
+    path("billing/subscription/status/", SubscriptionStatusAPIView.as_view(), name="sub-status"),
+    path("billing/subscription/subscribe/", CreateSubscriptionCheckoutSessionAPIView.as_view(), name="sub-subscribe"),
+    path("billing/subscription/cancel/", CancelSubscriptionAPIView.as_view(), name="sub-cancel"),
+
+    # Stripe webhook (platform billing)
+    path("stripe/webhook/", StripeWebhookAPIView.as_view(), name="stripe-webhook"),
+    path("billing/webhook/", StripeWebhookAPIView.as_view(), name="billing-webhook"),
+
+    # Invoice checkout
+    path(
+        "billing/invoices/<int:invoice_id>/checkout/",
+        CreateInvoiceCheckoutSessionAPIView.as_view(),
+        name="invoice-checkout",
+    ),
+    path("billing/invoices/webhook/", InvoicePaymentWebhookAPIView.as_view(), name="invoice-webhook"),
+
+    # ✅ Legacy Platform KPIs (keep working)
+    path("platform/kpis/", PlatformKPIAPIView.as_view(), name="platform-kpis"),
+
+    # ✅ NEW God Mode Metrics API
+    path("platform/metrics/summary/", PlatformMetricsSummaryAPIView.as_view(), name="platform-metrics-summary"),
+    path("platform/metrics/alerts/", PlatformMetricsAlertsAPIView.as_view(), name="platform-metrics-alerts"),
+
+    # Platform Broadcasts
+    path("platform/broadcasts/", PlatformBroadcastAPIView.as_view(), name="platform-broadcasts"),
+
+    # Stripe Connect Express
+    path("connect/express/start/", StripeConnectExpressStartAPIView.as_view(), name="connect-express-start"),
+    path("connect/express/status/", StripeConnectExpressStatusAPIView.as_view(), name="connect-express-status"),
+
+    # ----------------------------
+    # ✅ SALES OS alias endpoints your UI may call
+    # ----------------------------
+    path("salesos/stages/", salesos_stage_list, name="salesos-stages"),
+    path("salesos/stages/<int:pk>/", salesos_stage_detail, name="salesos-stage-detail"),
+    path("sales-os/stages/", salesos_stage_list, name="sales-os-stages"),
+    path("sales-os/stages/<int:pk>/", salesos_stage_detail, name="sales-os-stage-detail"),
+
+    path("salesos/prospects/", salesos_prospect_list, name="salesos-prospects"),
+    path("salesos/prospects/<int:pk>/", salesos_prospect_detail, name="salesos-prospect-detail"),
+    path("sales-os/prospects/", salesos_prospect_list, name="sales-os-prospects"),
+    path("sales-os/prospects/<int:pk>/", salesos_prospect_detail, name="sales-os-prospects-detail"),
+
+    path("sales/leads/", salesos_prospect_list, name="sales-leads-alias"),
+    path("sales/leads/<int:pk>/", salesos_prospect_detail, name="sales-leads-detail-alias"),
+
+    path("salesos/pipelines/", salesos_pipeline_list, name="salesos-pipelines"),
+    path("salesos/pipelines/<int:pk>/", salesos_pipeline_detail, name="salesos-pipeline-detail"),
+    path("sales-os/pipelines/", salesos_pipeline_list, name="sales-os-pipelines"),
+    path("sales-os/pipelines/<int:pk>/", salesos_pipeline_detail, name="sales-os-pipeline-detail"),
+]
