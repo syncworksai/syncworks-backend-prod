@@ -1,4 +1,3 @@
-# backend/user_accounts/viewsets/stripe_connect.py
 from __future__ import annotations
 
 import stripe
@@ -59,17 +58,18 @@ def _require_business_and_access(request):
     if _is_platform_admin(request.user):
         return biz, None, None
 
-    # Owner allowed
     if biz.owner_id == request.user.id:
-        mem = BusinessMember.objects.filter(business_id=biz.id, user=request.user, is_active=True).first()
+        mem = BusinessMember.objects.filter(
+            business_id=biz.id, user=request.user, is_active=True
+        ).first()
         return biz, mem, None
 
-    # Active member required
-    mem = BusinessMember.objects.filter(business_id=biz.id, user=request.user, is_active=True).first()
+    mem = BusinessMember.objects.filter(
+        business_id=biz.id, user=request.user, is_active=True
+    ).first()
     if not mem:
         return None, None, Response({"detail": "You are not a member of this business."}, status=403)
 
-    # Only roles that can manage settings should create onboarding links
     if not getattr(mem, "can_manage_settings", False) and not getattr(mem, "is_owner", False):
         return None, None, Response({"detail": "Not allowed."}, status=403)
 
@@ -126,11 +126,15 @@ class StripeConnectExpressStartAPIView(APIView):
 
     Requires business context: X-Business-Id header (or ?business_id=).
     """
+
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         if not _stripe_key():
-            return Response({"detail": "Stripe is not configured (missing STRIPE_SECRET_KEY)."}, status=500)
+            return Response(
+                {"detail": "Stripe is not configured (missing STRIPE_SECRET_KEY)."},
+                status=500,
+            )
 
         business, membership, err = _require_business_and_access(request)
         if err:
@@ -138,7 +142,6 @@ class StripeConnectExpressStartAPIView(APIView):
 
         stripe.api_key = _stripe_key()
 
-        # 1) Create connect account if needed
         if not business.stripe_connect_account_id:
             acct = stripe.Account.create(
                 type="express",
@@ -162,8 +165,10 @@ class StripeConnectExpressStartAPIView(APIView):
             prof = _get_or_create_profile(business)
 
         base = _platform_base_url()
-        refresh_url = f"{base}/sbo/settings?connect=refresh"
-        return_url = f"{base}/sbo/settings?connect=return"
+
+        # ✅ Route users back into the real SettingsHub route
+        refresh_url = f"{base}/settings?connect=refresh&return=/sbo"
+        return_url = f"{base}/settings?connect=return&return=/sbo"
 
         link = stripe.AccountLink.create(
             account=business.stripe_connect_account_id,
@@ -186,11 +191,15 @@ class StripeConnectExpressStatusAPIView(APIView):
     GET /connect/express/status/
     Returns Stripe Connect status for this Business and updates local snapshot.
     """
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         if not _stripe_key():
-            return Response({"detail": "Stripe is not configured (missing STRIPE_SECRET_KEY)."}, status=500)
+            return Response(
+                {"detail": "Stripe is not configured (missing STRIPE_SECRET_KEY)."},
+                status=500,
+            )
 
         business, membership, err = _require_business_and_access(request)
         if err:
