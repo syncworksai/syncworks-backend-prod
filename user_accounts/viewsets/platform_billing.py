@@ -1,4 +1,3 @@
-# backend/user_accounts/viewsets/platform_billing.py
 from __future__ import annotations
 
 from datetime import timedelta
@@ -27,9 +26,8 @@ from user_accounts.models.business import Business, BusinessMember
 from user_accounts.models.billing import Invoice
 from user_accounts.models.notifications import Notification
 from user_accounts.models.support_requests import SupportRequest
-
-# ✅ NEW: user-first billing profile (Customer-first)
 from user_accounts.models.user_billing import UserBillingProfile
+from user_accounts.models.stripe_connect import StripeConnectProfile
 
 
 def _is_platform_admin(user) -> bool:
@@ -46,16 +44,6 @@ def _money_to_cents(amount) -> int:
 
 
 def _calc_paid_invoice_gross_cents(business_id: int, period_start, period_end) -> int:
-    """
-    Calculate gross PAID invoice total for a business in a given month window.
-
-    Your schema varies across builds:
-    - Sometimes Invoice has a direct FK to Business
-    - Sometimes Invoice -> Ticket, and Ticket has a FK to Business (but the field name may NOT be "business")
-
-    This function introspects model fields and chooses the correct join automatically.
-    If it cannot resolve the relationship, it returns 0 (and avoids 500’ing billing preview).
-    """
     start_dt = timezone.make_aware(timezone.datetime.combine(period_start, timezone.datetime.min.time()))
     end_dt = timezone.make_aware(timezone.datetime.combine(period_end, timezone.datetime.max.time()))
 
@@ -69,7 +57,6 @@ def _calc_paid_invoice_gross_cents(business_id: int, period_start, period_end) -
         agg = qs.aggregate(total=Coalesce(Sum("total"), Decimal("0.00")))
         return _money_to_cents(agg["total"])
 
-    # 1) Try direct Invoice -> Business FK(s)
     try:
         invoice_model = Invoice
         business_fk_fields = [
@@ -88,10 +75,9 @@ def _calc_paid_invoice_gross_cents(business_id: int, period_start, period_end) -
     except Exception:
         pass
 
-    # 2) Try Invoice -> Ticket -> (any FK on Ticket that points to Business)
     try:
         ticket_field = Invoice._meta.get_field("ticket")
-        ticket_model = ticket_field.remote_field.model  # related model class
+        ticket_model = ticket_field.remote_field.model
 
         ticket_business_fk_fields = [
             f.name
@@ -213,10 +199,6 @@ def _notify_user_ids(*, user_ids: list[int], actor, title: str, body: str, data:
 
 
 def _billing_recipient_user_ids(*, business: Business) -> list[int]:
-    """
-    Billing alerts should ALWAYS hit the business owner.
-    Also include OWNER/MANAGER members (and anyone with can_manage_billing if that field exists).
-    """
     ids: set[int] = set()
     try:
         if getattr(business, "owner_id", None):
@@ -253,12 +235,6 @@ def _billing_recipient_user_ids(*, business: Business) -> list[int]:
 
 
 def _create_platform_inbox_item(*, requester, business_id: int, kind: str, title: str, body: str):
-    """
-    Creates a SupportRequest so it shows up in God Mode inbox.
-
-    Anti-spam:
-      - If a SAME kind+title was created for this business within last 24h, skip.
-    """
     try:
         since = timezone.now() - timedelta(hours=24)
         exists = SupportRequest.objects.filter(
@@ -287,12 +263,6 @@ def _create_platform_inbox_item(*, requester, business_id: int, kind: str, title
 
 
 def _maybe_send_card_expiry_alerts(*, business: Business, profile: PlatformBillingProfile, actor_user):
-    """
-    Sends 30/15/7/1/expired alerts as notifications to billing recipients AND
-    creates SupportRequest(BILLING) so it appears in God Mode inbox.
-
-    Uses flags on the profile to avoid repeat spam.
-    """
     days = profile.days_to_card_expiry()
     if days is None:
         return
@@ -380,9 +350,98 @@ def _maybe_send_card_expiry_alerts(*, business: Business, profile: PlatformBilli
         return
 
 
-# ============================================================
-# ✅ USER-FIRST BILLING (Customer-first, no X-Business-Id)
-# ============================================================
+def _dt_from_unix(ts):
+    if not ts:
+        return None
+    try:
+        return timezone.datetime.fromtimestamp(int(ts), tz=timezone.utc)
+    except Exception:
+        return None
+
+
+def _sync_subscription_snapshot(profile: PlatformBillingProfile, sub_obj: dict):
+    if not profile or not sub_obj:
+        return
+
+    profile.stripe_subscription_id = str(sub_obj.get("id") or profile.stripe_subscription_id or "")
+    profile.subscription_status = str(sub_obj.get("status") or profile.subscription_status or "")
+    profile.subscription_cancel_at_period_end = bool(sub_obj.get("cancel_at_period_end"))
+    profile.subscription_current_period_end = _dt_from_unix(sub_obj.get("current_period_end"))
+
+    profile.save(
+        update_fields=[
+            "stripe_subscription_id",
+            "subscription_status",
+            "subscription_cancel_at_period_end",
+            "subscription_current_period_end",
+        ]
+    )
+
+
+def _sync_connect_snapshot_for_business(business: Business, account_obj: dict):
+    if not business or not account_obj:
+        return
+
+    account_id = str(account_obj.get("id") or "").strip()
+    charges_enabled = bool(account_obj.get("charges_enabled"))
+    payouts_enabled = bool(account_obj.get("payouts_enabled"))
+    details_submitted = bool(account_obj.get("details_submitted"))
+
+    requirements = account_obj.get("requirements") or {}
+    currently_due = requirements.get("currently_due") or []
+    past_due = requirements.get("past_due") or []
+    eventually_due = requirements.get("eventually_due") or []
+    disabled_reason = requirements.get("disabled_reason") or ""
+
+    onboarding_completed = bool(
+        charges_enabled
+        and payouts_enabled
+        and details_submitted
+        and not currently_due
+        and not past_due
+    )
+
+    scp, _ = StripeConnectProfile.objects.get_or_create(business=business)
+    scp.charges_enabled = charges_enabled
+    scp.payouts_enabled = payouts_enabled
+    scp.onboarding_completed = onboarding_completed
+    scp.details_submitted = details_submitted
+    scp.requirements_due = {
+        "currently_due": currently_due,
+        "past_due": past_due,
+        "eventually_due": eventually_due,
+        "disabled_reason": disabled_reason,
+    }
+    scp.last_checked_at = timezone.now()
+    scp.save()
+
+    changed_fields: list[str] = []
+    if hasattr(business, "stripe_connect_account_id") and account_id and getattr(business, "stripe_connect_account_id", "") != account_id:
+        business.stripe_connect_account_id = account_id
+        changed_fields.append("stripe_connect_account_id")
+
+    if hasattr(business, "stripe_connected"):
+        next_connected = bool(account_id)
+        if bool(getattr(business, "stripe_connected")) != next_connected:
+            business.stripe_connected = next_connected
+            changed_fields.append("stripe_connected")
+
+    if changed_fields:
+        business.save(update_fields=changed_fields)
+
+
+def _sync_connect_snapshot_by_account_id(account_obj: dict):
+    account_id = str((account_obj or {}).get("id") or "").strip()
+    if not account_id:
+        return
+
+    business = Business.objects.filter(stripe_connect_account_id=account_id).first()
+    if not business:
+        return
+
+    _sync_connect_snapshot_for_business(business, account_obj)
+
+
 class UserBillingStatusAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -450,9 +509,6 @@ class CreateUserSetupCheckoutSessionAPIView(APIView):
             return Response({"detail": "Unexpected error while creating setup session.", "error": str(e)}, status=500)
 
 
-# ============================================================
-# ✅ BUSINESS BILLING (Existing, unchanged behavior)
-# ============================================================
 class BillingStatusAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -468,7 +524,6 @@ class BillingStatusAPIView(APIView):
         profile.ensure_due_dates()
         profile.save(update_fields=["next_due_date", "grace_until"])
 
-        # ✅ Card expiry alerts (only skipped for FULL billing exempt)
         if not billing_exempt:
             _maybe_send_card_expiry_alerts(business=business, profile=profile, actor_user=request.user)
 
@@ -482,16 +537,10 @@ class BillingStatusAPIView(APIView):
                 "billing_exempt": billing_exempt,
                 "billing_exempt_reason": getattr(business, "billing_exempt_reason", "") or "",
                 "billing_exempt_until": getattr(business, "billing_exempt_until", None),
-
                 "subscriptions_exempt": subs_exempt,
                 "subscriptions_exempt_reason": getattr(business, "subscriptions_exempt_reason", "") or "",
                 "subscriptions_exempt_until": getattr(business, "subscriptions_exempt_until", None),
-
-                # IMPORTANT:
-                # - subs_exempt DOES NOT mean "no card needed"
-                # - Only full billing_exempt bypasses card gating
                 "stripe_setup_complete": True if billing_exempt else profile.stripe_setup_complete,
-
                 "is_locked": profile.is_locked,
                 "lock_reason": profile.lock_reason,
                 "next_due_date": profile.next_due_date,
@@ -519,7 +568,6 @@ class CreateSetupCheckoutSessionAPIView(APIView):
         if err:
             return err
 
-        # ✅ Full billing exempt only
         if _is_billing_exempt_now(business):
             return Response({"detail": "Billing exempt — no card required."}, status=200)
 
@@ -596,7 +644,6 @@ class BillingPreviewAPIView(APIView):
             waive_subscriptions=waive_subs,
         )
 
-        # ✅ FULL billing exempt still forces everything to 0
         if billing_exempt:
             amounts.update(
                 {
@@ -631,7 +678,6 @@ class CreateOrUpdateMonthlyBillAPIView(APIView):
         if err:
             return err
 
-        # ✅ FULL billing exempt only
         if _is_billing_exempt_now(business):
             return Response(
                 {
@@ -746,13 +792,6 @@ class CreateOrUpdateMonthlyBillAPIView(APIView):
 
 
 class UnlockRequestAPIView(APIView):
-    """
-    POST /api/v1/billing/unlock-request/
-
-    Creates a SupportRequest(kind=UNLOCK) that appears in God Mode inbox.
-
-    Prevents duplicate OPEN unlock requests for the same business + requester.
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -797,10 +836,6 @@ class UnlockRequestAPIView(APIView):
 
 
 class StripeWebhookAPIView(APIView):
-    """
-    Stripe webhook for PLATFORM BILLING (card setup + subscriptions + monthly platform invoices).
-    MUST be wired in urls.py at:  path("billing/webhook/", StripeWebhookAPIView.as_view())
-    """
     permission_classes = [AllowAny]
     authentication_classes = []
 
@@ -829,15 +864,11 @@ class StripeWebhookAPIView(APIView):
         etype = event.get("type")
         data = event.get("data", {}).get("object", {}) or {}
 
-        # ✅ Checkout completed
         if etype == "checkout.session.completed":
             mode = data.get("mode")
             customer_id = data.get("customer")
             meta = data.get("metadata") or {}
 
-            # ----------------------------
-            # ✅ BUSINESS: card setup completed
-            # ----------------------------
             if mode == "setup":
                 setup_intent = data.get("setup_intent")
 
@@ -860,7 +891,6 @@ class StripeWebhookAPIView(APIView):
                             except Exception:
                                 pass
 
-                            # snapshot card expiry for alerts
                             try:
                                 pm = stripe.PaymentMethod.retrieve(pm_id)
                                 card = (pm.get("card") or {})
@@ -879,7 +909,6 @@ class StripeWebhookAPIView(APIView):
 
                             profile.stripe_setup_complete = True
 
-                            # ✅ restore access after successful setup
                             try:
                                 profile.unlock()
                             except Exception:
@@ -887,9 +916,6 @@ class StripeWebhookAPIView(APIView):
 
                         profile.save()
 
-                # ----------------------------
-                # ✅ USER: card setup completed (Customer-first)
-                # ----------------------------
                 user_id = meta.get("user_id")
                 if user_id and customer_id and setup_intent:
                     try:
@@ -925,12 +951,9 @@ class StripeWebhookAPIView(APIView):
 
                         uprof.save()
 
-            # ----------------------------
-            # ✅ BUSINESS: subscription checkout completed (NEW)
-            # ----------------------------
             if mode == "subscription":
                 business_id = meta.get("business_id")
-                subscription_id = data.get("subscription")  # Stripe checkout session includes subscription id
+                subscription_id = data.get("subscription")
 
                 if business_id and customer_id and subscription_id:
                     profile = PlatformBillingProfile.objects.filter(business_id=int(business_id)).first()
@@ -938,40 +961,38 @@ class StripeWebhookAPIView(APIView):
                         profile.stripe_customer_id = customer_id or profile.stripe_customer_id
                         profile.stripe_subscription_id = str(subscription_id)
 
-                        # Pull latest sub status / dates
                         try:
                             sub = stripe.Subscription.retrieve(subscription_id)
-                            profile.subscription_status = sub.get("status") or profile.subscription_status
-                            profile.subscription_cancel_at_period_end = bool(sub.get("cancel_at_period_end"))
-
-                            cpe = sub.get("current_period_end")
-                            if cpe:
-                                profile.subscription_current_period_end = timezone.datetime.fromtimestamp(
-                                    int(cpe), tz=timezone.utc
-                                )
+                            _sync_subscription_snapshot(profile, sub)
                         except Exception:
-                            pass
+                            profile.save(update_fields=["stripe_customer_id", "stripe_subscription_id"])
 
-                        # Optional: unlock on successful subscription purchase
                         try:
                             profile.unlock()
                         except Exception:
                             pass
 
-                        profile.save(
-                            update_fields=[
-                                "stripe_customer_id",
-                                "stripe_subscription_id",
-                                "subscription_status",
-                                "subscription_cancel_at_period_end",
-                                "subscription_current_period_end",
-                                "is_locked",
-                                "locked_at",
-                                "lock_reason",
-                            ]
-                        )
+                        if profile.pk:
+                            profile.refresh_from_db()
 
-        # ✅ Monthly invoice paid -> unlock
+        if etype in ("customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"):
+            customer_id = str(data.get("customer") or "").strip()
+            if customer_id:
+                profile = PlatformBillingProfile.objects.filter(stripe_customer_id=customer_id).first()
+                if profile:
+                    _sync_subscription_snapshot(profile, data)
+
+                    status = str(data.get("status") or "").lower()
+                    if status in ("active", "trialing"):
+                        try:
+                            profile.unlock()
+                        except Exception:
+                            pass
+                        profile.save(update_fields=["is_locked", "locked_at", "lock_reason"])
+
+        if etype == "account.updated":
+            _sync_connect_snapshot_by_account_id(data)
+
         if etype == "invoice.paid":
             stripe_invoice_id = data.get("id")
             if stripe_invoice_id:
@@ -988,7 +1009,6 @@ class StripeWebhookAPIView(APIView):
                         pass
                     prof.save(update_fields=["is_locked", "locked_at", "lock_reason"])
 
-        # ✅ Monthly invoice failed -> lock + notify
         if etype == "invoice.payment_failed":
             stripe_invoice_id = data.get("id")
             if stripe_invoice_id:
@@ -1004,7 +1024,6 @@ class StripeWebhookAPIView(APIView):
                         pass
                     prof.save(update_fields=["is_locked", "locked_at", "lock_reason"])
 
-                    # notify + platform inbox
                     try:
                         biz = Business.objects.filter(id=prof.business_id).first()
                         if biz:
