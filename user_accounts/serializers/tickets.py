@@ -1,9 +1,6 @@
-# user_accounts/serializers/tickets.py
 from __future__ import annotations
 
 from rest_framework import serializers
-from django.db import models  # ✅ needed for fields - models references
-
 from django.contrib.auth import get_user_model
 
 from user_accounts.models import (
@@ -12,11 +9,11 @@ from user_accounts.models import (
     TicketMessage,
     TicketAttachment,
     TicketQuote,
-    Invoice,
     Business,
     ServiceCategory,
     BusinessMember,
 )
+from user_accounts.models.billing import Invoice
 
 MIN_TICKET_RADIUS_MILES = 1
 MAX_TICKET_RADIUS_MILES = 200
@@ -89,8 +86,6 @@ class ServiceRequestCreateSerializer(serializers.Serializer):
     service_radius_miles = serializers.IntegerField(required=False, allow_null=True)
     is_marketplace = serializers.BooleanField(required=False, default=False)
 
-    # ✅ NEW: Direct business routing (accept either key for compatibility)
-    # Frontend can send business_id (from favorites) or target_business
     business_id = serializers.IntegerField(required=False, allow_null=True)
     target_business = serializers.IntegerField(required=False, allow_null=True)
 
@@ -108,7 +103,6 @@ class ServiceRequestCreateSerializer(serializers.Serializer):
         return v
 
     def validate(self, attrs):
-        # ✅ normalize business target
         tb = attrs.get("target_business", None)
         bid = attrs.get("business_id", None)
         chosen = tb if tb is not None else bid
@@ -119,8 +113,7 @@ class ServiceRequestCreateSerializer(serializers.Serializer):
                 raise serializers.ValidationError({"business_id": "business_id must be an integer."})
             if chosen <= 0:
                 raise serializers.ValidationError({"business_id": "business_id must be > 0."})
-            attrs["target_business"] = chosen  # store normalized key
-            # Direct request forces marketplace off
+            attrs["target_business"] = chosen
             attrs["is_marketplace"] = False
 
         is_marketplace = bool(attrs.get("is_marketplace", False))
@@ -145,7 +138,6 @@ class ServiceRequestSerializer(serializers.ModelSerializer):
     service_radius_miles = serializers.SerializerMethodField()
     is_marketplace = serializers.SerializerMethodField()
 
-    # ✅ NEW: Direct routing output helpers
     target_business_id = serializers.SerializerMethodField()
     target_business_name = serializers.SerializerMethodField()
 
@@ -292,9 +284,6 @@ class ServiceRequestSerializer(serializers.ModelSerializer):
 
 
 class BusinessMemberLiteSerializer(serializers.ModelSerializer):
-    """
-    Lightweight assignee list for UI pickers.
-    """
     user_id = serializers.IntegerField(source="user.id", read_only=True)
     name = serializers.SerializerMethodField()
     role = serializers.SerializerMethodField()
@@ -375,6 +364,56 @@ class InvoiceSerializer(serializers.ModelSerializer):
         ]
 
 
+class AssignedBusinessCardSerializer(serializers.ModelSerializer):
+    logo_url = serializers.SerializerMethodField()
+    display_location = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Business
+        fields = [
+            "id",
+            "name",
+            "logo_url",
+            "headline",
+            "services_text",
+            "business_email",
+            "phone",
+            "address",
+            "city",
+            "state",
+            "display_location",
+            "website",
+            "base_zip",
+            "service_radius_miles",
+            "accepts_marketplace_tickets",
+            "business_card_code",
+            "is_licensed",
+            "is_insured",
+            "is_bonded",
+            "background_checked",
+            "emergency_service",
+        ]
+        read_only_fields = fields
+
+    def get_logo_url(self, obj):
+        try:
+            if not obj.logo:
+                return None
+            request = self.context.get("request")
+            if request is not None:
+                return request.build_absolute_uri(obj.logo.url)
+            return obj.logo.url
+        except Exception:
+            return None
+
+    def get_display_location(self, obj):
+        city = (getattr(obj, "city", "") or "").strip()
+        state = (getattr(obj, "state", "") or "").strip()
+        if city and state:
+            return f"{city}, {state}"
+        return city or state or ""
+
+
 class TicketSerializer(serializers.ModelSerializer):
     customer = serializers.PrimaryKeyRelatedField(read_only=True)
 
@@ -386,8 +425,9 @@ class TicketSerializer(serializers.ModelSerializer):
     latest_quote = serializers.SerializerMethodField()
     latest_invoice = serializers.SerializerMethodField()
 
-    # ✅ UI helpers
     assigned_member_name = serializers.SerializerMethodField()
+    assigned_business_name = serializers.SerializerMethodField()
+    assigned_business_card = serializers.SerializerMethodField()
 
     class Meta:
         model = Ticket
@@ -402,6 +442,8 @@ class TicketSerializer(serializers.ModelSerializer):
             "category_root_key",
             "status",
             "assigned_business",
+            "assigned_business_name",
+            "assigned_business_card",
             "assigned_member",
             "assigned_member_name",
             "is_marketplace",
@@ -447,6 +489,8 @@ class TicketSerializer(serializers.ModelSerializer):
             "latest_quote",
             "latest_invoice",
             "assigned_member_name",
+            "assigned_business_name",
+            "assigned_business_card",
         ]
 
     def get_category_name(self, obj) -> str:
@@ -494,11 +538,29 @@ class TicketSerializer(serializers.ModelSerializer):
         except Exception:
             return ""
 
+    def get_assigned_business_name(self, obj) -> str:
+        try:
+            if obj.assigned_business_id and obj.assigned_business:
+                return obj.assigned_business.name or ""
+        except Exception:
+            pass
+        return ""
+
+    def get_assigned_business_card(self, obj):
+        try:
+            if obj.assigned_business_id and obj.assigned_business:
+                return AssignedBusinessCardSerializer(
+                    obj.assigned_business,
+                    context=self.context,
+                ).data
+        except Exception:
+            pass
+        return None
+
 
 class TicketMessageSerializer(serializers.ModelSerializer):
     sender = serializers.PrimaryKeyRelatedField(read_only=True)
 
-    # ✅ Frontend compatibility (MessagePanel.jsx uses author_name || author || "SYSTEM")
     author = serializers.SerializerMethodField()
     author_name = serializers.SerializerMethodField()
 
@@ -508,7 +570,6 @@ class TicketMessageSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "sender", "author", "author_name", "type", "created_at"]
 
     def get_author(self, obj) -> str:
-        # Keep lightweight string fallback
         try:
             if obj.sender_id:
                 return str(obj.sender_id)
@@ -528,7 +589,6 @@ class TicketMessageSerializer(serializers.ModelSerializer):
 class TicketAttachmentSerializer(serializers.ModelSerializer):
     uploaded_by = serializers.PrimaryKeyRelatedField(read_only=True)
 
-    # ✅ AttachmentPanel.jsx expects file_url + filename + size_bytes
     file_url = serializers.SerializerMethodField()
     size_bytes = serializers.SerializerMethodField()
     filename = serializers.SerializerMethodField()
@@ -569,10 +629,6 @@ class TicketAttachmentSerializer(serializers.ModelSerializer):
 
 
 class EligibleBusinessSerializer(serializers.ModelSerializer):
-    """
-    Returned in marketplace eligibility lists.
-    Keep minimal + UI-ready.
-    """
     name = serializers.CharField(read_only=True)
 
     class Meta:

@@ -1,4 +1,3 @@
-# user_accounts/models/business.py
 from __future__ import annotations
 
 import secrets
@@ -9,8 +8,7 @@ from django.utils import timezone
 
 
 def _generate_business_card_code() -> str:
-    # Short-ish, URL-safe, stable enough for QR; ~16-20 chars plus prefix
-    # Example: "SW-9f2KpL1aQx8zN0Rt"
+    # Example: SW-9f2KpL1aQx8zN0Rt
     return "SW-" + secrets.token_urlsafe(12)
 
 
@@ -26,10 +24,24 @@ class BusinessCategory(models.Model):
 
 
 class Business(models.Model):
+    PRESENCE_ONLINE = "online"
+    PRESENCE_IN_PERSON = "in_person"
+    PRESENCE_ON_SITE = "on_site"
+    PRESENCE_HYBRID = "hybrid"
+
+    BUSINESS_PRESENCE_CHOICES = [
+        (PRESENCE_ONLINE, "Online Business"),
+        (PRESENCE_IN_PERSON, "In Person"),
+        (PRESENCE_ON_SITE, "On-Site Service"),
+        (PRESENCE_HYBRID, "Online + On-Site"),
+    ]
+
     name = models.CharField(max_length=180)
     category = models.ForeignKey(BusinessCategory, null=True, blank=True, on_delete=models.SET_NULL)
     owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL, related_name="owned_businesses", on_delete=models.CASCADE
+        settings.AUTH_USER_MODEL,
+        related_name="owned_businesses",
+        on_delete=models.CASCADE,
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -41,28 +53,39 @@ class Business(models.Model):
     phone = models.CharField(max_length=32, blank=True, default="")
     logo = models.FileField(upload_to="business_logos/", null=True, blank=True)
 
-    # ---- Business Card (Customer Favorites / QR) ----
+    # ---- Business Card / public business profile ----
     headline = models.CharField(max_length=160, blank=True, default="")
     services_text = models.CharField(max_length=320, blank=True, default="")
     address = models.CharField(max_length=220, blank=True, default="")
+    city = models.CharField(max_length=80, blank=True, default="")
+    state = models.CharField(max_length=2, blank=True, default="")
     website = models.CharField(max_length=220, blank=True, default="")
 
-    # ✅ NEW: City/State (you requested)
-    city = models.CharField(max_length=80, blank=True, default="")
-    state = models.CharField(max_length=2, blank=True, default="")  # "AL"
+    business_presence_mode = models.CharField(
+        max_length=20,
+        choices=BUSINESS_PRESENCE_CHOICES,
+        blank=True,
+        default="",
+    )
+    is_online_only = models.BooleanField(default=False)
 
-    # ✅ NEW: expected gross monthly (you requested)
+    facebook_url = models.CharField(max_length=220, blank=True, default="")
+    instagram_url = models.CharField(max_length=220, blank=True, default="")
+    linkedin_url = models.CharField(max_length=220, blank=True, default="")
+    google_business_url = models.CharField(max_length=220, blank=True, default="")
+    youtube_url = models.CharField(max_length=220, blank=True, default="")
+    tiktok_url = models.CharField(max_length=220, blank=True, default="")
+
+    # ---- Business ops / settings ----
     expected_gross_monthly = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
 
-    # ✅ NEW: yes/no business compliance toggles (you requested)
     is_licensed = models.BooleanField(default=False)
     is_insured = models.BooleanField(default=False)
     is_bonded = models.BooleanField(default=False)
     background_checked = models.BooleanField(default=False)
     emergency_service = models.BooleanField(default=False)
 
-    # This is what customers will paste/scan
-    # IMPORTANT: null=True + default=None avoids SQLite unique collisions during migration
+    # ---- Business card code for QR / customer favorites ----
     business_card_code = models.CharField(
         max_length=64,
         unique=True,
@@ -72,20 +95,19 @@ class Business(models.Model):
         help_text="Shareable business card code for customers to add as a favorite (QR/paste).",
     )
 
-    # ---- Marketplace discovery ----
+    # ---- Marketplace routing / discovery ----
     accepts_marketplace_tickets = models.BooleanField(default=True)
     base_zip = models.CharField(max_length=10, blank=True, default="")
     service_radius_miles = models.PositiveIntegerField(default=25)
 
-    # ✅ This is the bridge for marketplace matching (keep canonical)
-    # Businesses should select LEAF service categories (like your Upgrade wizard)
+    # Canonical service tag list for marketplace matching
     services_offered = models.ManyToManyField(
         "user_accounts.ServiceCategory",
         blank=True,
         related_name="businesses",
     )
 
-    # ---- Stripe Connect (IMPORTANT) ----
+    # ---- Stripe Connect ----
     stripe_connect_account_id = models.CharField(
         max_length=255,
         blank=True,
@@ -93,12 +115,12 @@ class Business(models.Model):
         help_text="Stripe Connect Express account ID (acct_...)",
     )
 
-    # ---- Billing exemption (TRUE FULL EXEMPTION - internal/testing only) ----
+    # ---- Billing exemption (full exemption) ----
     billing_exempt = models.BooleanField(default=False)
     billing_exempt_reason = models.CharField(max_length=255, blank=True, default="")
     billing_exempt_until = models.DateField(null=True, blank=True)
 
-    # ---- Promo Waiver: subscriptions only (SWFF26) ----
+    # ---- Promo waiver: subscriptions only ----
     subscriptions_exempt = models.BooleanField(default=False)
     subscriptions_exempt_reason = models.CharField(max_length=255, blank=True, default="")
     subscriptions_exempt_until = models.DateField(null=True, blank=True)
@@ -107,7 +129,6 @@ class Business(models.Model):
         return self.name
 
     def save(self, *args, **kwargs):
-        # Always ensure code exists for QR/business card sharing
         if not self.business_card_code:
             self.ensure_business_card_code(save=False)
         super().save(*args, **kwargs)
@@ -126,15 +147,18 @@ class Business(models.Model):
             return True
         return self.subscriptions_exempt_until >= timezone.localdate()
 
+    def is_remote_business(self) -> bool:
+        return bool(self.is_online_only or self.business_presence_mode == self.PRESENCE_ONLINE)
+
+    def effective_service_radius_miles(self):
+        if self.is_remote_business():
+            return None
+        return self.service_radius_miles
+
     def ensure_business_card_code(self, save: bool = True) -> str:
-        """
-        Ensures this business has a shareable business_card_code.
-        Safe to call many times.
-        """
         if self.business_card_code:
             return self.business_card_code
 
-        # Try a few times to avoid rare collisions
         for _ in range(10):
             code = _generate_business_card_code()
             if not Business.objects.filter(business_card_code=code).exists():
@@ -143,7 +167,6 @@ class Business(models.Model):
                     self.save(update_fields=["business_card_code"])
                 return code
 
-        # Extremely unlikely fallback
         code = "SW-" + secrets.token_urlsafe(24)
         self.business_card_code = code
         if save:
@@ -156,23 +179,15 @@ class BusinessMemberRole(models.TextChoices):
     MANAGER = "MANAGER", "Manager"
     DISPATCH = "DISPATCH", "Dispatch"
     ACCOUNTING = "ACCOUNTING", "Accounting"
-
-    # Preferred technician value going forward
     TECHNICIAN = "TECHNICIAN", "Technician"
-
-    # Legacy technician value (keep to avoid breaking old rows / code)
     TECH = "TECH", "Technician (Legacy)"
 
 
 class BusinessMember(models.Model):
-    # ✅ Back-compat constants referenced throughout the codebase
     ROLE_OWNER = BusinessMemberRole.OWNER
     ROLE_MANAGER = BusinessMemberRole.MANAGER
     ROLE_DISPATCH = BusinessMemberRole.DISPATCH
     ROLE_ACCOUNTING = BusinessMemberRole.ACCOUNTING
-
-    # IMPORTANT: some code references BusinessMember.ROLE_TECH
-    # We map it to the preferred value (TECHNICIAN).
     ROLE_TECH = BusinessMemberRole.TECHNICIAN
 
     ROLE_CHOICES = BusinessMemberRole.choices
@@ -187,7 +202,6 @@ class BusinessMember(models.Model):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=BusinessMemberRole.TECHNICIAN)
     is_active = models.BooleanField(default=True)
 
-    # --- permissions ---
     can_manage_team = models.BooleanField(default=False)
     can_manage_settings = models.BooleanField(default=False)
 
@@ -216,22 +230,13 @@ class BusinessMember(models.Model):
         return str(self.role) == str(BusinessMemberRole.OWNER)
 
     def apply_permissions(self, perms: dict[str, bool]) -> None:
-        """
-        Safe helper used by invite flows:
-        member.apply_permissions({"can_assign_tickets": True, ...})
-        """
         for k, v in (perms or {}).items():
             if hasattr(self, k):
                 setattr(self, k, bool(v))
 
     def apply_role_defaults(self) -> None:
-        """
-        Sets default permissions based on role.
-        Call this when creating or changing a member role.
-        """
         role = str(self.role or "")
 
-        # Owner/Manager: all the things
         if role in {BusinessMemberRole.OWNER, BusinessMemberRole.MANAGER}:
             self.can_manage_team = True
             self.can_manage_settings = True
@@ -246,7 +251,6 @@ class BusinessMember(models.Model):
             self.can_create_tickets = True
             return
 
-        # Dispatch
         if role == BusinessMemberRole.DISPATCH:
             self.can_assign_tickets = True
             self.can_close_tickets = True
@@ -254,14 +258,12 @@ class BusinessMember(models.Model):
             self.can_create_tickets = True
             return
 
-        # Accounting
         if role == BusinessMemberRole.ACCOUNTING:
             self.can_view_financials = True
             self.can_manage_invoices = True
             self.can_create_tickets = True
             return
 
-        # Technician (TECHNICIAN or legacy TECH)
         if role in {BusinessMemberRole.TECHNICIAN, BusinessMemberRole.TECH}:
             self.can_create_tickets = True
             return

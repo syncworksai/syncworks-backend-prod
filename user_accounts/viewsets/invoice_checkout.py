@@ -1,4 +1,3 @@
-# backend/user_accounts/viewsets/invoice_checkout.py
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
@@ -12,7 +11,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from user_accounts.models import Business, Invoice
+from user_accounts.models import Business
+from user_accounts.models.billing import Invoice
 
 
 def _stripe_key() -> str:
@@ -20,9 +20,6 @@ def _stripe_key() -> str:
 
 
 def _invoice_webhook_secret() -> str:
-    # You can set a dedicated secret for invoice payments webhook
-    # STRIPE_INVOICE_WEBHOOK_SECRET=whsec_...
-    # If not set, fallback to STRIPE_WEBHOOK_SECRET.
     return (
         (getattr(settings, "STRIPE_INVOICE_WEBHOOK_SECRET", "") or "").strip()
         or (getattr(settings, "STRIPE_WEBHOOK_SECRET", "") or "").strip()
@@ -55,7 +52,6 @@ def _is_admin(user) -> bool:
 
 
 def _safe_setattr(obj, field: str, value) -> bool:
-    """Set attribute only if it exists. Returns True if set."""
     if hasattr(obj, field):
         setattr(obj, field, value)
         return True
@@ -63,7 +59,6 @@ def _safe_setattr(obj, field: str, value) -> bool:
 
 
 def _safe_update_fields(fields: list[str]) -> list[str]:
-    """De-duplicate update_fields while preserving order."""
     seen = set()
     out: list[str] = []
     for f in fields:
@@ -74,27 +69,19 @@ def _safe_update_fields(fields: list[str]) -> list[str]:
 
 
 def _invoice_amount_cents(inv: Invoice) -> int:
-    """
-    Your current Invoice model (as shown) has amount_cents.
-    Some earlier drafts used inv.total (Decimal dollars). Support both safely.
-    """
+    if hasattr(inv, "total") and getattr(inv, "total", None) is not None:
+        return _money_to_cents(getattr(inv, "total"))
+
     if hasattr(inv, "amount_cents") and inv.amount_cents is not None:
         try:
             return int(inv.amount_cents)
         except Exception:
             pass
 
-    # fallback: inv.total dollars -> cents (if you later add it)
-    if hasattr(inv, "total") and getattr(inv, "total", None) is not None:
-        return _money_to_cents(getattr(inv, "total"))
-
     return 0
 
 
 def _platform_fee_cents(total_cents: int, fee_bps: int) -> int:
-    """
-    fee_bps: basis points (100 = 1%)
-    """
     fee_cents = int(
         (Decimal(total_cents) * Decimal(int(fee_bps)) / Decimal(10000)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     )
@@ -106,14 +93,13 @@ def _platform_fee_cents(total_cents: int, fee_bps: int) -> int:
 
 
 def _destination_account_for_invoice(inv: Invoice) -> Tuple[str | None, Response | None]:
-    """
-    For JOB invoices tied to Stripe Connect payouts:
-    - If you later add inv.ticket -> inv.ticket.assigned_business_id, use that.
-    - For now, we use inv.business.stripe_connect_account_id (works for your current model).
-    """
-    biz = getattr(inv, "business", None)
+    ticket = getattr(inv, "ticket", None)
+    if not ticket:
+        return None, Response({"detail": "Invoice has no linked ticket."}, status=400)
+
+    biz = getattr(ticket, "assigned_business", None)
     if not biz:
-        return None, Response({"detail": "Invoice has no business."}, status=400)
+        return None, Response({"detail": "Invoice ticket has no assigned business."}, status=400)
 
     acct = (getattr(biz, "stripe_connect_account_id", "") or "").strip()
     if not acct:
@@ -126,34 +112,25 @@ def _destination_account_for_invoice(inv: Invoice) -> Tuple[str | None, Response
 
 
 class CreateInvoiceCheckoutSessionAPIView(APIView):
-    """
-    POST /billing/invoices/<invoice_id>/checkout/
-
-    Creates a Stripe Checkout session (mode=payment) that:
-      - charges customer on PLATFORM account
-      - takes 1% platform fee (application_fee_amount)
-      - transfers remainder to connected account (transfer_data[destination])
-
-    NOTE:
-    - Your current Invoice model does NOT have ticket linkage yet.
-    - We base amount on Invoice.amount_cents.
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request, invoice_id: int):
         if not _stripe_key():
             return Response({"detail": "Stripe not configured (missing STRIPE_SECRET_KEY)."}, status=500)
 
-        inv = Invoice.objects.filter(id=invoice_id).select_related("business").first()
+        inv = (
+            Invoice.objects.filter(id=invoice_id)
+            .select_related("ticket", "ticket__customer", "ticket__assigned_business")
+            .first()
+        )
         if not inv:
             return Response({"detail": "Invoice not found."}, status=404)
 
-        # Admin bypass for testing / platform ops
         if not _is_admin(request.user):
-            # If later you want to restrict: customer/owner checks go here.
-            pass
+            ticket = getattr(inv, "ticket", None)
+            if not ticket or int(getattr(ticket, "customer_id", 0) or 0) != int(request.user.id):
+                return Response({"detail": "Not allowed."}, status=403)
 
-        # must be payable
         if str(inv.status) in ("PAID", "VOID"):
             return Response({"detail": f"Invoice cannot be paid in status={inv.status}."}, status=400)
 
@@ -165,7 +142,7 @@ class CreateInvoiceCheckoutSessionAPIView(APIView):
         if total_cents <= 0:
             return Response({"detail": "Invoice amount must be greater than $0.00."}, status=400)
 
-        fee_rate_bps = int(getattr(inv, "platform_fee_rate_bps", 100) or 100)  # default 1%
+        fee_rate_bps = int(getattr(inv, "platform_fee_rate_bps", 100) or 100)
         fee_cents = _platform_fee_cents(total_cents, fee_rate_bps)
 
         stripe.api_key = _stripe_key()
@@ -174,7 +151,6 @@ class CreateInvoiceCheckoutSessionAPIView(APIView):
         success_url = f"{base}/customer/orders?paid=1&invoice_id={inv.id}&session_id={{CHECKOUT_SESSION_ID}}"
         cancel_url = f"{base}/customer/orders?cancelled=1&invoice_id={inv.id}"
 
-        # Helpful labels
         invoice_name = (getattr(inv, "title", "") or "").strip() or f"Service Invoice #{inv.id}"
         invoice_desc = (getattr(inv, "notes", "") or "").strip()
         if invoice_desc:
@@ -182,8 +158,10 @@ class CreateInvoiceCheckoutSessionAPIView(APIView):
         else:
             invoice_desc = None
 
-        # Metadata used by webhook to reconcile
-        business_id = str(getattr(inv, "business_id", "") or "")
+        ticket = getattr(inv, "ticket", None)
+        assigned_business = getattr(ticket, "assigned_business", None) if ticket else None
+        business_id = str(getattr(assigned_business, "id", "") or "")
+        ticket_id = str(getattr(ticket, "id", "") or "")
 
         try:
             session = stripe.checkout.Session.create(
@@ -210,6 +188,7 @@ class CreateInvoiceCheckoutSessionAPIView(APIView):
                     "metadata": {
                         "kind": "invoice_payment",
                         "invoice_id": str(inv.id),
+                        "ticket_id": ticket_id,
                         "business_id": business_id,
                         "platform_fee_bps": str(fee_rate_bps),
                     },
@@ -217,6 +196,7 @@ class CreateInvoiceCheckoutSessionAPIView(APIView):
                 metadata={
                     "kind": "invoice_payment",
                     "invoice_id": str(inv.id),
+                    "ticket_id": ticket_id,
                     "business_id": business_id,
                 },
                 client_reference_id=str(inv.id),
@@ -226,14 +206,11 @@ class CreateInvoiceCheckoutSessionAPIView(APIView):
         except Exception as e:
             return Response({"detail": "Unexpected error creating Checkout Session.", "error": str(e)}, status=500)
 
-        # Store checkout session id/url if the fields exist
         update_fields: list[str] = []
         if _safe_setattr(inv, "stripe_checkout_session_id", session.get("id") or ""):
             update_fields.append("stripe_checkout_session_id")
         if _safe_setattr(inv, "stripe_checkout_url", session.get("url") or ""):
             update_fields.append("stripe_checkout_url")
-
-        # Optional updated_at if present
         if hasattr(inv, "updated_at"):
             inv.updated_at = timezone.now()
             update_fields.append("updated_at")
@@ -245,22 +222,8 @@ class CreateInvoiceCheckoutSessionAPIView(APIView):
 
 
 class InvoicePaymentWebhookAPIView(APIView):
-    """
-    POST /billing/invoices/webhook/
-
-    Stripe webhook for invoice checkout.
-    Marks Invoice.status=PAID when Stripe confirms payment.
-
-    Handles:
-      - checkout.session.completed (recommended)
-      - payment_intent.succeeded (backup)
-
-    IMPORTANT:
-      - set STRIPE_INVOICE_WEBHOOK_SECRET (or STRIPE_WEBHOOK_SECRET fallback)
-      - stripe listen --forward-to http://127.0.0.1:8000/api/v1/billing/invoices/webhook/
-    """
     permission_classes = [AllowAny]
-    authentication_classes: list = []  # Stripe posts without auth
+    authentication_classes: list = []
 
     def post(self, request):
         if not _stripe_key():
@@ -338,22 +301,37 @@ class InvoicePaymentWebhookAPIView(APIView):
 
             update_fields: list[str] = ["status", "paid_at"]
 
-            # Optional amount_paid (if you add it later)
-            if hasattr(inv, "amount_paid"):
-                if amount_total_cents is not None:
-                    inv.amount_paid = _cents_to_money(int(amount_total_cents))
+            if hasattr(inv, "amount_paid") and amount_total_cents is not None:
+                inv.amount_paid = _cents_to_money(int(amount_total_cents))
                 update_fields.append("amount_paid")
 
-            # Optional updated_at
             if hasattr(inv, "updated_at"):
                 inv.updated_at = now
                 update_fields.append("updated_at")
 
-            # Optional stripe_payment_intent_id
             if payment_intent_id and hasattr(inv, "stripe_payment_intent_id"):
                 inv.stripe_payment_intent_id = payment_intent_id
                 update_fields.append("stripe_payment_intent_id")
 
+            try:
+                if hasattr(inv, "mark_platform_fee_collected") and getattr(inv, "payment_method", "") == "CARD":
+                    inv.mark_platform_fee_collected()
+                    if "platform_fee_collected" not in update_fields:
+                        update_fields.append("platform_fee_collected")
+                    if hasattr(inv, "platform_fee_collected_at") and "platform_fee_collected_at" not in update_fields:
+                        update_fields.append("platform_fee_collected_at")
+            except Exception:
+                pass
+
             inv.save(update_fields=_safe_update_fields(update_fields))
+
+            ticket = getattr(inv, "ticket", None)
+            if ticket and hasattr(ticket, "status"):
+                try:
+                    ticket.status = ticket.Status.PAID
+                    ticket.paid_at = now
+                    ticket.save(update_fields=["status", "paid_at"])
+                except Exception:
+                    pass
 
         return Response({"received": True, "ok": True}, status=200)

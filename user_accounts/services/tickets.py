@@ -1,4 +1,3 @@
-# backend/user_accounts/services/tickets.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,15 +18,11 @@ from user_accounts.models import (
     TicketViewEvent,
     FavoriteBusiness,
     TicketQuote,
-    Invoice,
 )
+from user_accounts.models.billing import Invoice
 
 from user_accounts.services.notifications import notify
 
-
-# ----------------------------
-# Geo helpers (ZIP distance)
-# ----------------------------
 
 @dataclass
 class _LatLon:
@@ -84,10 +79,6 @@ def _zip_within_radius(zip_a: str, zip_b: str, radius_miles: int) -> bool:
 
     return _haversine_miles(a, b) <= float(radius_miles)
 
-
-# ----------------------------
-# Ticket routing helpers
-# ----------------------------
 
 def _ticket_zip(ticket: Ticket) -> str:
     z = (getattr(ticket, "service_zip", "") or "").strip()
@@ -159,7 +150,6 @@ def marketplace_tickets_for_business(business: Business):
     qs = qs.filter(category_id__in=offered_ids)
     qs = qs.filter(assigned_business__isnull=True)
 
-    # ✅ FIX: exclude both decline event types (your codebase uses both)
     declined_ids = TicketViewEvent.objects.filter(
         business_id=business.id,
         event_type__in=[
@@ -170,8 +160,8 @@ def marketplace_tickets_for_business(business: Business):
     qs = qs.exclude(id__in=declined_ids)
 
     qs = qs.filter(
-        Q(service_zip__isnull=False) & ~Q(service_zip="") |
-        Q(service_request__zip_code__isnull=False) & ~Q(service_request__zip_code="")
+        Q(service_zip__isnull=False) & ~Q(service_zip="")
+        | Q(service_request__zip_code__isnull=False) & ~Q(service_request__zip_code="")
     )
 
     base_zip = (getattr(business, "base_zip", "") or "").strip()
@@ -224,10 +214,6 @@ def ticket_eligible_businesses(ticket: Ticket):
 
     return exact.distinct().order_by("name")
 
-
-# ----------------------------
-# Create + state transitions
-# ----------------------------
 
 def _coerce_radius(service_radius_miles: Optional[int]) -> int:
     DEFAULT = 25
@@ -370,21 +356,11 @@ def send_ticket_to_marketplace(ticket: Ticket):
     )
 
 
-# ----------------------------
-# ✅ NEW: Provider decline + reroute
-# ----------------------------
-
 @transaction.atomic
 def provider_decline(ticket: Ticket, *, actor_user, business: Business, reason: str = ""):
-    """
-    Provider declines:
-      - If marketplace/unassigned: record decline event only (hide from that business).
-      - If assigned to this business: record decline + reroute to marketplace.
-    """
     if not business or not getattr(business, "is_active", False):
         raise ValueError("Invalid business.")
 
-    # Marketplace/unassigned decline
     if ticket.is_marketplace and ticket.assigned_business_id is None:
         TicketViewEvent.objects.create(
             ticket=ticket,
@@ -403,11 +379,9 @@ def provider_decline(ticket: Ticket, *, actor_user, business: Business, reason: 
         )
         return
 
-    # Assigned decline (must be assigned to THIS business)
     if ticket.assigned_business_id != business.id:
         raise ValueError("Ticket is not assigned to your business.")
 
-    # Record decline event so it won't reappear in marketplace for this business
     TicketViewEvent.objects.create(
         ticket=ticket,
         actor=actor_user,
@@ -431,7 +405,6 @@ def provider_decline(ticket: Ticket, *, actor_user, business: Business, reason: 
         type=TicketMessage.MessageType.SYSTEM,
     )
 
-    # reroute
     send_ticket_to_marketplace(ticket)
 
 
@@ -463,9 +436,6 @@ def provider_accept(ticket: Ticket, actor_user):
 
 @transaction.atomic
 def provider_set_needs_quote(ticket: Ticket, actor_user):
-    """
-    Provider marks the ticket as "Needs Quote" (estimate required before work).
-    """
     if ticket.status in (Ticket.Status.CANCELLED, Ticket.Status.CLOSED, Ticket.Status.PAID):
         raise ValueError("Ticket cannot request a quote in this status.")
 
@@ -694,26 +664,51 @@ def cancel_ticket(ticket: Ticket, actor_user, *, actor_is_customer: bool = False
 
 @transaction.atomic
 def provider_send_invoice(ticket: Ticket, invoice: Invoice, actor_user):
-    if invoice.ticket_id != ticket.id:
+    belongs = False
+
+    try:
+        if getattr(invoice, "ticket_id", None) is not None:
+            belongs = int(invoice.ticket_id) == int(ticket.id)
+    except Exception:
+        pass
+
+    if not belongs:
+        try:
+            if getattr(invoice, "service_request_id", None) is not None and getattr(ticket, "service_request_id", None) is not None:
+                belongs = int(invoice.service_request_id) == int(ticket.service_request_id)
+        except Exception:
+            pass
+
+    if not belongs:
+        try:
+            if getattr(invoice, "business_id", None) is not None and getattr(ticket, "assigned_business_id", None) is not None:
+                belongs = int(invoice.business_id) == int(ticket.assigned_business_id)
+        except Exception:
+            pass
+
+    if not belongs:
         raise ValueError("Invoice does not belong to this ticket.")
 
-    invoice.status = Invoice.Status.SENT
-    invoice.save()
+    invoice.status = "OPEN"
+    save_fields = ["status"]
+    if hasattr(invoice, "updated_at"):
+        save_fields.append("updated_at")
+    invoice.save(update_fields=save_fields)
 
     ticket.status = Ticket.Status.INVOICED
     ticket.invoiced_at = timezone.now()
-    ticket.save()
+    ticket.save(update_fields=["status", "invoiced_at"])
 
     TicketMessage.objects.create(
         ticket=ticket,
         sender=actor_user,
-        body="Invoice sent.",
+        body="Invoice ready for payment.",
         type=TicketMessage.MessageType.SYSTEM,
     )
 
     notify(
         ticket.customer,
-        "Invoice sent",
+        "Invoice ready for payment",
         f"An invoice for ticket #{ticket.id} is ready.",
         {"ticket_id": ticket.id, "invoice_id": invoice.id},
         type=Notification.TYPE_TICKET,

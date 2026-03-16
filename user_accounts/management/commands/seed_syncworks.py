@@ -3,12 +3,23 @@ from rest_framework.authtoken.models import Token
 from django.utils import timezone
 
 from user_accounts.models import (
-    User, Roles,
-    CustomerProfile, SmallBusinessOwnerProfile,
-    Business, BusinessCategory, ServiceCategory,
+    User,
+    CustomerProfile,
+    SmallBusinessOwnerProfile,
+    Business,
+    BusinessCategory,
+    ServiceCategory,
     Connection,
 )
 from user_accounts.services.tickets import create_request_and_ticket
+
+try:
+    from user_accounts.models.user import Roles
+except Exception:
+    class Roles:
+        PLATFORM_OWNER = "PLATFORM_OWNER"
+        CUSTOMER = "CUSTOMER"
+        SBO = "SBO"
 
 
 class Command(BaseCommand):
@@ -16,40 +27,75 @@ class Command(BaseCommand):
 
     def handle(self, *args, **kwargs):
         # Platform owner
-        platform, _ = User.objects.get_or_create(email="platform@syncworks.test", defaults={"role": Roles.PLATFORM_OWNER, "is_staff": True})
+        platform, _ = User.objects.get_or_create(
+            email="platform@syncworks.test",
+            defaults={"role": Roles.PLATFORM_OWNER, "is_staff": True},
+        )
         if not platform.has_usable_password():
             platform.set_password("Password123!")
             platform.save()
 
         # Customer
-        customer, created = User.objects.get_or_create(email="customer@syncworks.test", defaults={"role": Roles.CUSTOMER})
+        customer, created = User.objects.get_or_create(
+            email="customer@syncworks.test",
+            defaults={"role": Roles.CUSTOMER},
+        )
         if created or not customer.has_usable_password():
             customer.set_password("Password123!")
             customer.save()
         CustomerProfile.objects.get_or_create(user=customer)
 
         # SBO
-        sbo, created = User.objects.get_or_create(email="sbo@syncworks.test", defaults={"role": Roles.SBO})
+        sbo, created = User.objects.get_or_create(
+            email="sbo@syncworks.test",
+            defaults={"role": Roles.SBO},
+        )
         if created or not sbo.has_usable_password():
             sbo.set_password("Password123!")
             sbo.save()
-        SmallBusinessOwnerProfile.objects.get_or_create(user=sbo, defaults={"business_name": "SBO Plumbing Co"})
 
-        # Category
-        cat, _ = ServiceCategory.objects.get_or_create(key="plumbing", defaults={"name": "Plumbing", "description": "Leaks and repairs"})
+        SmallBusinessOwnerProfile.objects.get_or_create(
+            user=sbo,
+            defaults={"business_name": "SBO Plumbing Co"},
+        )
+
+        # REAL seeded LEAF category only
+        cat = ServiceCategory.objects.filter(
+            key="home-property-services--plumbing--fix-leaking-pipe"
+        ).first()
+
+        if not cat:
+            self.stdout.write(self.style.ERROR(
+                "Missing seeded plumbing leaf category. Run: python manage.py seed_service_categories --reset"
+            ))
+            return
 
         # Business
-        biz, _ = Business.objects.get_or_create(owner=sbo, name="SBO Plumbing Co", defaults={"is_active": True, "created_at": timezone.now()})
+        biz, _ = Business.objects.get_or_create(
+            owner=sbo,
+            name="SBO Plumbing Co",
+            defaults={"is_active": True, "created_at": timezone.now()},
+        )
+
         BusinessCategory.objects.get_or_create(business=biz, category=cat)
 
         # Connection accepted
-        conn, _ = Connection.objects.get_or_create(customer=customer, sbo_user=sbo, defaults={"status": Connection.Status.ACCEPTED})
+        conn, _ = Connection.objects.get_or_create(
+            customer=customer,
+            sbo_user=sbo,
+            defaults={"status": Connection.Status.ACCEPTED},
+        )
         if conn.status != Connection.Status.ACCEPTED:
             conn.status = Connection.Status.ACCEPTED
             conn.save()
 
         # Ticket
-        sr = create_request_and_ticket(customer=customer, category=cat, title="Seed: Fix faucet", description="Kitchen faucet leaking")
+        sr = create_request_and_ticket(
+            customer=customer,
+            category=cat,
+            title="Seed: Fix faucet",
+            description="Kitchen faucet leaking",
+        )
         ticket = sr.ticket
 
         def tok(u):
@@ -61,4 +107,6 @@ class Command(BaseCommand):
         self.stdout.write(f"Customer:       customer@syncworks.test  PASS=Password123!  TOKEN={tok(customer)}")
         self.stdout.write(f"SBO:            sbo@syncworks.test       PASS=Password123!  TOKEN={tok(sbo)}")
         self.stdout.write(f"Business ID: {biz.id}")
+        self.stdout.write(f"Category ID: {cat.id}")
+        self.stdout.write(f"Category Key: {cat.key}")
         self.stdout.write(f"Ticket ID: {ticket.id}")

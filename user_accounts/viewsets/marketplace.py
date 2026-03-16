@@ -1,15 +1,15 @@
-# user_accounts/viewsets/marketplace.py
-from rest_framework import viewsets
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from __future__ import annotations
 
-from user_accounts.models import ServiceCategory, Business
+from rest_framework import viewsets
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from user_accounts.models import Business, ServiceCategory
 from user_accounts.serializers import (
     ServiceCategorySerializer,
-    ServiceRequestSerializer,
     ServiceRequestCreateSerializer,
+    ServiceRequestSerializer,
 )
-
 from user_accounts.services.tickets import create_request_and_ticket
 
 
@@ -23,9 +23,29 @@ def _coerce_bool(v):
 
 
 class ServiceCategoryViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = ServiceCategory.objects.all().order_by("name")
     serializer_class = ServiceCategorySerializer
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = ServiceCategory.objects.filter(is_active=True).order_by("sort_order", "name")
+
+        parent_id = self.request.query_params.get("parent")
+        search = (self.request.query_params.get("search") or self.request.query_params.get("q") or "").strip()
+        only_leaves = self.request.query_params.get("leaves")
+
+        if parent_id not in (None, "", "null"):
+            try:
+                qs = qs.filter(parent_id=int(parent_id))
+            except Exception:
+                qs = qs.none()
+
+        if search:
+            qs = qs.filter(name__icontains=search)
+
+        if _coerce_bool(only_leaves):
+            qs = [c for c in qs if not c.children.filter(is_active=True).exists()]
+
+        return qs
 
 
 class ServiceRequestViewSet(viewsets.ModelViewSet):
@@ -42,7 +62,7 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
         category_id = ser.validated_data["category"]
         category = ServiceCategory.objects.get(id=category_id)
 
-        # ✅ Normalize location fields: accept either service_* or address/zip_code
+        # Normalize location fields: accept either service_* or address/zip_code
         raw_zip = (
             ser.validated_data.get("service_zip", None)
             or request.data.get("service_zip", None)
@@ -71,10 +91,9 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
             raw_is_marketplace = request.data.get("is_marketplace", False)
         raw_is_marketplace = _coerce_bool(raw_is_marketplace)
 
-        # ✅ Direct routing: accept business_id or target_business from validated data
+        # Direct routing: accept business_id or target_business from validated data
         target_business_id = ser.validated_data.get("target_business", None)
         if target_business_id is None:
-            # fallback for clients that send raw keys
             target_business_id = request.data.get("target_business", None) or request.data.get("business_id", None)
         try:
             target_business_id = int(target_business_id) if target_business_id not in (None, "", "null") else None
@@ -84,10 +103,8 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
         target_business = None
         if target_business_id:
             target_business = Business.objects.filter(id=target_business_id, is_active=True).first()
-            # If business is invalid, treat as normal (do not hard-fail)
-            # But we still want request creation to work.
 
-        # ✅ Create base SR + Ticket
+        # Create base SR + Ticket
         sr = create_request_and_ticket(
             customer=request.user,
             category=category,
@@ -100,21 +117,21 @@ class ServiceRequestViewSet(viewsets.ModelViewSet):
             is_marketplace=bool(raw_is_marketplace),
         )
 
-        # ✅ Apply direct routing AFTER creation (no need to rewrite ticket service)
+        # Apply direct routing after creation
         if target_business:
-            # store on SR
             sr.target_business = target_business
             sr.save(update_fields=["target_business"])
 
-            # assign ticket directly if it exists
             try:
                 t = sr.ticket
                 t.assigned_business = target_business
                 t.is_marketplace = False
-                # don’t stomp status timestamps; just set assigned_at if exists
+
                 if hasattr(t, "assigned_at") and getattr(t, "assigned_at", None) is None:
                     from django.utils import timezone
+
                     t.assigned_at = timezone.now()
+
                 t.save()
             except Exception:
                 pass

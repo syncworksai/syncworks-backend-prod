@@ -1,4 +1,3 @@
-# user_accounts/serializers/business.py
 from __future__ import annotations
 
 from rest_framework import serializers
@@ -14,16 +13,14 @@ class BusinessCategorySerializer(serializers.ModelSerializer):
 
 
 class BusinessSerializer(serializers.ModelSerializer):
-    # ✅ This is the canonical marketplace matching list
-    # Frontend PATCH sends: { services_offered: [leafCategoryIds...] }
     services_offered = serializers.PrimaryKeyRelatedField(
         many=True,
         queryset=ServiceCategory.objects.all(),
         required=False,
     )
 
-    # logo upload is handled via "logo" FileField in multipart
     logo_url = serializers.SerializerMethodField()
+    effective_service_radius_miles = serializers.SerializerMethodField()
 
     class Meta:
         model = Business
@@ -41,22 +38,31 @@ class BusinessSerializer(serializers.ModelSerializer):
             "logo",
             "logo_url",
 
-            # Business Card profile fields
             "headline",
             "services_text",
             "address",
             "city",
             "state",
             "website",
+
+            "business_presence_mode",
+            "is_online_only",
+
+            "facebook_url",
+            "instagram_url",
+            "linkedin_url",
+            "google_business_url",
+            "youtube_url",
+            "tiktok_url",
+
             "business_card_code",
 
-            # Marketplace discovery fields
             "accepts_marketplace_tickets",
             "base_zip",
             "service_radius_miles",
+            "effective_service_radius_miles",
             "services_offered",
 
-            # ✅ NEW: business ops + compliance
             "expected_gross_monthly",
             "is_licensed",
             "is_insured",
@@ -64,7 +70,6 @@ class BusinessSerializer(serializers.ModelSerializer):
             "background_checked",
             "emergency_service",
 
-            # Billing
             "billing_exempt",
             "billing_exempt_reason",
             "billing_exempt_until",
@@ -77,8 +82,8 @@ class BusinessSerializer(serializers.ModelSerializer):
             "billing_exempt_reason",
             "billing_exempt_until",
             "logo_url",
-            # code is system-managed (generated in model.save)
             "business_card_code",
+            "effective_service_radius_miles",
         ]
 
     def get_logo_url(self, obj):
@@ -92,6 +97,13 @@ class BusinessSerializer(serializers.ModelSerializer):
         except Exception:
             return None
 
+    def get_effective_service_radius_miles(self, obj):
+        if getattr(obj, "is_online_only", False):
+            return None
+        if getattr(obj, "business_presence_mode", "") == Business.PRESENCE_ONLINE:
+            return None
+        return obj.service_radius_miles
+
     def validate_state(self, v):
         v = (v or "").strip().upper()
         if v and len(v) != 2:
@@ -103,6 +115,44 @@ class BusinessSerializer(serializers.ModelSerializer):
         digits = "".join([c for c in v if c.isdigit()])
         return digits[:5] if digits else ""
 
+    def _normalize_url(self, v):
+        v = (v or "").strip()
+        if not v:
+            return ""
+        if not (v.startswith("http://") or v.startswith("https://")):
+            v = f"https://{v}"
+        return v
+
+    def validate_website(self, v):
+        return self._normalize_url(v)
+
+    def validate_facebook_url(self, v):
+        return self._normalize_url(v)
+
+    def validate_instagram_url(self, v):
+        return self._normalize_url(v)
+
+    def validate_linkedin_url(self, v):
+        return self._normalize_url(v)
+
+    def validate_google_business_url(self, v):
+        return self._normalize_url(v)
+
+    def validate_youtube_url(self, v):
+        return self._normalize_url(v)
+
+    def validate_tiktok_url(self, v):
+        return self._normalize_url(v)
+
+    def validate_business_presence_mode(self, v):
+        v = (v or "").strip()
+        if not v:
+            return ""
+        allowed = {x[0] for x in Business.BUSINESS_PRESENCE_CHOICES}
+        if v not in allowed:
+            raise serializers.ValidationError("Invalid business presence mode.")
+        return v
+
     def validate_service_radius_miles(self, v):
         if v is None:
             return v
@@ -110,9 +160,28 @@ class BusinessSerializer(serializers.ModelSerializer):
             v = int(v)
         except Exception:
             raise serializers.ValidationError("service_radius_miles must be an integer.")
-        if v < 1 or v > 200:
-            raise serializers.ValidationError("service_radius_miles must be between 1 and 200.")
+        if v < 1 or v > 500:
+            raise serializers.ValidationError("service_radius_miles must be between 1 and 500.")
         return v
+
+    def validate(self, attrs):
+        incoming_mode = attrs.get(
+            "business_presence_mode",
+            getattr(self.instance, "business_presence_mode", "")
+        )
+        incoming_online_only = attrs.get(
+            "is_online_only",
+            getattr(self.instance, "is_online_only", False)
+        )
+
+        if incoming_mode == Business.PRESENCE_ONLINE:
+            attrs["is_online_only"] = True
+        elif "business_presence_mode" in attrs and incoming_online_only is True:
+            # keep explicit online-only only if user intentionally sent it;
+            # otherwise normalize non-online modes back to False
+            attrs["is_online_only"] = bool(attrs.get("is_online_only", False))
+
+        return attrs
 
     def create(self, validated_data):
         services = validated_data.pop("services_offered", [])

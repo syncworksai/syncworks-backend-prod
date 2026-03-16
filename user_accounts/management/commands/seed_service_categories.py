@@ -1,4 +1,3 @@
-# backend/user_accounts/management/commands/seed_service_categories.py
 from __future__ import annotations
 
 from django.core.management.base import BaseCommand
@@ -14,33 +13,238 @@ TAXONOMY = [
         "name": "Home & Property Services",
         "key": "home-property-services",
         "groups": [
-            {"name": "Plumbing", "tasks": ["Fix leaking pipe", "Install faucet"]},
-            {"name": "Electrical", "tasks": ["Replace outlet", "Diagnose breaker trip"]},
-            {"name": "HVAC", "tasks": ["AC not cooling", "Furnace maintenance"]},
-            {"name": "Handyman", "tasks": ["Patch drywall", "Install ceiling fan"]},
-            {"name": "Roofing", "tasks": ["Repair roof leak"]},
-            {"name": "Windows & Doors", "tasks": ["Window replacement"]},
-            {"name": "Insulation", "tasks": ["Attic insulation install", "Insulation inspection"]},
-            {"name": "Foundation Repair", "tasks": ["Foundation inspection", "Crack repair quote"]},
+            {
+                "name": "Plumbing",
+                "tasks": [
+                    "Fix leaking pipe",
+                    "Leaky faucet repair",
+                    "Toilet repair",
+                    "Drain cleaning",
+                    "Water heater repair",
+                    "Garbage disposal repair",
+                    "Sink install",
+                    "Faucet install",
+                ],
+            },
+            {
+                "name": "Electrical",
+                "tasks": [
+                    "Replace outlet",
+                    "Diagnose breaker trip",
+                    "Light fixture install",
+                    "Ceiling fan install",
+                    "Switch replacement",
+                    "Panel inspection",
+                ],
+            },
+            {
+                "name": "HVAC",
+                "tasks": [
+                    "AC not cooling",
+                    "Furnace maintenance",
+                    "Thermostat replacement",
+                    "HVAC inspection",
+                    "No heat diagnosis",
+                    "Airflow issue diagnosis",
+                ],
+            },
+            {
+                "name": "Handyman",
+                "tasks": [
+                    "Patch drywall",
+                    "Install ceiling fan",
+                    "TV mounting",
+                    "Door repair",
+                    "Shelf install",
+                    "Furniture assembly",
+                ],
+            },
+            {
+                "name": "Roofing",
+                "tasks": [
+                    "Repair roof leak",
+                    "Shingle repair",
+                    "Gutter cleaning",
+                    "Gutter repair",
+                    "Roof inspection",
+                ],
+            },
+            {
+                "name": "Windows & Doors",
+                "tasks": [
+                    "Window replacement",
+                    "Door repair",
+                    "Door install",
+                    "Window screen repair",
+                    "Lock replacement",
+                ],
+            },
+            {
+                "name": "Insulation",
+                "tasks": [
+                    "Attic insulation install",
+                    "Insulation inspection",
+                    "Energy efficiency inspection",
+                ],
+            },
+            {
+                "name": "Foundation Repair",
+                "tasks": [
+                    "Foundation inspection",
+                    "Crack repair quote",
+                    "Settlement assessment",
+                ],
+            },
+            {
+                "name": "Appliance Repair",
+                "tasks": [
+                    "Refrigerator repair",
+                    "Washer repair",
+                    "Dryer repair",
+                    "Dishwasher repair",
+                    "Oven repair",
+                    "Microwave repair",
+                ],
+            },
+            {
+                "name": "Pest Control",
+                "tasks": [
+                    "Ant treatment",
+                    "Roach treatment",
+                    "Rodent control",
+                    "Termite inspection",
+                    "Bed bug treatment",
+                ],
+            },
+            {
+                "name": "Pressure Washing",
+                "tasks": [
+                    "Driveway pressure wash",
+                    "House wash",
+                    "Deck pressure wash",
+                    "Fence wash",
+                    "Patio wash",
+                ],
+            },
+            {
+                "name": "Landscaping",
+                "tasks": [
+                    "Lawn mowing",
+                    "Mulch install",
+                    "Hedge trimming",
+                    "Leaf cleanup",
+                    "Yard cleanup",
+                    "Planting / beds refresh",
+                ],
+            },
+            {
+                "name": "Construction & Remodeling",
+                "tasks": [
+                    "Kitchen remodel",
+                    "Bathroom remodel",
+                    "Drywall hanging",
+                    "Interior painting",
+                    "Flooring install",
+                    "Tile install",
+                    "Fence installation",
+                    "Deck construction",
+                ],
+            },
+            {
+                "name": "Security & Low Voltage",
+                "tasks": [
+                    "Camera installation",
+                    "Alarm setup",
+                    "Doorbell camera install",
+                    "Access control install",
+                    "Low voltage wiring",
+                ],
+            },
+            {
+                "name": "Woodworking & Carpentry",
+                "tasks": [
+                    "Custom shelving build",
+                    "Trim install",
+                    "Cabinet repair",
+                    "Furniture build",
+                    "Wood repair",
+                ],
+            },
         ],
     },
     {
         "name": "Automotive & Transportation",
         "key": "automotive-transportation",
         "groups": [
-            {"name": "Auto Repair", "tasks": ["Engine diagnostics", "Brake replacement"]},
-            {"name": "Mobile Mechanic", "tasks": ["Oil change", "Battery jump / replacement"]},
-            {"name": "Detailing", "tasks": ["Full interior detail", "Exterior wash & wax"]},
-            {"name": "Towing", "tasks": ["Tow to shop", "Tow to home"]},
-            {"name": "Roadside Assistance", "tasks": ["Flat tire roadside", "Battery jump"]},
-            {"name": "Fleet Maintenance", "tasks": ["Fleet oil change", "Fleet inspection"]},
+            {
+                "name": "Auto Repair",
+                "tasks": [
+                    "Engine diagnostics",
+                    "Brake replacement",
+                    "Battery replacement",
+                    "Check engine diagnosis",
+                    "Starter diagnosis",
+                    "Alternator diagnosis",
+                ],
+            },
+            {
+                "name": "Mobile Mechanic",
+                "tasks": [
+                    "Oil change",
+                    "Battery jump / replacement",
+                    "On-site inspection",
+                    "Minor repair visit",
+                ],
+            },
+            {
+                "name": "Detailing",
+                "tasks": [
+                    "Full interior detail",
+                    "Exterior wash & wax",
+                    "Interior shampoo",
+                    "Ceramic coating consult",
+                ],
+            },
+            {
+                "name": "Towing",
+                "tasks": [
+                    "Tow to shop",
+                    "Tow to home",
+                ],
+            },
+            {
+                "name": "Roadside Assistance",
+                "tasks": [
+                    "Flat tire roadside",
+                    "Battery jump",
+                    "Lockout service",
+                    "Fuel delivery",
+                ],
+            },
+            {
+                "name": "Tint / Wrap",
+                "tasks": [
+                    "Window tint",
+                    "Vehicle wrap consult",
+                    "Paint protection film consult",
+                ],
+            },
+            {
+                "name": "Audio / Electronics",
+                "tasks": [
+                    "Stereo install",
+                    "Speaker install",
+                    "Dash cam install",
+                    "Subwoofer install",
+                ],
+            },
         ],
     },
     {
         "name": "Ride-Share, Delivery & Mobility",
         "key": "rideshare-delivery-mobility",
         "groups": [
-            {"name": "Ride-Share Driver", "tasks": ["Point-to-point ride", "Airport drop-off"]},
+            {"name": "Ride-Share Driver", "tasks": ["Point-to-point ride", "Airport drop-off", "Scheduled ride"]},
             {"name": "Package Delivery", "tasks": ["Same-day package delivery", "Scheduled pickup"]},
             {"name": "Food Delivery", "tasks": ["Food delivery", "Grocery delivery"]},
             {"name": "Medical Transport", "tasks": ["Non-emergency medical ride", "Clinic pickup/drop-off"]},
@@ -55,6 +259,7 @@ TAXONOMY = [
             {"name": "Nanny Services", "tasks": ["School pickup", "After-school care"]},
             {"name": "Elder Care", "tasks": ["Medication reminders", "Companion care"]},
             {"name": "Personal Assistant", "tasks": ["Errand running", "Appointment scheduling"]},
+            {"name": "Tutoring", "tasks": ["General tutoring", "Homework help"]},
         ],
     },
     {
@@ -70,59 +275,14 @@ TAXONOMY = [
         ],
     },
     {
-        "name": "Lawn, Outdoor & Environmental",
-        "key": "lawn-outdoor-environmental",
-        "groups": [
-            {"name": "Lawn Care", "tasks": ["Lawn mowing", "Edging"]},
-            {"name": "Landscaping", "tasks": ["Mulch install", "Planting / beds refresh"]},
-            {"name": "Tree Services", "tasks": ["Tree trimming", "Tree removal"]},
-            {"name": "Snow Removal", "tasks": ["Snow plowing", "Salt / de-ice"]},
-            {"name": "Pressure Washing", "tasks": ["Driveway pressure wash", "Siding wash"]},
-        ],
-    },
-    {
-        "name": "Construction, Trades & Skilled Labor",
-        "key": "construction-trades-skilled-labor",
-        "groups": [
-            {"name": "General Contracting", "tasks": ["Project estimate", "Site walkthrough"]},
-            {"name": "Renovation", "tasks": ["Kitchen remodel", "Bathroom remodel"]},
-            {"name": "Remodeling", "tasks": ["Deck construction", "Fence installation"]},
-            {"name": "Framing", "tasks": ["Wall framing", "Door framing"]},
-            {"name": "Masonry", "tasks": ["Concrete pouring", "Block repair"]},
-            {"name": "Drywall", "tasks": ["Drywall hanging", "Tape & mud"]},
-        ],
-    },
-    {
-        "name": "Tech, IT & Digital Services",
-        "key": "tech-it-digital-services",
-        "groups": [
-            {"name": "IT Support", "tasks": ["Remote troubleshooting", "Device setup"]},
-            {"name": "Computer Repair", "tasks": ["PC repair", "Virus removal"]},
-            {"name": "Network Setup", "tasks": ["Wi-Fi setup", "Router install"]},
-            {"name": "Smart Home Install", "tasks": ["Smart thermostat install", "Smart lock install"]},
-            {"name": "Security Systems", "tasks": ["Camera installation", "Alarm setup"]},
-            {"name": "POS / Business Tech", "tasks": ["POS system setup", "Printer setup"]},
-        ],
-    },
-    {
-        "name": "Moving, Storage & Logistics",
-        "key": "moving-storage-logistics",
-        "groups": [
-            {"name": "Local Moving", "tasks": ["Apartment move", "Furniture transport"]},
-            {"name": "Long-Distance Moving", "tasks": ["Long-distance move quote", "Load/unload help"]},
-            {"name": "Junk Removal", "tasks": ["Junk haul-away", "Appliance removal"]},
-            {"name": "Storage", "tasks": ["Storage pickup", "Storage drop-off"]},
-        ],
-    },
-    {
         "name": "Events, Creative & Lifestyle",
         "key": "events-creative-lifestyle",
         "groups": [
-            {"name": "Event Planning", "tasks": ["Corporate event setup", "Event teardown"]},
-            {"name": "Photography", "tasks": ["Wedding photography", "Portrait session"]},
+            {"name": "Event Planning", "tasks": ["Corporate event setup", "Event teardown", "Party setup / breakdown"]},
+            {"name": "Photography", "tasks": ["Wedding photography", "Portrait session", "Event photography"]},
             {"name": "Videography", "tasks": ["Event videography", "Promo video shoot"]},
             {"name": "DJ / Audio", "tasks": ["Birthday DJ", "Sound setup"]},
-            {"name": "Decorating", "tasks": ["Balloon/decor setup", "Backdrop install"]},
+            {"name": "Inflatables & Party Rentals", "tasks": ["Bounce house rental", "Water slide rental"]},
         ],
     },
     {
@@ -135,6 +295,9 @@ TAXONOMY = [
             {"name": "Consulting", "tasks": ["Process audit", "Ops improvement plan"]},
             {"name": "Marketing", "tasks": ["Social media posting", "Website updates"]},
             {"name": "CRM / Admin", "tasks": ["CRM cleanup", "Data entry batch"]},
+            {"name": "Notary", "tasks": ["Document notarization", "Mobile notary visit"]},
+            {"name": "Insurance", "tasks": ["Insurance quote request", "Policy review"]},
+            {"name": "Tax Help", "tasks": ["Personal tax help", "Business tax help"]},
         ],
     },
     {
@@ -142,9 +305,30 @@ TAXONOMY = [
         "key": "health-wellness-fitness",
         "groups": [
             {"name": "Personal Training", "tasks": ["In-home training", "Mobility assessment"]},
-            {"name": "Physical Therapy", "tasks": ["Post-injury rehab", "Stretch therapy"]},
             {"name": "Massage Therapy", "tasks": ["Sports massage", "Relaxation massage"]},
             {"name": "Nutrition Coaching", "tasks": ["Meal planning", "Macro coaching"]},
+            {"name": "Martial Arts", "tasks": ["Private martial arts lesson", "Beginner martial arts coaching"]},
+            {"name": "Dance", "tasks": ["Private dance lesson", "Dance coaching"]},
+        ],
+    },
+    {
+        "name": "Pets & Animal Services",
+        "key": "pets-animal-services",
+        "groups": [
+            {"name": "Pet Grooming", "tasks": ["Dog grooming", "Cat grooming", "Bath and nail trim"]},
+            {"name": "Pet Sitting", "tasks": ["Pet sitting visit", "Overnight pet sitting"]},
+            {"name": "Dog Walking", "tasks": ["Dog walk", "Recurring dog walking"]},
+            {"name": "Pet Training", "tasks": ["Obedience training", "Behavior training"]},
+        ],
+    },
+    {
+        "name": "Tech, IT & Digital Services",
+        "key": "tech-it-digital-services",
+        "groups": [
+            {"name": "Computer Repair", "tasks": ["PC repair", "Virus removal", "Laptop troubleshooting"]},
+            {"name": "Network Setup", "tasks": ["Wi-Fi setup", "Router install", "Network troubleshooting"]},
+            {"name": "Phone / Device Help", "tasks": ["Phone setup", "Device transfer", "Tablet troubleshooting"]},
+            {"name": "Web Design & Development", "tasks": ["Website update", "Landing page build", "Website redesign"]},
         ],
     },
 ]
@@ -163,7 +347,6 @@ def _slugify_key(s: str) -> str:
         .replace("'", "")
         .replace(",", "")
     )
-    # keep it slug-like without importing slugify
     parts = []
     for part in s.split():
         cleaned = "".join(ch for ch in part if ch.isalnum() or ch == "-").strip("-")
@@ -222,7 +405,6 @@ class Command(BaseCommand):
 
         self.stdout.write("Seeding ServiceCategory taxonomy...")
 
-        # ROOTS
         root_objs: dict[str, ServiceCategory] = {}
         root_sort = 10
         for root in TAXONOMY:
@@ -235,7 +417,6 @@ class Command(BaseCommand):
             root_objs[root["key"]] = root_obj
             root_sort += 10
 
-        # GROUPS + LEAF TASKS
         for root in TAXONOMY:
             root_parent = root_objs[root["key"]]
             group_sort = 10

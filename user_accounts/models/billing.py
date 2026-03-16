@@ -18,7 +18,21 @@ class Invoice(models.Model):
         OVERDUE = "OVERDUE", "Overdue"
         VOID = "VOID", "Void"
 
-    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name="invoices")
+    business = models.ForeignKey(
+        Business,
+        on_delete=models.CASCADE,
+        related_name="invoices",
+    )
+
+    # ✅ NEW: link job invoices back to a ticket
+    ticket = models.ForeignKey(
+        "user_accounts.Ticket",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="invoices",
+    )
+
     kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.JOB)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
 
@@ -47,10 +61,13 @@ class Invoice(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=["business", "kind", "status"]),
+            models.Index(fields=["ticket", "status"]),
             models.Index(fields=["kind", "period_start", "period_end"]),
             models.Index(fields=["due_date", "status"]),
         ]
         ordering = ["-created_at"]
 
     def __str__(self) -> str:
+        if self.ticket_id:
+            return f"Invoice #{self.id} {self.kind} {self.status} (Ticket #{self.ticket_id})"
         return f"Invoice #{self.id} {self.kind} {self.status}"

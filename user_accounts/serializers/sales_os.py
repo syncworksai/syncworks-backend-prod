@@ -1,4 +1,3 @@
-# backend/user_accounts/serializers/sales_os.py
 from __future__ import annotations
 
 from django.apps import apps
@@ -16,16 +15,17 @@ def _get_model(model_name: str):
         return None
 
 
+# ✅ Canonical model names from your current codebase
 SalesPipeline = _get_model("SalesPipeline")
-SalesPipelineStage = _get_model("SalesPipelineStage")
-SalesProspect = _get_model("SalesProspect")
+ProspectStage = _get_model("ProspectStage")
+Prospect = _get_model("Prospect")
 SalesEvent = _get_model("SalesEvent")
 SalesPipelineMember = _get_model("SalesPipelineMember")
 
 # Optional / may not exist in your schema yet
-SalesProspectAttachment = (
-    _get_model("SalesProspectAttachment")
-    or _get_model("ProspectAttachment")
+ProspectAttachment = (
+    _get_model("ProspectAttachment")
+    or _get_model("SalesProspectAttachment")
     or _get_model("SalesAttachment")
 )
 
@@ -34,30 +34,35 @@ class SalesPipelineSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesPipeline
         fields = "__all__"
+        read_only_fields = [
+            "id",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class ProspectStageSerializer(serializers.ModelSerializer):
     """
-    IMPORTANT FIX:
-    DO NOT do: pipeline_id = serializers.IntegerField(source="pipeline_id")
-    That triggers DRF assertion (redundant source).
-    We accept pipeline_id as write-only and map it to pipeline FK ourselves.
+    Accept pipeline_id from the frontend and map it to pipeline FK.
     """
     pipeline_id = serializers.IntegerField(write_only=True, required=False)
 
     class Meta:
-        model = SalesPipelineStage
+        model = ProspectStage
         fields = "__all__"
 
     def validate(self, attrs):
-        if SalesPipeline is None or SalesPipelineStage is None:
+        if SalesPipeline is None or ProspectStage is None:
             raise serializers.ValidationError("Sales OS models not available.")
+
         pipeline_id = attrs.pop("pipeline_id", None)
         if pipeline_id is not None:
             pipeline = SalesPipeline.objects.filter(id=pipeline_id).first()
             if not pipeline:
                 raise serializers.ValidationError({"pipeline_id": "Invalid pipeline_id."})
             attrs["pipeline"] = pipeline
+
         return attrs
 
 
@@ -65,18 +70,26 @@ class ProspectSerializer(serializers.ModelSerializer):
     pipeline_id = serializers.IntegerField(write_only=True, required=False)
 
     class Meta:
-        model = SalesProspect
+        model = Prospect
         fields = "__all__"
+        read_only_fields = [
+            "id",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ]
 
     def validate(self, attrs):
-        if SalesPipeline is None or SalesProspect is None:
+        if SalesPipeline is None or Prospect is None:
             raise serializers.ValidationError("Sales OS models not available.")
+
         pipeline_id = attrs.pop("pipeline_id", None)
         if pipeline_id is not None:
             pipeline = SalesPipeline.objects.filter(id=pipeline_id).first()
             if not pipeline:
                 raise serializers.ValidationError({"pipeline_id": "Invalid pipeline_id."})
             attrs["pipeline"] = pipeline
+
         return attrs
 
 
@@ -86,16 +99,24 @@ class SalesEventSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesEvent
         fields = "__all__"
+        read_only_fields = [
+            "id",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ]
 
     def validate(self, attrs):
         if SalesPipeline is None or SalesEvent is None:
             raise serializers.ValidationError("Sales OS models not available.")
+
         pipeline_id = attrs.pop("pipeline_id", None)
         if pipeline_id is not None:
             pipeline = SalesPipeline.objects.filter(id=pipeline_id).first()
             if not pipeline:
                 raise serializers.ValidationError({"pipeline_id": "Invalid pipeline_id."})
             attrs["pipeline"] = pipeline
+
         return attrs
 
 
@@ -103,23 +124,31 @@ class SalesPipelineMemberSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesPipelineMember
         fields = "__all__"
+        read_only_fields = [
+            "id",
+            "created_at",
+            "updated_at",
+        ]
 
 
-# ✅ MUST EXIST because your viewsets import it.
-# If the attachment model isn't created yet, we still don't crash server startup.
-if SalesProspectAttachment is not None:
+if ProspectAttachment is not None:
 
     class ProspectAttachmentSerializer(serializers.ModelSerializer):
         class Meta:
-            model = SalesProspectAttachment
+            model = ProspectAttachment
             fields = "__all__"
+            read_only_fields = [
+                "id",
+                "uploaded_by",
+                "created_at",
+                "updated_at",
+            ]
 
 else:
 
     class ProspectAttachmentSerializer(serializers.Serializer):
         """
         Placeholder to prevent ImportError during boot.
-        If/when you add the attachment model, this will auto-upgrade to ModelSerializer above.
         """
 
         def to_representation(self, instance):

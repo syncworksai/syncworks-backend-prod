@@ -1,8 +1,7 @@
-# backend/user_accounts/viewsets/tickets.py
 from __future__ import annotations
 
 from typing import Optional, Any, Dict
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.db.models import Q, Case, When, IntegerField, Value
 from django.template import Context, Engine, TemplateSyntaxError
@@ -19,13 +18,12 @@ from user_accounts.models import (
     TicketMessage,
     TicketAttachment,
     TicketQuote,
-    Invoice,
     TicketViewEvent,
     DocumentTemplate,
     PlatformBillingProfile,
 )
+from user_accounts.models.billing import Invoice
 
-# ✅ Also support God Mode manual locks if they exist for this business
 try:
     from user_accounts.models.business_access import BusinessAccessControl
 except Exception:
@@ -67,9 +65,6 @@ def role_is(u, *names: str) -> bool:
 
 
 def _employee_can_change_status(mem: Optional[BusinessMember]) -> bool:
-    """
-    Uses permission flags.
-    """
     if not mem:
         return False
     return bool(getattr(mem, "can_assign_tickets", False) or getattr(mem, "can_close_tickets", False))
@@ -131,19 +126,129 @@ def _d(v: Any, default: str = "0.00") -> Decimal:
         return Decimal(default)
 
 
+def _money_to_cents(v: Any) -> int:
+    amt = _d(v, "0.00")
+    return int((amt * Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
 def _render_template_body(body: str, ctx: Dict[str, Any]) -> str:
-    """
-    Render DocumentTemplate.body using Django template syntax:
-      "Taxi ride fee: {{amount}}"
-    """
     engine = Engine(debug=False, autoescape=False)
     compiled = engine.from_string(body or "")
     return compiled.render(Context(ctx or {}))
 
 
-# ----------------------------
-# ✅ Billing lock enforcement helpers
-# ----------------------------
+def _invoice_field_names() -> set[str]:
+    out: set[str] = set()
+    try:
+        for f in Invoice._meta.get_fields():
+            name = getattr(f, "name", None)
+            if name:
+                out.add(str(name))
+    except Exception:
+        pass
+    return out
+
+
+def _invoice_has(field_name: str) -> bool:
+    return field_name in _invoice_field_names()
+
+
+def _build_invoice_create_kwargs(
+    *,
+    ticket: Ticket,
+    active_biz: Business,
+    actor_user,
+    title: str,
+    notes: str,
+    subtotal: Decimal,
+    tax: Decimal,
+    total: Decimal,
+    due_date,
+    payment_method: str,
+) -> dict[str, Any]:
+    fields = _invoice_field_names()
+    kwargs: dict[str, Any] = {}
+
+    # Linkage fields
+    if "ticket" in fields:
+        kwargs["ticket"] = ticket
+    elif "ticket_id" in fields:
+        kwargs["ticket_id"] = ticket.id
+
+    if "service_request" in fields and getattr(ticket, "service_request_id", None):
+        kwargs["service_request_id"] = ticket.service_request_id
+    elif "service_request_id" in fields and getattr(ticket, "service_request_id", None):
+        kwargs["service_request_id"] = ticket.service_request_id
+
+    if "business" in fields:
+        kwargs["business"] = active_biz
+    elif "business_id" in fields:
+        kwargs["business_id"] = active_biz.id
+
+    if "created_by" in fields:
+        kwargs["created_by"] = actor_user
+    elif "created_by_id" in fields and getattr(actor_user, "id", None):
+        kwargs["created_by_id"] = actor_user.id
+
+    # Descriptive fields
+    if "title" in fields:
+        kwargs["title"] = title
+    elif "name" in fields:
+        kwargs["name"] = title
+
+    if "notes" in fields:
+        kwargs["notes"] = notes
+    elif "memo" in fields:
+        kwargs["memo"] = notes
+
+    # Money fields
+    if "subtotal" in fields:
+        kwargs["subtotal"] = subtotal
+    if "tax" in fields:
+        kwargs["tax"] = tax
+    if "total" in fields:
+        kwargs["total"] = total
+    if "amount" in fields:
+        kwargs["amount"] = total
+    if "amount_cents" in fields:
+        kwargs["amount_cents"] = _money_to_cents(total)
+
+    # Generic invoice fields from your current billing model
+    if "kind" in fields:
+        kwargs["kind"] = "JOB"
+    if "status" in fields:
+        kwargs["status"] = "OPEN"
+    if "currency" in fields:
+        kwargs["currency"] = "usd"
+    if "due_date" in fields:
+        kwargs["due_date"] = due_date
+    if "payment_method" in fields:
+        kwargs["payment_method"] = payment_method
+
+    return kwargs
+
+
+def _invoice_belongs_to_ticket(inv: Invoice, ticket: Ticket) -> bool:
+    try:
+        if getattr(inv, "ticket_id", None) is not None:
+            return int(inv.ticket_id) == int(ticket.id)
+    except Exception:
+        pass
+
+    try:
+        if getattr(inv, "service_request_id", None) is not None and getattr(ticket, "service_request_id", None) is not None:
+            return int(inv.service_request_id) == int(ticket.service_request_id)
+    except Exception:
+        pass
+
+    try:
+        if getattr(inv, "business_id", None) is not None and getattr(ticket, "assigned_business_id", None) is not None:
+            return int(inv.business_id) == int(ticket.assigned_business_id)
+    except Exception:
+        pass
+
+    return False
+
 
 LOCKED_DETAIL = "Business account is locked. Update billing or submit an unlock request."
 
@@ -157,12 +262,6 @@ def _locked_payload(business_id: int, lock_reason: str = "") -> Dict[str, Any]:
 
 
 def _get_lock_state_for_business(biz: Business) -> tuple[bool, str]:
-    """
-    Returns (is_locked, lock_reason) combining both:
-      - PlatformBillingProfile (cash fees, card setup, billing enforcement)
-      - BusinessAccessControl (God Mode manual locks)
-    """
-    # 1) Platform billing lock
     try:
         p = PlatformBillingProfile.objects.filter(business_id=biz.id).only("is_locked", "lock_reason").first()
         if p and bool(getattr(p, "is_locked", False)):
@@ -170,7 +269,6 @@ def _get_lock_state_for_business(biz: Business) -> tuple[bool, str]:
     except Exception:
         pass
 
-    # 2) God Mode access lock (optional table)
     if BusinessAccessControl is not None:
         try:
             a = (
@@ -190,13 +288,9 @@ def _enforce_business_not_locked(biz: Business) -> Optional[Response]:
     locked, reason = _get_lock_state_for_business(biz)
     if not locked:
         return None
-    # Match your existing error shape. Use 423 Locked (clear semantics).
     return Response(_locked_payload(biz.id, reason), status=423)
 
 
-# ----------------------------
-# Lite serializer for assignee dropdowns
-# ----------------------------
 class BusinessMemberLiteSerializer(serializers.ModelSerializer):
     user_email = serializers.SerializerMethodField()
     user_name = serializers.SerializerMethodField()
@@ -225,19 +319,18 @@ class TicketViewSet(viewsets.ModelViewSet):
     serializer_class = TicketSerializer
     permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        """
-        ✅ Provider rules:
-          - /tickets/ is ASSIGNED ONLY (my business tickets)
-          - /tickets/marketplace/ is MARKETPLACE ONLY (eligible queue)
-        ✅ Customer rules:
-          - /tickets/ is CUSTOMER'S OWN tickets (like previous orders)
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["request"] = self.request
+        return ctx
 
-        NOTE: We do NOT block read-only access here when locked.
-        Lock enforcement is applied on provider actions (accept/start/complete/etc.).
-        """
+    def get_queryset(self):
         u = self.request.user
-        qs = Ticket.objects.all().order_by("-created_at")
+        qs = (
+            Ticket.objects.all()
+            .select_related("category", "assigned_business", "assigned_member", "customer", "service_request")
+            .order_by("-created_at")
+        )
 
         if getattr(u, "is_superuser", False) or getattr(u, "is_platform_admin", False):
             return qs
@@ -245,12 +338,10 @@ class TicketViewSet(viewsets.ModelViewSet):
         if role_is(u, "CUSTOMER"):
             return qs.filter(customer_id=u.id)
 
-        # Provider scope: assigned-only (marketplace handled by /tickets/marketplace/)
         active_biz = _get_active_business_from_request(self.request)
         if active_biz:
             return qs.filter(assigned_business_id=active_biz.id).distinct().order_by("-created_at")
 
-        # Fallbacks if no X-Business-Id (conservative)
         if role_is(u, "SBO"):
             business = Business.objects.filter(owner_id=u.id, is_active=True).order_by("id").first()
             if not business:
@@ -270,19 +361,12 @@ class TicketViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(customer=self.request.user)
 
-    # ----------------------------
-    # Customer/provider utility
-    # ----------------------------
-
     @action(detail=False, methods=["get"], url_path="my")
     def my(self, request):
-        return Response(TicketSerializer(self.get_queryset(), many=True).data)
+        return Response(TicketSerializer(self.get_queryset(), many=True, context=self.get_serializer_context()).data)
 
     @action(detail=False, methods=["get"], url_path="marketplace")
     def marketplace(self, request):
-        """
-        Provider-only: eligible marketplace queue for the ACTIVE business.
-        """
         u = request.user
         if role_is(u, "CUSTOMER"):
             return Response({"detail": "Customers do not have a marketplace queue."}, status=403)
@@ -291,14 +375,12 @@ class TicketViewSet(viewsets.ModelViewSet):
         if not active_biz:
             return Response({"detail": "X-Business-Id required."}, status=400)
 
-        # ✅ Defense-in-depth: even if upstream middleware already blocks,
-        # ensure this endpoint is consistent.
         locked_resp = _enforce_business_not_locked(active_biz)
         if locked_resp:
             return locked_resp
 
         qs = marketplace_tickets_for_business(active_biz)
-        return Response(TicketSerializer(qs, many=True).data)
+        return Response(TicketSerializer(qs, many=True, context=self.get_serializer_context()).data)
 
     @action(detail=True, methods=["get"], url_path="eligible-providers")
     def eligible_providers(self, request, pk=None):
@@ -329,7 +411,8 @@ class TicketViewSet(viewsets.ModelViewSet):
 
         business = Business.objects.get(id=business_id, is_active=True)
         assign_ticket_to_business(ticket, business, assigned_member=None)
-        return Response(TicketSerializer(ticket).data)
+        ticket.refresh_from_db()
+        return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
     @action(detail=True, methods=["post"], url_path="send-to-marketplace")
     def send_to_marketplace(self, request, pk=None):
@@ -346,18 +429,11 @@ class TicketViewSet(viewsets.ModelViewSet):
         except ValueError as e:
             return Response({"detail": str(e)}, status=400)
 
-        return Response(TicketSerializer(ticket).data)
-
-    # ----------------------------
-    # ✅ Assignee helpers (for row quick actions)
-    # ----------------------------
+        ticket.refresh_from_db()
+        return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
     @action(detail=False, methods=["get"], url_path="assignees")
     def assignees(self, request):
-        """
-        GET /tickets/assignees/?role=TECHNICIAN&q=jake
-        Returns active BusinessMembers for the ACTIVE business.
-        """
         u = request.user
         if role_is(u, "CUSTOMER"):
             return Response({"detail": "Customers do not have assignees."}, status=403)
@@ -385,7 +461,6 @@ class TicketViewSet(viewsets.ModelViewSet):
                 | Q(user__last_name__icontains=q)
             )
 
-        # ✅ Role ordering: support both TECH and TECHNICIAN (your DB currently uses TECHNICIAN)
         role_priority = ["OWNER", "MANAGER", "DISPATCH", "TECHNICIAN", "TECH", "ACCOUNTING", "ADMIN"]
         whens = [When(role=r, then=Value(i)) for i, r in enumerate(role_priority)]
         qs = qs.annotate(_role_rank=Case(*whens, default=Value(999), output_field=IntegerField())).order_by(
@@ -396,10 +471,6 @@ class TicketViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="assign_member")
     def assign_member(self, request, pk=None):
-        """
-        POST /tickets/:id/assign_member/  { "business_member_id": 123 }
-        Sets ticket.assigned_member to the member's user.
-        """
         u = request.user
         if role_is(u, "CUSTOMER"):
             return Response({"detail": "Customers cannot assign members."}, status=403)
@@ -414,7 +485,6 @@ class TicketViewSet(viewsets.ModelViewSet):
 
         ticket = self.get_object()
 
-        # Ensure ticket is assigned to this business (marketplace accept flow may do this too)
         if not ticket.assigned_business_id:
             assign_ticket_to_business(ticket, active_biz)
         elif ticket.assigned_business_id != active_biz.id:
@@ -439,14 +509,11 @@ class TicketViewSet(viewsets.ModelViewSet):
         ticket.save(update_fields=["assigned_member_id"])
 
         _system_msg(ticket, u, f"Assigned to {bm.user.email if bm.user_id else 'member'}.")
-        return Response(TicketSerializer(ticket).data)
+        ticket.refresh_from_db()
+        return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
     @action(detail=True, methods=["post"], url_path="unassign_member")
     def unassign_member(self, request, pk=None):
-        """
-        POST /tickets/:id/unassign_member/
-        Clears ticket.assigned_member.
-        """
         u = request.user
         if role_is(u, "CUSTOMER"):
             return Response({"detail": "Customers cannot unassign members."}, status=403)
@@ -471,17 +538,11 @@ class TicketViewSet(viewsets.ModelViewSet):
         ticket.save(update_fields=["assigned_member"])
 
         _system_msg(ticket, u, "Unassigned technician/member.")
-        return Response(TicketSerializer(ticket).data)
+        ticket.refresh_from_db()
+        return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
-    # ----------------------------
-    # ✅ NEW: Create invoice directly from Ticket + optional DocumentTemplate
-    # ----------------------------
     @action(detail=True, methods=["post"], url_path="create_invoice")
     def create_invoice(self, request, pk=None):
-        """
-        POST /tickets/:id/create_invoice/
-        Provider-only. Creates an Invoice attached to this ticket.
-        """
         u = request.user
         if role_is(u, "CUSTOMER"):
             return Response({"detail": "Customers cannot create invoices."}, status=403)
@@ -496,7 +557,6 @@ class TicketViewSet(viewsets.ModelViewSet):
 
         ticket = self.get_object()
 
-        # Must belong to this business (assigned). If unassigned, attach it first.
         if not ticket.assigned_business_id:
             assign_ticket_to_business(ticket, active_biz)
         elif ticket.assigned_business_id != active_biz.id:
@@ -519,11 +579,12 @@ class TicketViewSet(viewsets.ModelViewSet):
         total = _d(payload.get("total", subtotal + tax))
 
         due_date = payload.get("due_date") or None
-        payment_method = (payload.get("payment_method") or Invoice.PaymentMethod.CARD).strip().upper()
-        if payment_method not in {c[0] for c in Invoice.PaymentMethod.choices}:
+
+        allowed_payment_methods = {"CARD", "CASH", "OTHER"}
+        payment_method = str(payload.get("payment_method") or "CARD").strip().upper()
+        if payment_method not in allowed_payment_methods:
             return Response({"detail": "Invalid payment_method."}, status=400)
 
-        # If template is provided, render its body into notes
         if template_id:
             tpl = DocumentTemplate.objects.filter(id=template_id, business_id=active_biz.id, is_active=True).first()
             if not tpl:
@@ -533,7 +594,6 @@ class TicketViewSet(viewsets.ModelViewSet):
             if isinstance(context, dict):
                 ctx.update(context)
 
-            # helpful defaults
             ctx.setdefault("ticket_id", ticket.id)
             ctx.setdefault("subtotal", str(subtotal))
             ctx.setdefault("tax", str(tax))
@@ -554,24 +614,23 @@ class TicketViewSet(viewsets.ModelViewSet):
         if not title:
             title = "Invoice"
 
-        inv = Invoice.objects.create(
+        create_kwargs = _build_invoice_create_kwargs(
             ticket=ticket,
+            active_biz=active_biz,
+            actor_user=u,
             title=title,
             notes=notes,
             subtotal=subtotal,
             tax=tax,
             total=total,
-            status=Invoice.Status.DRAFT,  # keep draft until send_invoice action
             due_date=due_date,
             payment_method=payment_method,
         )
 
+        inv = Invoice.objects.create(**create_kwargs)
+
         _system_msg(ticket, u, f"Invoice created (#{inv.id}).")
         return Response(InvoiceSerializer(inv).data, status=status.HTTP_201_CREATED)
-
-    # ----------------------------
-    # Marketplace UX events (provider only)
-    # ----------------------------
 
     @action(detail=True, methods=["post"], url_path="mark_viewed")
     def mark_viewed(self, request, pk=None):
@@ -589,7 +648,6 @@ class TicketViewSet(viewsets.ModelViewSet):
         if locked_resp:
             return locked_resp
 
-        # Only meaningful for marketplace tickets
         if ticket.is_marketplace and not is_ticket_eligible_for_business(ticket, active_biz):
             return Response({"detail": "Ticket not eligible for your business region/services."}, status=403)
 
@@ -615,13 +673,6 @@ class TicketViewSet(viewsets.ModelViewSet):
         if not active_biz:
             return Response({"detail": "X-Business-Id required."}, status=400)
 
-        # ✅ Policy choice:
-        # We allow decline even when locked (it reduces spam / clears queue).
-        # If you want it blocked too, uncomment the next 3 lines.
-        # locked_resp = _enforce_business_not_locked(active_biz)
-        # if locked_resp:
-        #     return locked_resp
-
         if not ticket.is_marketplace:
             return Response({"detail": "Ticket is not a marketplace ticket."}, status=400)
 
@@ -640,10 +691,6 @@ class TicketViewSet(viewsets.ModelViewSet):
 
         _system_msg(ticket, u, f"{active_biz.name} declined marketplace ticket.")
         return Response({"ok": True, "ticket_id": ticket.id, "business_id": active_biz.id})
-
-    # ----------------------------
-    # Provider status actions
-    # ----------------------------
 
     @action(detail=True, methods=["post"], url_path="accept")
     def accept(self, request, pk=None):
@@ -671,7 +718,8 @@ class TicketViewSet(viewsets.ModelViewSet):
                 return Response({"detail": "Not allowed."}, status=403)
 
             provider_accept(ticket, u)
-            return Response(TicketSerializer(ticket).data)
+            ticket.refresh_from_db()
+            return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
         if role_is(u, "SBO"):
             business = Business.objects.filter(owner_id=u.id, is_active=True).order_by("id").first()
@@ -689,7 +737,8 @@ class TicketViewSet(viewsets.ModelViewSet):
                 assign_ticket_to_business(ticket, business)
 
             provider_accept(ticket, u)
-            return Response(TicketSerializer(ticket).data)
+            ticket.refresh_from_db()
+            return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
         if role_is(u, "EMPLOYEE"):
             if not ticket.assigned_business_id:
@@ -706,7 +755,8 @@ class TicketViewSet(viewsets.ModelViewSet):
                 return Response({"detail": "Not allowed."}, status=403)
 
             provider_accept(ticket, u)
-            return Response(TicketSerializer(ticket).data)
+            ticket.refresh_from_db()
+            return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
         return Response({"detail": "Only provider can accept."}, status=403)
 
@@ -728,7 +778,8 @@ class TicketViewSet(viewsets.ModelViewSet):
             if mem and not _employee_can_change_status(mem) and getattr(active_biz, "owner_id", None) != u.id:
                 return Response({"detail": "Not allowed."}, status=403)
             provider_start(ticket, u)
-            return Response(TicketSerializer(ticket).data)
+            ticket.refresh_from_db()
+            return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
         if role_is(u, "SBO"):
             business = Business.objects.filter(owner_id=u.id, is_active=True).order_by("id").first()
@@ -737,7 +788,8 @@ class TicketViewSet(viewsets.ModelViewSet):
                 if locked_resp:
                     return locked_resp
             provider_start(ticket, u)
-            return Response(TicketSerializer(ticket).data)
+            ticket.refresh_from_db()
+            return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
         if role_is(u, "EMPLOYEE"):
             if not ticket.assigned_business_id:
@@ -753,7 +805,8 @@ class TicketViewSet(viewsets.ModelViewSet):
             if not _employee_can_change_status(mem):
                 return Response({"detail": "Not allowed."}, status=403)
             provider_start(ticket, u)
-            return Response(TicketSerializer(ticket).data)
+            ticket.refresh_from_db()
+            return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
         return Response({"detail": "Only provider can start."}, status=403)
 
@@ -775,7 +828,8 @@ class TicketViewSet(viewsets.ModelViewSet):
             if mem and not _employee_can_change_status(mem) and getattr(active_biz, "owner_id", None) != u.id:
                 return Response({"detail": "Not allowed."}, status=403)
             provider_complete(ticket, u)
-            return Response(TicketSerializer(ticket).data)
+            ticket.refresh_from_db()
+            return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
         if role_is(u, "SBO"):
             business = Business.objects.filter(owner_id=u.id, is_active=True).order_by("id").first()
@@ -784,7 +838,8 @@ class TicketViewSet(viewsets.ModelViewSet):
                 if locked_resp:
                     return locked_resp
             provider_complete(ticket, u)
-            return Response(TicketSerializer(ticket).data)
+            ticket.refresh_from_db()
+            return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
         if role_is(u, "EMPLOYEE"):
             if not ticket.assigned_business_id:
@@ -800,11 +855,11 @@ class TicketViewSet(viewsets.ModelViewSet):
             if not _employee_can_change_status(mem):
                 return Response({"detail": "Not allowed."}, status=403)
             provider_complete(ticket, u)
-            return Response(TicketSerializer(ticket).data)
+            ticket.refresh_from_db()
+            return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
         return Response({"detail": "Only provider can complete."}, status=403)
 
-    # ✅ Provider sets Needs Quote
     @action(detail=True, methods=["post"], url_path="needs_quote")
     def needs_quote(self, request, pk=None):
         ticket = self.get_object()
@@ -819,9 +874,9 @@ class TicketViewSet(viewsets.ModelViewSet):
                 return locked_resp
 
         provider_set_needs_quote(ticket, u)
-        return Response(TicketSerializer(ticket).data)
+        ticket.refresh_from_db()
+        return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
-    # ✅ Provider sends a quote (requires quote_id)
     @action(detail=True, methods=["post"], url_path="send_quote")
     def send_quote(self, request, pk=None):
         ticket = self.get_object()
@@ -845,9 +900,9 @@ class TicketViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Quote not found"}, status=404)
 
         provider_send_quote(ticket, quote, u)
-        return Response(TicketSerializer(ticket).data)
+        ticket.refresh_from_db()
+        return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
-    # ✅ Customer approves quote
     @action(detail=True, methods=["post"], url_path="approve_quote")
     def approve_quote(self, request, pk=None):
         ticket = self.get_object()
@@ -868,9 +923,9 @@ class TicketViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Not your ticket."}, status=403)
 
         customer_approve_quote(ticket, quote, u)
-        return Response(TicketSerializer(ticket).data)
+        ticket.refresh_from_db()
+        return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
-    # ✅ Customer rejects quote (does not cancel ticket)
     @action(detail=True, methods=["post"], url_path="reject_quote")
     def reject_quote(self, request, pk=None):
         ticket = self.get_object()
@@ -893,9 +948,9 @@ class TicketViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Not your ticket."}, status=403)
 
         customer_reject_quote(ticket, quote, u, reason=reason)
-        return Response(TicketSerializer(ticket).data)
+        ticket.refresh_from_db()
+        return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
-    # ✅ Provider sends invoice (requires invoice_id)
     @action(detail=True, methods=["post"], url_path="send_invoice")
     def send_invoice(self, request, pk=None):
         ticket = self.get_object()
@@ -918,10 +973,13 @@ class TicketViewSet(viewsets.ModelViewSet):
         except Exception:
             return Response({"detail": "Invoice not found"}, status=404)
 
-        provider_send_invoice(ticket, inv, u)
-        return Response(TicketSerializer(ticket).data)
+        if not _invoice_belongs_to_ticket(inv, ticket):
+            return Response({"detail": "Invoice not found for this ticket"}, status=404)
 
-    # ✅ Cancel rules enforced via service layer
+        provider_send_invoice(ticket, inv, u)
+        ticket.refresh_from_db()
+        return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
+
     @action(detail=True, methods=["post"], url_path="cancel")
     def cancel(self, request, pk=None):
         u = request.user
@@ -935,7 +993,6 @@ class TicketViewSet(viewsets.ModelViewSet):
         if not is_allowed_role:
             return Response({"detail": "Not allowed."}, status=403)
 
-        # ✅ Providers cannot cancel while locked (customer can still cancel their own early tickets)
         if not role_is(u, "CUSTOMER"):
             active_biz = _get_active_business_from_request(request)
             if active_biz:
@@ -948,9 +1005,9 @@ class TicketViewSet(viewsets.ModelViewSet):
         except ValueError as e:
             return Response({"detail": str(e)}, status=400)
 
-        return Response(TicketSerializer(ticket).data)
+        ticket.refresh_from_db()
+        return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
-    # ✅ Customer delete in early state only + only if unassigned
     def destroy(self, request, *args, **kwargs):
         ticket = self.get_object()
         u = request.user
@@ -1028,7 +1085,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = Invoice.objects.all().order_by("-created_at")
         ticket_id = self.request.query_params.get("ticket")
-        if ticket_id:
+        if ticket_id and _invoice_has("ticket_id"):
+            qs = qs.filter(ticket_id=ticket_id)
+        elif ticket_id and _invoice_has("ticket"):
             qs = qs.filter(ticket_id=ticket_id)
         return qs
 

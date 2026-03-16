@@ -1,4 +1,3 @@
-# backend/user_accounts/viewsets/sales_os.py
 from __future__ import annotations
 
 from datetime import timedelta
@@ -44,10 +43,6 @@ def _user_can_access_pipeline(user, pipeline_id: int) -> bool:
 
 
 def _get_default_stage_defs():
-    """
-    Toddler-proof default stages.
-    Keep 'Won' and 'Lost' as explicit end caps for clean KPI math.
-    """
     return [
         ("New", 0, False, False),
         ("Open", 10, False, False),
@@ -68,11 +63,9 @@ class SalesPipelineViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
 
-        # God Mode can see all pipelines (useful for support/debug)
         if _is_platform_admin(user):
             return SalesPipeline.objects.all()
 
-        # Regular users: only pipelines they own/created or are a member of
         member_pipeline_ids = (
             SalesPipelineMember.objects.filter(
                 user=user,
@@ -89,13 +82,12 @@ class SalesPipelineViewSet(viewsets.ModelViewSet):
     def me(self, request):
         qs = self.get_queryset().order_by("-updated_at", "-id")
         data = SalesPipelineSerializer(qs, many=True).data
-        # Return BOTH formats for compatibility across UI builds:
         return Response(
             {
                 "results": data,
                 "count": qs.count(),
-                "value": data,   # legacy
-                "Count": qs.count(),  # legacy
+                "value": data,
+                "Count": qs.count(),
             }
         )
 
@@ -103,12 +95,10 @@ class SalesPipelineViewSet(viewsets.ModelViewSet):
     def metrics(self, request, pk=None):
         pipeline = self.get_object()
 
-        # Optional agent filter
         assigned_member_id = request.query_params.get("assigned_member_id")
         pqs = Prospect.objects.filter(pipeline_id=pipeline.id)
 
         if assigned_member_id is not None:
-            # blank => unassigned
             if str(assigned_member_id).strip() == "":
                 pqs = pqs.filter(assigned_member__isnull=True)
             else:
@@ -125,7 +115,6 @@ class SalesPipelineViewSet(viewsets.ModelViewSet):
 
         conversion_rate_30d = (won_30d / created_30d) if created_30d else 0.0
 
-        # ✅ Match frontend keys exactly
         return Response(
             {
                 "pipeline": {
@@ -142,20 +131,12 @@ class SalesPipelineViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"], url_path="leaderboard")
     def leaderboard(self, request, pk=None):
-        """
-        Returns Top 10 for dashboard.
-        Uses:
-        - prospects created in last 30d by member
-        - prospects won in last 30d by member
-        - events created in last 30d by member (as "activity_count_30d")
-        """
         pipeline = self.get_object()
         assigned_member_id = request.query_params.get("assigned_member_id")
 
         now = timezone.now()
         since_30 = now - timedelta(days=30)
 
-        # Members in this pipeline
         members = SalesPipelineMember.objects.filter(pipeline_id=pipeline.id, is_active=True)
 
         if assigned_member_id is not None and str(assigned_member_id).strip():
@@ -163,7 +144,6 @@ class SalesPipelineViewSet(viewsets.ModelViewSet):
 
         member_ids = list(members.values_list("id", flat=True))
 
-        # Prospects created / won
         pqs = Prospect.objects.filter(pipeline_id=pipeline.id)
 
         created_rows = (
@@ -180,7 +160,6 @@ class SalesPipelineViewSet(viewsets.ModelViewSet):
         )
         won_map = {r["assigned_member_id"]: r["c"] for r in won_rows}
 
-        # Events count as "activity" hook
         ev_rows = (
             SalesEvent.objects.filter(pipeline_id=pipeline.id, start_at__gte=since_30, assigned_member_id__in=member_ids)
             .values("assigned_member_id")
@@ -188,7 +167,6 @@ class SalesPipelineViewSet(viewsets.ModelViewSet):
         )
         ev_map = {r["assigned_member_id"]: r["c"] for r in ev_rows}
 
-        # Build leaderboard rows
         rows = []
         for m in members.select_related("user"):
             created_30d = int(created_map.get(m.id, 0))
@@ -224,19 +202,16 @@ class SalesPipelineViewSet(viewsets.ModelViewSet):
         return Response({"top_10": rows[:10]})
 
     def perform_create(self, serializer):
-        # Sales OS is standalone: do NOT force business_id
         serializer.save(created_by=self.request.user)
 
         pipeline = serializer.instance
 
-        # Auto-seat the creator as OWNER if not already
         SalesPipelineMember.objects.get_or_create(
             pipeline=pipeline,
             user=self.request.user,
             defaults={"role": SalesPipelineMember.ROLE_OWNER, "is_active": True, "is_active_seat": True},
         )
 
-        # Auto-create toddler-proof default stages if none exist
         if not ProspectStage.objects.filter(pipeline=pipeline).exists():
             for (name, sort_order, is_won, is_lost) in _get_default_stage_defs():
                 ProspectStage.objects.create(
@@ -282,7 +257,6 @@ class SalesPipelineMemberViewSet(viewsets.ModelViewSet):
         if not can_access:
             raise PermissionDenied("No access to this pipeline")
 
-        # Optional tightening: only OWNER/MANAGER can add members
         try:
             my_role = SalesPipelineMember.objects.get(pipeline=pipeline, user=user, is_active=True).role
             if my_role not in [SalesPipelineMember.ROLE_OWNER, SalesPipelineMember.ROLE_MANAGER]:
@@ -336,10 +310,6 @@ class ProspectViewSet(viewsets.ModelViewSet):
         if stage_id:
             qs = qs.filter(stage_id=stage_id)
 
-        # Important: assigned_member_id param supports:
-        # - missing => no filter
-        # - assigned_member_id=123 => filter assigned to member
-        # - assigned_member_id= (blank) => unassigned only
         if assigned_member_id is not None:
             if str(assigned_member_id).strip() == "":
                 qs = qs.filter(assigned_member__isnull=True)
@@ -364,10 +334,8 @@ class ProspectViewSet(viewsets.ModelViewSet):
         ).distinct()
 
     def perform_create(self, serializer):
-        # Set created_by
         instance = serializer.save(created_by=self.request.user)
 
-        # If stage marked won/lost, auto-set status (keeps KPIs clean)
         try:
             if instance.stage_id:
                 st = ProspectStage.objects.filter(id=instance.stage_id).first()
@@ -429,7 +397,6 @@ class SalesEventViewSet(viewsets.ModelViewSet):
             else:
                 qs = qs.filter(assigned_member_id=assigned_member_id)
 
-        # ISO date filters (your frontend sends ISO strings)
         if start:
             try:
                 qs = qs.filter(end_at__gte=start)
@@ -444,7 +411,6 @@ class SalesEventViewSet(viewsets.ModelViewSet):
         if _is_platform_admin(user):
             return qs
 
-        # user can only see events in pipelines they can access
         allowed_pipeline_ids = SalesPipeline.objects.filter(
             Q(created_by=user) | Q(members__user=user, members__is_active=True)
         ).values_list("id", flat=True)
@@ -459,7 +425,6 @@ class SalesEventViewSet(viewsets.ModelViewSet):
         if not _user_can_access_pipeline(self.request.user, pipeline.id):
             raise PermissionDenied("No access to this pipeline")
 
-        # Block writes if locked
         if bool(getattr(pipeline, "is_locked", False)):
             raise PermissionDenied("Pipeline locked (read-only)")
 
