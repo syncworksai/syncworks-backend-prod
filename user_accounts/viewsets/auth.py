@@ -1,4 +1,3 @@
-# backend/user_accounts/viewsets/auth.py
 from __future__ import annotations
 
 from django.conf import settings
@@ -14,6 +13,7 @@ from user_accounts.serializers.users import UserMeSerializer
 from user_accounts.models.business import Business, BusinessMember
 from user_accounts.models import PlatformBillingProfile
 from user_accounts.models.promo import PromoCode, PromoRedemption
+from user_accounts.models.user_billing import UserBillingProfile
 
 User = get_user_model()
 
@@ -72,7 +72,7 @@ def _subscription_active(profile: PlatformBillingProfile | None) -> bool:
 
 def _ensure_owner_membership_and_upgrade_user(user, business: Business) -> BusinessMember | None:
     membership = BusinessMember.objects.filter(business=business, user=user, is_active=True).first()
-    is_owner = (business.owner_id == user.id)
+    is_owner = business.owner_id == user.id
 
     if is_owner and not membership:
         membership = BusinessMember.objects.create(
@@ -96,6 +96,75 @@ def _ensure_owner_membership_and_upgrade_user(user, business: Business) -> Busin
         user.save(update_fields=["role"])
 
     return membership
+
+
+def _get_or_create_user_billing_profile(user) -> UserBillingProfile:
+    prof, _ = UserBillingProfile.objects.get_or_create(user=user)
+    return prof
+
+
+def _grant_user_private_access(
+    *,
+    user,
+    code: str,
+    billing_exempt: bool,
+    subscriptions_waived: bool,
+) -> UserBillingProfile:
+    prof = _get_or_create_user_billing_profile(user)
+    prof.grant_beta_access(
+        code=code,
+        billing_exempt=billing_exempt,
+        subscriptions_waived=subscriptions_waived,
+    )
+    prof.save(
+        update_fields=[
+            "beta_access_granted",
+            "beta_access_granted_at",
+            "beta_access_code",
+            "beta_billing_exempt",
+            "beta_subscriptions_waived",
+        ]
+    )
+
+    if getattr(user, "role", "CUSTOMER") != "SBO":
+        user.role = "SBO"
+        user.save(update_fields=["role"])
+
+    return prof
+
+
+def _apply_private_access_to_business(
+    *,
+    business: Business,
+    user,
+    code: str,
+    billing_exempt: bool,
+    subscriptions_waived: bool,
+    promo: PromoCode | None = None,
+) -> None:
+    changed = []
+
+    if billing_exempt and not getattr(business, "billing_exempt", False):
+        business.billing_exempt = True
+        business.billing_exempt_reason = "Private access code"
+        business.billing_exempt_until = None
+        changed.extend(["billing_exempt", "billing_exempt_reason", "billing_exempt_until"])
+
+    if subscriptions_waived and not getattr(business, "subscriptions_exempt", False):
+        business.subscriptions_exempt = True
+        business.subscriptions_exempt_reason = "Private access code"
+        business.subscriptions_exempt_until = None
+        changed.extend(["subscriptions_exempt", "subscriptions_exempt_reason", "subscriptions_exempt_until"])
+
+    if changed:
+        business.save(update_fields=changed)
+
+    if promo:
+        already = PromoRedemption.objects.filter(promo=promo, business=business).exists()
+        if not already:
+            PromoRedemption.objects.create(promo=promo, user=user, business=business)
+            promo.redemption_count = (promo.redemption_count or 0) + 1
+            promo.save(update_fields=["redemption_count"])
 
 
 class RegisterAPIView(APIView):
@@ -163,12 +232,11 @@ class UpgradeToSboAPIView(APIView):
             return Response({"detail": "Business not found."}, status=status.HTTP_404_NOT_FOUND)
 
         membership = BusinessMember.objects.filter(business=business, user=request.user, is_active=True).first()
-        is_owner = (business.owner_id == request.user.id)
+        is_owner = business.owner_id == request.user.id
 
         if not (_is_platform_admin(request.user) or is_owner or membership):
             return Response({"detail": "You do not have access to this business."}, status=status.HTTP_403_FORBIDDEN)
 
-        # Payment gate (unless platform admin)
         if not _is_platform_admin(request.user):
             profile = PlatformBillingProfile.objects.filter(business=business).first()
             if not (_is_billing_exempt_now(business) or _is_subscriptions_exempt_now(business) or _subscription_active(profile)):
@@ -193,13 +261,12 @@ class UpgradeToSboAPIView(APIView):
 class UpgradeToSboPromoAPIView(APIView):
     """
     POST /auth/upgrade-to-sbo-promo/
-    Body: { "code": "XXXX" }  (business context via header or business_id)
+    Body: { "code": "XXXX" }
 
-    DB promos first. If none found, optionally uses legacy env promo.
-
-    IMPORTANT:
-      - billing_exempt=True => FULL exemption
-      - waive_subscriptions=True => subscription-only waiver (SWFF26)
+    ✅ NEW FLOW:
+      - If business_id exists -> apply immediately to that business
+      - If business_id missing -> grant user-level SBO/private access first
+      - First business created later will inherit the waiver
     """
     permission_classes = [IsAuthenticated]
 
@@ -211,81 +278,72 @@ class UpgradeToSboPromoAPIView(APIView):
         if not code:
             return Response({"detail": "Promo code is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        business_id = _business_id_from_request(request)
-        if not business_id:
-            return Response(
-                {"detail": "Business context missing. Select a business first (X-Business-Id or business_id)."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        business = Business.objects.filter(id=business_id).first()
-        if not business:
-            return Response({"detail": "Business not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        membership = BusinessMember.objects.filter(business=business, user=request.user, is_active=True).first()
-        is_owner = (business.owner_id == request.user.id)
-
-        if not (_is_platform_admin(request.user) or is_owner or membership):
-            return Response({"detail": "You do not have access to this business."}, status=status.HTTP_403_FORBIDDEN)
-
-        # 1) DB promos
+        # 1) Resolve promo rule
         promo = PromoCode.objects.filter(code__iexact=code).first()
+        billing_exempt = False
+        subscriptions_waived = False
+
         if promo:
             if not promo.is_valid_now():
                 return Response({"detail": "Promo code is expired or inactive."}, status=status.HTTP_400_BAD_REQUEST)
+            billing_exempt = bool(getattr(promo, "billing_exempt", False))
+            subscriptions_waived = bool(getattr(promo, "waive_subscriptions", False))
+        else:
+            if code != _legacy_promo_code():
+                return Response({"detail": "Invalid promo code."}, status=status.HTTP_400_BAD_REQUEST)
+            billing_exempt = False
+            subscriptions_waived = True
 
-            already = PromoRedemption.objects.filter(promo=promo, business=business).exists()
-            if not already:
-                PromoRedemption.objects.create(promo=promo, user=request.user, business=business)
-                promo.redemption_count = (promo.redemption_count or 0) + 1
-                promo.save(update_fields=["redemption_count"])
+        # 2) Always unlock user-level SBO access first
+        _grant_user_private_access(
+            user=request.user,
+            code=code,
+            billing_exempt=billing_exempt,
+            subscriptions_waived=subscriptions_waived,
+        )
 
-            # Apply promo effect
-            if promo.billing_exempt and not business.billing_exempt:
-                business.billing_exempt = True
-                business.billing_exempt_reason = f"Promo {promo.code}"
-                business.billing_exempt_until = None
-                business.save(update_fields=["billing_exempt", "billing_exempt_reason", "billing_exempt_until"])
-
-            if promo.waive_subscriptions and not business.subscriptions_exempt:
-                business.subscriptions_exempt = True
-                business.subscriptions_exempt_reason = f"Promo {promo.code}"
-                business.subscriptions_exempt_until = None
-                business.save(update_fields=["subscriptions_exempt", "subscriptions_exempt_reason", "subscriptions_exempt_until"])
-
-            membership = _ensure_owner_membership_and_upgrade_user(request.user, business)
-
+        # 3) If no business yet, stop here successfully
+        business_id = _business_id_from_request(request)
+        if not business_id:
             return Response(
                 {
-                    "detail": f"Promo applied — Upgraded to SBO ✅ ({promo.code})",
-                    "business_id": business.id,
-                    "billing_exempt": _is_billing_exempt_now(business),
-                    "subscriptions_exempt": _is_subscriptions_exempt_now(business),
-                    "role": getattr(membership, "role", None),
+                    "detail": "Private access code applied ✅ You can now create your business.",
+                    "needs_business_setup": True,
+                    "billing_exempt": billing_exempt,
+                    "subscriptions_exempt": subscriptions_waived,
                     "user": UserMeSerializer(request.user).data,
                 },
                 status=status.HTTP_200_OK,
             )
 
-        # 2) Legacy env fallback (SWFF26)
-        if code != _legacy_promo_code():
-            return Response({"detail": "Invalid promo code."}, status=status.HTTP_400_BAD_REQUEST)
+        # 4) If business exists, apply immediately to that business too
+        business = Business.objects.filter(id=business_id).first()
+        if not business:
+            return Response({"detail": "Business not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Legacy SWFF26 = subscription-only waiver (NOT full billing exempt)
-        if not business.subscriptions_exempt:
-            business.subscriptions_exempt = True
-            business.subscriptions_exempt_reason = f"Promo {code}"
-            business.subscriptions_exempt_until = None
-            business.save(update_fields=["subscriptions_exempt", "subscriptions_exempt_reason", "subscriptions_exempt_until"])
+        membership = BusinessMember.objects.filter(business=business, user=request.user, is_active=True).first()
+        is_owner = business.owner_id == request.user.id
+
+        if not (_is_platform_admin(request.user) or is_owner or membership):
+            return Response({"detail": "You do not have access to this business."}, status=status.HTTP_403_FORBIDDEN)
+
+        _apply_private_access_to_business(
+            business=business,
+            user=request.user,
+            code=code,
+            billing_exempt=billing_exempt,
+            subscriptions_waived=subscriptions_waived,
+            promo=promo,
+        )
 
         membership = _ensure_owner_membership_and_upgrade_user(request.user, business)
 
         return Response(
             {
-                "detail": "Promo applied — Upgraded to SBO ✅ (Subscriptions Waived)",
+                "detail": "Private access code applied — SBO unlocked ✅",
                 "business_id": business.id,
                 "billing_exempt": _is_billing_exempt_now(business),
-                "subscriptions_exempt": True,
+                "subscriptions_exempt": _is_subscriptions_exempt_now(business),
                 "role": getattr(membership, "role", None),
                 "user": UserMeSerializer(request.user).data,
             },
