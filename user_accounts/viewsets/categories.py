@@ -33,7 +33,7 @@ class ServiceCategoryViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [AllowAny]
 
     def _base_qs(self):
-        return ServiceCategory.objects.filter(is_active=True).order_by("sort_order", "name")
+        return ServiceCategory.objects.filter(is_active=True).select_related("parent").order_by("sort_order", "name")
 
     def get_queryset(self):
         qs = self._base_qs()
@@ -53,10 +53,18 @@ class ServiceCategoryViewSet(viewsets.ReadOnlyModelViewSet):
                 pass
 
         if q:
-            qs = qs.filter(Q(name__icontains=q) | Q(key__icontains=q))
+            parts = [p.strip() for p in q.split() if p.strip()]
+            query = Q(name__icontains=q) | Q(key__icontains=q)
+            for part in parts:
+                query |= Q(name__icontains=part) | Q(key__icontains=part)
+            qs = qs.filter(query).distinct()
 
         if leaf_only:
-            qs = [c for c in qs if not c.children.filter(is_active=True).exists()]
+            ids = []
+            for c in qs:
+                if not c.children.filter(is_active=True).exists():
+                    ids.append(c.id)
+            qs = qs.filter(id__in=ids)
 
         return qs
 
@@ -75,8 +83,14 @@ class ServiceCategoryViewSet(viewsets.ReadOnlyModelViewSet):
     def search(self, request):
         q = (request.query_params.get("q") or "").strip()
         qs = self._base_qs()
+
         if q:
-            qs = qs.filter(Q(name__icontains=q) | Q(key__icontains=q))
+            parts = [p.strip() for p in q.split() if p.strip()]
+            query = Q(name__icontains=q) | Q(key__icontains=q)
+            for part in parts:
+                query |= Q(name__icontains=part) | Q(key__icontains=part)
+            qs = qs.filter(query).distinct()
+
         return Response(ServiceCategorySerializer(qs[:100], many=True).data)
 
     @action(detail=False, methods=["get"], url_path="by-ids")
@@ -117,7 +131,26 @@ class ServiceCategoryViewSet(viewsets.ReadOnlyModelViewSet):
                 pass
 
         if q:
-            qs = qs.filter(Q(name__icontains=q) | Q(key__icontains=q))
+            parts = [p.strip() for p in q.split() if p.strip()]
+            query = Q(name__icontains=q) | Q(key__icontains=q)
+            for part in parts:
+                query |= Q(name__icontains=part) | Q(key__icontains=part)
+            qs = qs.filter(query).distinct()
 
-        leaf_list = [c for c in qs if not c.children.filter(is_active=True).exists()]
-        return Response(ServiceCategorySerializer(leaf_list, many=True).data)
+        leaf_ids = []
+        for c in qs:
+            if not c.children.filter(is_active=True).exists():
+                leaf_ids.append(c.id)
+
+        leaf_qs = qs.filter(id__in=leaf_ids)
+        return Response(ServiceCategorySerializer(leaf_qs, many=True).data)
+
+    @action(detail=False, methods=["get"], url_path="debug-count")
+    def debug_count(self, request):
+        return Response(
+            {
+                "total": ServiceCategory.objects.count(),
+                "active_total": ServiceCategory.objects.filter(is_active=True).count(),
+                "roots": ServiceCategory.objects.filter(is_active=True, parent__isnull=True).count(),
+            }
+        )

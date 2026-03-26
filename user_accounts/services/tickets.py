@@ -673,27 +673,13 @@ def provider_send_invoice(ticket: Ticket, invoice: Invoice, actor_user):
         pass
 
     if not belongs:
-        try:
-            if getattr(invoice, "service_request_id", None) is not None and getattr(ticket, "service_request_id", None) is not None:
-                belongs = int(invoice.service_request_id) == int(ticket.service_request_id)
-        except Exception:
-            pass
-
-    if not belongs:
-        try:
-            if getattr(invoice, "business_id", None) is not None and getattr(ticket, "assigned_business_id", None) is not None:
-                belongs = int(invoice.business_id) == int(ticket.assigned_business_id)
-        except Exception:
-            pass
-
-    if not belongs:
         raise ValueError("Invoice does not belong to this ticket.")
 
-    invoice.status = "OPEN"
-    save_fields = ["status"]
-    if hasattr(invoice, "updated_at"):
-        save_fields.append("updated_at")
-    invoice.save(update_fields=save_fields)
+    if not invoice.ticket_id:
+        invoice.ticket = ticket
+
+    invoice.status = Invoice.Status.SENT
+    invoice.save()
 
     ticket.status = Ticket.Status.INVOICED
     ticket.invoiced_at = timezone.now()

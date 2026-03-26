@@ -169,28 +169,11 @@ def _build_invoice_create_kwargs(
     fields = _invoice_field_names()
     kwargs: dict[str, Any] = {}
 
-    # Linkage fields
     if "ticket" in fields:
         kwargs["ticket"] = ticket
     elif "ticket_id" in fields:
         kwargs["ticket_id"] = ticket.id
 
-    if "service_request" in fields and getattr(ticket, "service_request_id", None):
-        kwargs["service_request_id"] = ticket.service_request_id
-    elif "service_request_id" in fields and getattr(ticket, "service_request_id", None):
-        kwargs["service_request_id"] = ticket.service_request_id
-
-    if "business" in fields:
-        kwargs["business"] = active_biz
-    elif "business_id" in fields:
-        kwargs["business_id"] = active_biz.id
-
-    if "created_by" in fields:
-        kwargs["created_by"] = actor_user
-    elif "created_by_id" in fields and getattr(actor_user, "id", None):
-        kwargs["created_by_id"] = actor_user.id
-
-    # Descriptive fields
     if "title" in fields:
         kwargs["title"] = title
     elif "name" in fields:
@@ -201,7 +184,6 @@ def _build_invoice_create_kwargs(
     elif "memo" in fields:
         kwargs["memo"] = notes
 
-    # Money fields
     if "subtotal" in fields:
         kwargs["subtotal"] = subtotal
     if "tax" in fields:
@@ -213,11 +195,23 @@ def _build_invoice_create_kwargs(
     if "amount_cents" in fields:
         kwargs["amount_cents"] = _money_to_cents(total)
 
-    # Generic invoice fields from your current billing model
+    if "business" in fields:
+        kwargs["business"] = active_biz
+    elif "business_id" in fields:
+        kwargs["business_id"] = active_biz.id
+
+    if "created_by" in fields:
+        kwargs["created_by"] = actor_user
+    elif "created_by_id" in fields and getattr(actor_user, "id", None):
+        kwargs["created_by_id"] = actor_user.id
+
     if "kind" in fields:
         kwargs["kind"] = "JOB"
     if "status" in fields:
-        kwargs["status"] = "OPEN"
+        if hasattr(Invoice, "Status") and hasattr(Invoice.Status, "DRAFT"):
+            kwargs["status"] = Invoice.Status.DRAFT
+        else:
+            kwargs["status"] = "DRAFT"
     if "currency" in fields:
         kwargs["currency"] = "usd"
     if "due_date" in fields:
@@ -234,19 +228,6 @@ def _invoice_belongs_to_ticket(inv: Invoice, ticket: Ticket) -> bool:
             return int(inv.ticket_id) == int(ticket.id)
     except Exception:
         pass
-
-    try:
-        if getattr(inv, "service_request_id", None) is not None and getattr(ticket, "service_request_id", None) is not None:
-            return int(inv.service_request_id) == int(ticket.service_request_id)
-    except Exception:
-        pass
-
-    try:
-        if getattr(inv, "business_id", None) is not None and getattr(ticket, "assigned_business_id", None) is not None:
-            return int(inv.business_id) == int(ticket.assigned_business_id)
-    except Exception:
-        pass
-
     return False
 
 
@@ -717,7 +698,11 @@ class TicketViewSet(viewsets.ModelViewSet):
             if mem and not _employee_can_change_status(mem) and getattr(active_biz, "owner_id", None) != u.id:
                 return Response({"detail": "Not allowed."}, status=403)
 
-            provider_accept(ticket, u)
+            try:
+                provider_accept(ticket, u)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=400)
+
             ticket.refresh_from_db()
             return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
@@ -736,7 +721,11 @@ class TicketViewSet(viewsets.ModelViewSet):
             if not ticket.assigned_business_id:
                 assign_ticket_to_business(ticket, business)
 
-            provider_accept(ticket, u)
+            try:
+                provider_accept(ticket, u)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=400)
+
             ticket.refresh_from_db()
             return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
@@ -754,7 +743,11 @@ class TicketViewSet(viewsets.ModelViewSet):
             if not _employee_can_change_status(mem):
                 return Response({"detail": "Not allowed."}, status=403)
 
-            provider_accept(ticket, u)
+            try:
+                provider_accept(ticket, u)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=400)
+
             ticket.refresh_from_db()
             return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
@@ -777,7 +770,12 @@ class TicketViewSet(viewsets.ModelViewSet):
             mem = get_active_membership(u, active_biz.id)
             if mem and not _employee_can_change_status(mem) and getattr(active_biz, "owner_id", None) != u.id:
                 return Response({"detail": "Not allowed."}, status=403)
-            provider_start(ticket, u)
+
+            try:
+                provider_start(ticket, u)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=400)
+
             ticket.refresh_from_db()
             return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
@@ -787,7 +785,11 @@ class TicketViewSet(viewsets.ModelViewSet):
                 locked_resp = _enforce_business_not_locked(business)
                 if locked_resp:
                     return locked_resp
-            provider_start(ticket, u)
+            try:
+                provider_start(ticket, u)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=400)
+
             ticket.refresh_from_db()
             return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
@@ -804,7 +806,12 @@ class TicketViewSet(viewsets.ModelViewSet):
             mem = get_active_membership(u, ticket.assigned_business_id)
             if not _employee_can_change_status(mem):
                 return Response({"detail": "Not allowed."}, status=403)
-            provider_start(ticket, u)
+
+            try:
+                provider_start(ticket, u)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=400)
+
             ticket.refresh_from_db()
             return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
@@ -827,7 +834,12 @@ class TicketViewSet(viewsets.ModelViewSet):
             mem = get_active_membership(u, active_biz.id)
             if mem and not _employee_can_change_status(mem) and getattr(active_biz, "owner_id", None) != u.id:
                 return Response({"detail": "Not allowed."}, status=403)
-            provider_complete(ticket, u)
+
+            try:
+                provider_complete(ticket, u)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=400)
+
             ticket.refresh_from_db()
             return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
@@ -837,7 +849,12 @@ class TicketViewSet(viewsets.ModelViewSet):
                 locked_resp = _enforce_business_not_locked(business)
                 if locked_resp:
                     return locked_resp
-            provider_complete(ticket, u)
+
+            try:
+                provider_complete(ticket, u)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=400)
+
             ticket.refresh_from_db()
             return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
@@ -854,7 +871,12 @@ class TicketViewSet(viewsets.ModelViewSet):
             mem = get_active_membership(u, ticket.assigned_business_id)
             if not _employee_can_change_status(mem):
                 return Response({"detail": "Not allowed."}, status=403)
-            provider_complete(ticket, u)
+
+            try:
+                provider_complete(ticket, u)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=400)
+
             ticket.refresh_from_db()
             return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
@@ -873,7 +895,11 @@ class TicketViewSet(viewsets.ModelViewSet):
             if locked_resp:
                 return locked_resp
 
-        provider_set_needs_quote(ticket, u)
+        try:
+            provider_set_needs_quote(ticket, u)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+
         ticket.refresh_from_db()
         return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
@@ -899,7 +925,11 @@ class TicketViewSet(viewsets.ModelViewSet):
         except Exception:
             return Response({"detail": "Quote not found"}, status=404)
 
-        provider_send_quote(ticket, quote, u)
+        try:
+            provider_send_quote(ticket, quote, u)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+
         ticket.refresh_from_db()
         return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
@@ -922,7 +952,11 @@ class TicketViewSet(viewsets.ModelViewSet):
         if ticket.customer_id != u.id:
             return Response({"detail": "Not your ticket."}, status=403)
 
-        customer_approve_quote(ticket, quote, u)
+        try:
+            customer_approve_quote(ticket, quote, u)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+
         ticket.refresh_from_db()
         return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
@@ -947,7 +981,11 @@ class TicketViewSet(viewsets.ModelViewSet):
         if ticket.customer_id != u.id:
             return Response({"detail": "Not your ticket."}, status=403)
 
-        customer_reject_quote(ticket, quote, u, reason=reason)
+        try:
+            customer_reject_quote(ticket, quote, u, reason=reason)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+
         ticket.refresh_from_db()
         return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
@@ -976,7 +1014,11 @@ class TicketViewSet(viewsets.ModelViewSet):
         if not _invoice_belongs_to_ticket(inv, ticket):
             return Response({"detail": "Invoice not found for this ticket"}, status=404)
 
-        provider_send_invoice(ticket, inv, u)
+        try:
+            provider_send_invoice(ticket, inv, u)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+
         ticket.refresh_from_db()
         return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 

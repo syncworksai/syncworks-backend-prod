@@ -1,4 +1,3 @@
-# backend/syncworksv7/settings.py
 from __future__ import annotations
 
 import os
@@ -49,7 +48,7 @@ ALLOWED_HOSTS = [h.strip() for h in ALLOWED_HOSTS_RAW.split(",") if h.strip()]
 CSRF_TRUSTED_ORIGINS_RAW = env("DJANGO_CSRF_TRUSTED_ORIGINS", "") or ""
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in CSRF_TRUSTED_ORIGINS_RAW.split(",") if o.strip()]
 
-# CORS (local dev)
+# CORS
 CORS_ALLOWED_ORIGINS_RAW = env(
     "DJANGO_CORS_ALLOWED_ORIGINS",
     "http://localhost:5174,http://127.0.0.1:5174",
@@ -163,13 +162,17 @@ TIME_ZONE = env("DJANGO_TIME_ZONE", "America/New_York") or "America/New_York"
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = Path(env("DJANGO_MEDIA_ROOT", str(BASE_DIR / "media")))
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Optional upload tuning
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
+DATA_UPLOAD_MAX_MEMORY_SIZE = 15 * 1024 * 1024
 
 # -------------------------------------------------
 # DRF
@@ -209,6 +212,7 @@ GOD_MODE_EMAIL_ALLOWLIST = [
 # Security
 # -------------------------------------------------
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True
 
 SESSION_COOKIE_SECURE = env_bool("DJANGO_SESSION_COOKIE_SECURE", default=not DEBUG)
 CSRF_COOKIE_SECURE = env_bool("DJANGO_CSRF_COOKIE_SECURE", default=not DEBUG)
@@ -310,10 +314,9 @@ STRIPE_PRODUCT_ID_SALESOS = _pick_module_product_id("SALESOS")
 STRIPE_PRODUCT_ID_FINANCE = _pick_module_product_id("FINANCE")
 STRIPE_PRODUCT_ID_FITNESS = _pick_module_product_id("FITNESS")
 
-# Compatibility aliases for code that expects SALES_OS instead of SALESOS
+# Compatibility aliases
 STRIPE_PRODUCT_ID_SALES_OS = STRIPE_PRODUCT_ID_SALESOS
 
-# Optional explicit live aliases too
 STRIPE_LIVE_PRODUCT_ID_SBO = (env("STRIPE_LIVE_PRODUCT_ID_SBO", "") or "").strip()
 STRIPE_LIVE_PRODUCT_ID_PM = (env("STRIPE_LIVE_PRODUCT_ID_PM", "") or "").strip()
 STRIPE_LIVE_PRODUCT_ID_SALESOS = (

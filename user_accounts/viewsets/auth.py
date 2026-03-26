@@ -263,11 +263,13 @@ class UpgradeToSboPromoAPIView(APIView):
     POST /auth/upgrade-to-sbo-promo/
     Body: { "code": "XXXX" }
 
-    ✅ NEW FLOW:
-      - If business_id exists -> apply immediately to that business
-      - If business_id missing -> grant user-level SBO/private access first
-      - First business created later will inherit the waiver
+    SBO-only private access flow:
+      - If NO business_id is explicitly present in request body:
+          grant user-level SBO access only
+      - If business_id IS explicitly present in request body:
+          also apply waiver to that specific business
     """
+
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
@@ -278,7 +280,6 @@ class UpgradeToSboPromoAPIView(APIView):
         if not code:
             return Response({"detail": "Promo code is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 1) Resolve promo rule
         promo = PromoCode.objects.filter(code__iexact=code).first()
         billing_exempt = False
         subscriptions_waived = False
@@ -294,7 +295,6 @@ class UpgradeToSboPromoAPIView(APIView):
             billing_exempt = False
             subscriptions_waived = True
 
-        # 2) Always unlock user-level SBO access first
         _grant_user_private_access(
             user=request.user,
             code=code,
@@ -302,9 +302,19 @@ class UpgradeToSboPromoAPIView(APIView):
             subscriptions_waived=subscriptions_waived,
         )
 
-        # 3) If no business yet, stop here successfully
-        business_id = _business_id_from_request(request)
-        if not business_id:
+        # IMPORTANT:
+        # Ignore auto-attached X-Business-Id headers from the shared API client.
+        # Only use business_id if it was EXPLICITLY sent in the request body.
+        body_business_id = None
+        if isinstance(request.data, dict):
+            raw_body_business_id = request.data.get("business_id")
+            if raw_body_business_id not in (None, "", 0, "0"):
+                try:
+                    body_business_id = int(str(raw_body_business_id).strip())
+                except Exception:
+                    body_business_id = None
+
+        if not body_business_id:
             return Response(
                 {
                     "detail": "Private access code applied ✅ You can now create your business.",
@@ -316,8 +326,7 @@ class UpgradeToSboPromoAPIView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        # 4) If business exists, apply immediately to that business too
-        business = Business.objects.filter(id=business_id).first()
+        business = Business.objects.filter(id=body_business_id).first()
         if not business:
             return Response({"detail": "Business not found."}, status=status.HTTP_404_NOT_FOUND)
 
