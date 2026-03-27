@@ -3,11 +3,89 @@ from __future__ import annotations
 from datetime import timedelta
 from decimal import Decimal
 
+from django.db import models
 from django.db.models import Count, Sum
 from django.utils import timezone
 
-from user_accounts.models import User, Ticket, Business, TicketMessage
+from user_accounts.models.user import User
+from user_accounts.models.business import Business
+from user_accounts.models.tickets import Ticket, TicketMessage
 from user_accounts.models.billing import Invoice
+
+
+class PlatformDailyKpi(models.Model):
+    day = models.DateField(unique=True)
+
+    users_total = models.PositiveIntegerField(default=0)
+    businesses_total = models.PositiveIntegerField(default=0)
+    tickets_total = models.PositiveIntegerField(default=0)
+    tickets_new = models.PositiveIntegerField(default=0)
+    tickets_completed = models.PositiveIntegerField(default=0)
+    tickets_paid = models.PositiveIntegerField(default=0)
+
+    invoices_paid_count = models.PositiveIntegerField(default=0)
+    gmv_paid = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    platform_fees_paid = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    avg_response_time_seconds = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-day"]
+
+    def __str__(self) -> str:
+        return f"Platform KPI {self.day}"
+
+
+class BusinessDailyKpi(models.Model):
+    business = models.ForeignKey(
+        Business,
+        on_delete=models.CASCADE,
+        related_name="daily_kpis",
+    )
+    day = models.DateField()
+
+    tickets_total = models.PositiveIntegerField(default=0)
+    tickets_completed = models.PositiveIntegerField(default=0)
+    tickets_paid = models.PositiveIntegerField(default=0)
+
+    invoices_paid_count = models.PositiveIntegerField(default=0)
+    gmv_paid = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    platform_fees_paid = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [("business", "day")]
+        ordering = ["-day", "business_id"]
+
+    def __str__(self) -> str:
+        return f"Business KPI {self.business_id} {self.day}"
+
+
+class MarketplaceCellDailyKpi(models.Model):
+    day = models.DateField()
+    zip_code = models.CharField(max_length=10, blank=True, default="")
+    category_key = models.CharField(max_length=255, blank=True, default="")
+
+    tickets_created = models.PositiveIntegerField(default=0)
+    tickets_viewed = models.PositiveIntegerField(default=0)
+    tickets_declined = models.PositiveIntegerField(default=0)
+    tickets_assigned = models.PositiveIntegerField(default=0)
+    tickets_completed = models.PositiveIntegerField(default=0)
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [("day", "zip_code", "category_key")]
+        ordering = ["-day", "zip_code", "category_key"]
+
+    def __str__(self) -> str:
+        return f"Marketplace KPI {self.day} {self.zip_code} {self.category_key}"
 
 
 def _to_float(v) -> float:
