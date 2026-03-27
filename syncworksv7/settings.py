@@ -166,7 +166,7 @@ STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 MEDIA_URL = "/media/"
-MEDIA_ROOT = Path(env("DJANGO_MEDIA_ROOT", str(BASE_DIR / "media")))
+MEDIA_ROOT = env("DJANGO_MEDIA_ROOT", str(BASE_DIR / "media")) or str(BASE_DIR / "media")
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -240,6 +240,11 @@ DEFAULT_FROM_EMAIL = env("DJANGO_DEFAULT_FROM_EMAIL", "SyncWorks <no-reply@syncw
 # -------------------------------------------------
 STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", "") or ""
 STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", "") or ""
+
+# ✅ NEW: dedicated invoice webhook secret
+# If blank, invoice webhook code can still fall back to STRIPE_WEBHOOK_SECRET.
+STRIPE_INVOICE_WEBHOOK_SECRET = env("STRIPE_INVOICE_WEBHOOK_SECRET", "") or ""
+
 PLATFORM_BASE_URL = env("PLATFORM_BASE_URL", "http://localhost:5174") or "http://localhost:5174"
 
 # Optional override:
