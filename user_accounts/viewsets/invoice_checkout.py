@@ -75,9 +75,13 @@ def _user_can_pay_invoice(user, invoice: Invoice) -> bool:
     return getattr(ticket, "customer_id", None) == getattr(user, "id", None)
 
 
-def _mark_invoice_and_ticket_paid(invoice: Invoice, *, payment_intent_id: str = "", charge_id: str = "") -> None:
+def _mark_invoice_and_ticket_paid(
+    invoice: Invoice,
+    *,
+    payment_intent_id: str = "",
+    charge_id: str = "",
+) -> None:
     changed_invoice_fields: list[str] = []
-    changed_ticket_fields: list[str] = []
 
     invoice.mark_paid(method=PAYMENT_METHOD_CARD)
 
@@ -112,10 +116,18 @@ def _mark_invoice_and_ticket_paid(invoice: Invoice, *, payment_intent_id: str = 
 
     ticket = getattr(invoice, "ticket", None)
     if ticket:
-        ticket.status = Ticket.Status.PAID
-        ticket.paid_at = timezone.now()
-        changed_ticket_fields.extend(["status", "paid_at"])
-        ticket.save(update_fields=changed_ticket_fields)
+        changed_ticket_fields: list[str] = []
+
+        if ticket.status != Ticket.Status.PAID:
+            ticket.status = Ticket.Status.PAID
+            changed_ticket_fields.append("status")
+
+        ticket_paid_at = timezone.now()
+        ticket.paid_at = ticket_paid_at
+        changed_ticket_fields.append("paid_at")
+
+        if changed_ticket_fields:
+            ticket.save(update_fields=changed_ticket_fields)
 
         try:
             TicketMessage.objects.create(
@@ -203,40 +215,52 @@ class CreateInvoiceCheckoutSessionAPIView(APIView):
         title = (invoice.title or "").strip() or f"Invoice #{invoice.id}"
         notes = (invoice.notes or "").strip()
 
-        session = stripe.checkout.Session.create(
-            mode="payment",
-            success_url=_build_success_url(invoice.id),
-            cancel_url=_build_cancel_url(invoice.id),
-            payment_method_types=["card", "link"],
-            line_items=[
-                {
-                    "price_data": {
-                        "currency": "usd",
-                        "product_data": {
-                            "name": title,
-                            "description": notes[:500] if notes else f"SyncWorks invoice #{invoice.id}",
+        try:
+            session = stripe.checkout.Session.create(
+                mode="payment",
+                success_url=_build_success_url(invoice.id),
+                cancel_url=_build_cancel_url(invoice.id),
+                payment_method_types=["card", "link"],
+                line_items=[
+                    {
+                        "price_data": {
+                            "currency": "usd",
+                            "product_data": {
+                                "name": title,
+                                "description": notes[:500] if notes else f"SyncWorks invoice #{invoice.id}",
+                            },
+                            "unit_amount": amount_cents,
                         },
-                        "unit_amount": amount_cents,
-                    },
-                    "quantity": 1,
-                }
-            ],
-            metadata={
-                "invoice_id": str(invoice.id),
-                "ticket_id": str(invoice.ticket_id or ""),
-            },
-            payment_intent_data={
-                "metadata": {
+                        "quantity": 1,
+                    }
+                ],
+                metadata={
                     "invoice_id": str(invoice.id),
                     "ticket_id": str(invoice.ticket_id or ""),
-                }
-            },
-        )
+                },
+                payment_intent_data={
+                    "metadata": {
+                        "invoice_id": str(invoice.id),
+                        "ticket_id": str(invoice.ticket_id or ""),
+                    }
+                },
+            )
+        except Exception as exc:
+            return Response(
+                {"detail": f"Stripe checkout session creation failed: {exc}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         invoice.stripe_checkout_session_id = session.id
         save_fields = ["stripe_checkout_session_id"]
+
+        if invoice.status == INVOICE_STATUS_DRAFT:
+            invoice.status = INVOICE_STATUS_SENT
+            save_fields.append("status")
+
         if hasattr(invoice, "updated_at"):
             save_fields.append("updated_at")
+
         invoice.save(update_fields=save_fields)
 
         return Response(
@@ -260,10 +284,14 @@ class InvoicePaymentWebhookAPIView(APIView):
         sig_header = request.META.get("HTTP_STRIPE_SIGNATURE", "")
 
         webhook_secret = (
-            getattr(settings, "STRIPE_INVOICE_WEBHOOK_SECRET", "") or getattr(settings, "STRIPE_WEBHOOK_SECRET", "")
+            getattr(settings, "STRIPE_INVOICE_WEBHOOK_SECRET", "")
+            or getattr(settings, "STRIPE_WEBHOOK_SECRET", "")
         )
         if not webhook_secret:
-            return Response({"detail": "Webhook secret is not configured."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {"detail": "Webhook secret is not configured."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         try:
             event = stripe.Webhook.construct_event(
@@ -291,14 +319,14 @@ class InvoicePaymentWebhookAPIView(APIView):
 
                     changed_fields: list[str] = []
 
-                    if payment_intent_id and getattr(invoice, "stripe_payment_intent_id", "") != payment_intent_id:
-                        invoice.stripe_payment_intent_id = payment_intent_id
-                        changed_fields.append("stripe_payment_intent_id")
-
                     session_id = data_object.get("id") or ""
                     if session_id and getattr(invoice, "stripe_checkout_session_id", "") != session_id:
                         invoice.stripe_checkout_session_id = session_id
                         changed_fields.append("stripe_checkout_session_id")
+
+                    if payment_intent_id and getattr(invoice, "stripe_payment_intent_id", "") != payment_intent_id:
+                        invoice.stripe_payment_intent_id = payment_intent_id
+                        changed_fields.append("stripe_payment_intent_id")
 
                     if changed_fields:
                         if hasattr(invoice, "updated_at"):

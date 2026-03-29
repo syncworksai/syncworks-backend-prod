@@ -14,6 +14,7 @@ from .notifications import Notification, PlatformNewsItem
 
 from .categories import ServiceCategory
 from .business import Business, BusinessMember, BusinessCategory, BusinessMemberRole
+from .service_catalog import ServiceCatalogItem
 
 from .service_requests import ServiceRequest, ServiceRequestPhoto
 from .tickets import Ticket, TicketMessage, TicketAttachment, TicketQuote, TicketViewEvent
@@ -138,6 +139,7 @@ __all__ = [
     "Business",
     "BusinessMember",
     "BusinessMemberRole",
+    "ServiceCatalogItem",
     "ServiceRequest",
     "ServiceRequestPhoto",
     "Ticket",
