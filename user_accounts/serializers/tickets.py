@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
@@ -12,6 +14,7 @@ from user_accounts.models import (
     Business,
     ServiceCategory,
     BusinessMember,
+    InvoiceLineItem,
 )
 from user_accounts.models.billing import Invoice
 
@@ -349,10 +352,93 @@ class TicketQuoteSerializer(serializers.ModelSerializer):
         ]
 
 
+class InvoiceLineItemSerializer(serializers.ModelSerializer):
+    catalog_item_name = serializers.SerializerMethodField()
+    line_cost_total = serializers.SerializerMethodField()
+    line_profit_total = serializers.SerializerMethodField()
+    line_margin_pct = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InvoiceLineItem
+        fields = [
+            "id",
+            "invoice",
+            "catalog_item_id",
+            "catalog_item_name",
+            "name",
+            "description",
+            "item_type",
+            "unit_label",
+            "quantity",
+            "unit_price",
+            "unit_cost",
+            "line_subtotal",
+            "line_cost_total",
+            "line_profit_total",
+            "line_margin_pct",
+            "sort_order",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_catalog_item_name(self, obj) -> str:
+        try:
+            if obj.catalog_item_id and obj.catalog_item:
+                return obj.catalog_item.name or ""
+        except Exception:
+            pass
+        return ""
+
+    def get_line_cost_total(self, obj) -> str:
+        try:
+            return str(obj.line_cost_total)
+        except Exception:
+            return "0.00"
+
+    def get_line_profit_total(self, obj) -> str:
+        try:
+            return str(obj.line_profit_total)
+        except Exception:
+            return "0.00"
+
+    def get_line_margin_pct(self, obj) -> str:
+        try:
+            return str(obj.line_margin_pct)
+        except Exception:
+            return "0.00"
+
+
 class InvoiceSerializer(serializers.ModelSerializer):
+    line_items = InvoiceLineItemSerializer(many=True, read_only=True)
+
     class Meta:
         model = Invoice
-        fields = "__all__"
+        fields = [
+            "id",
+            "ticket",
+            "title",
+            "notes",
+            "subtotal",
+            "tax",
+            "total",
+            "status",
+            "due_date",
+            "payment_method",
+            "amount_paid",
+            "paid_at",
+            "platform_fee_rate_bps",
+            "platform_fee_amount",
+            "platform_fee_collected",
+            "platform_fee_collected_at",
+            "stripe_checkout_session_id",
+            "stripe_payment_intent_id",
+            "stripe_charge_id",
+            "stripe_transfer_id",
+            "created_at",
+            "updated_at",
+            "line_items",
+        ]
         read_only_fields = [
             "id",
             "created_at",
@@ -361,6 +447,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "platform_fee_collected",
             "platform_fee_collected_at",
             "paid_at",
+            "line_items",
         ]
 
 
@@ -450,6 +537,10 @@ class TicketSerializer(serializers.ModelSerializer):
             "service_address",
             "service_zip",
             "service_radius_miles",
+            "payment_method",
+            "total_amount_cents",
+            "cash_confirmed_at",
+            "cash_fee_invoiced_month",
             "created_at",
             "assigned_at",
             "accepted_at",
@@ -527,7 +618,7 @@ class TicketSerializer(serializers.ModelSerializer):
 
     def get_latest_invoice(self, obj):
         try:
-            inv = obj.invoices.order_by("-created_at").first()
+            inv = obj.invoices.order_by("-created_at").prefetch_related("line_items").first()
             return InvoiceSerializer(inv).data if inv else None
         except Exception:
             return None

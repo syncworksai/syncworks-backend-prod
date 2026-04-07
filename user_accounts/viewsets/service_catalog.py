@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.db.models import Q
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -77,21 +78,19 @@ class ServiceCatalogItemViewSet(viewsets.ModelViewSet):
         if getattr(u, "is_superuser", False) or getattr(u, "is_platform_admin", False):
             biz = _get_active_business_from_request(self.request)
             if biz:
-                return qs.filter(business_id=biz.id)
-
-            biz_id = self.request.query_params.get("business_id")
-            if biz_id:
-                try:
-                    return qs.filter(business_id=int(biz_id))
-                except Exception:
-                    return qs.none()
-            return qs
-
-        biz = _get_active_business_from_request(self.request)
-        if not biz:
-            return qs.none()
-
-        qs = qs.filter(business_id=biz.id)
+                qs = qs.filter(business_id=biz.id)
+            else:
+                biz_id = self.request.query_params.get("business_id")
+                if biz_id:
+                    try:
+                        qs = qs.filter(business_id=int(biz_id))
+                    except Exception:
+                        return qs.none()
+        else:
+            biz = _get_active_business_from_request(self.request)
+            if not biz:
+                return qs.none()
+            qs = qs.filter(business_id=biz.id)
 
         active_only = str(self.request.query_params.get("active_only") or "").strip().lower()
         if active_only in {"1", "true", "yes"}:
@@ -107,7 +106,11 @@ class ServiceCatalogItemViewSet(viewsets.ModelViewSet):
 
         q = str(self.request.query_params.get("q") or "").strip()
         if q:
-            qs = qs.filter(name__icontains=q) | qs.filter(sku__icontains=q) | qs.filter(description__icontains=q)
+            qs = qs.filter(
+                Q(name__icontains=q) |
+                Q(sku__icontains=q) |
+                Q(description__icontains=q)
+            )
 
         return qs.order_by("sort_order", "name", "id")
 

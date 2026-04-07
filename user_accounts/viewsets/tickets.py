@@ -21,6 +21,8 @@ from user_accounts.models import (
     TicketViewEvent,
     DocumentTemplate,
     PlatformBillingProfile,
+    ServiceCatalogItem,
+    InvoiceLineItem,
 )
 from user_accounts.models.billing import Invoice
 
@@ -36,6 +38,7 @@ from user_accounts.serializers.tickets import (
     TicketQuoteSerializer,
     InvoiceSerializer,
     EligibleBusinessSerializer,
+    InvoiceLineItemSerializer,
 )
 
 from user_accounts.services.permissions import get_active_membership
@@ -231,6 +234,31 @@ def _invoice_belongs_to_ticket(inv: Invoice, ticket: Ticket) -> bool:
     return False
 
 
+def _get_or_create_ticket_draft_invoice(ticket: Ticket, active_biz: Business, actor_user) -> Invoice:
+    existing = (
+        Invoice.objects.filter(ticket_id=ticket.id, status=Invoice.Status.DRAFT)
+        .order_by("-created_at")
+        .first()
+    )
+    if existing:
+        return existing
+
+    title = f"Invoice for Ticket #{ticket.id}"
+    kwargs = _build_invoice_create_kwargs(
+        ticket=ticket,
+        active_biz=active_biz,
+        actor_user=actor_user,
+        title=title,
+        notes="",
+        subtotal=Decimal("0.00"),
+        tax=Decimal("0.00"),
+        total=Decimal("0.00"),
+        due_date=None,
+        payment_method=Invoice.PaymentMethod.CARD,
+    )
+    return Invoice.objects.create(**kwargs)
+
+
 LOCKED_DETAIL = "Business account is locked. Update billing or submit an unlock request."
 
 
@@ -272,28 +300,19 @@ def _enforce_business_not_locked(biz: Business) -> Optional[Response]:
     return Response(_locked_payload(biz.id, reason), status=423)
 
 
-class BusinessMemberLiteSerializer(serializers.ModelSerializer):
-    user_email = serializers.SerializerMethodField()
-    user_name = serializers.SerializerMethodField()
+class CatalogLineAddSerializer(serializers.Serializer):
+    catalog_item_id = serializers.IntegerField()
+    quantity = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, default=Decimal("1.00"))
+    due_date = serializers.DateField(required=False, allow_null=True)
+    payment_method = serializers.ChoiceField(
+        choices=[Invoice.PaymentMethod.CARD, Invoice.PaymentMethod.CASH, Invoice.PaymentMethod.OTHER],
+        required=False,
+    )
 
-    class Meta:
-        model = BusinessMember
-        fields = ["id", "role", "is_active", "user_id", "user_email", "user_name"]
-
-    def get_user_email(self, obj) -> str:
-        try:
-            return obj.user.email or ""
-        except Exception:
-            return ""
-
-    def get_user_name(self, obj) -> str:
-        try:
-            fn = (obj.user.first_name or "").strip()
-            ln = (obj.user.last_name or "").strip()
-            name = (fn + " " + ln).strip()
-            return name or (obj.user.email or "")
-        except Exception:
-            return ""
+    def validate_quantity(self, v):
+        if Decimal(str(v)) <= 0:
+            raise serializers.ValidationError("quantity must be greater than 0.")
+        return v
 
 
 class TicketViewSet(viewsets.ModelViewSet):
@@ -305,36 +324,120 @@ class TicketViewSet(viewsets.ModelViewSet):
         ctx["request"] = self.request
         return ctx
 
-    def get_queryset(self):
-        u = self.request.user
-        qs = (
+    def _base_queryset(self):
+        return (
             Ticket.objects.all()
             .select_related("category", "assigned_business", "assigned_member", "customer", "service_request")
             .order_by("-created_at")
         )
 
+    def _eligible_marketplace_ticket_ids_for_business(self, business: Business | None) -> list[int]:
+        if not business:
+            return []
+        try:
+            return list(marketplace_tickets_for_business(business).values_list("id", flat=True))
+        except Exception:
+            return []
+
+    def _provider_visible_queryset_for_business(self, qs, business: Business | None):
+        if not business:
+            return qs.none()
+
+        marketplace_ids = self._eligible_marketplace_ticket_ids_for_business(business)
+        filters = Q(assigned_business_id=business.id)
+        if marketplace_ids:
+            filters |= Q(id__in=marketplace_ids)
+        return qs.filter(filters).distinct().order_by("-created_at")
+
+    def _employee_business_ids(self, user) -> list[int]:
+        return list(
+            BusinessMember.objects.filter(user_id=user.id, is_active=True).values_list("business_id", flat=True)
+        )
+
+    def get_queryset(self):
+        u = self.request.user
+        qs = self._base_queryset()
+        action = getattr(self, "action", None)
+
         if getattr(u, "is_superuser", False) or getattr(u, "is_platform_admin", False):
             return qs
 
         if role_is(u, "CUSTOMER"):
-            return qs.filter(customer_id=u.id)
+            return qs.filter(customer_id=u.id).distinct().order_by("-created_at")
+
+        # Explicit marketplace endpoint has its own scoped service method and should not depend on get_queryset.
+        if action == "marketplace":
+            return qs.none()
+
+        # Provider list endpoints should stay "assigned tickets only" unless the dedicated marketplace route is used.
+        provider_list_actions = {None, "list", "my"}
+        provider_detailish_actions = {
+            "retrieve",
+            "partial_update",
+            "update",
+            "destroy",
+            "mark_viewed",
+            "decline_marketplace",
+            "accept",
+            "start",
+            "complete",
+            "needs_quote",
+            "send_quote",
+            "approve_quote",
+            "reject_quote",
+            "send_invoice",
+            "cancel",
+            "eligible_providers",
+            "assign_sbo",
+            "assignees",
+            "assign_member",
+            "unassign_member",
+            "create_invoice",
+            "add_catalog_item",
+            "invoice_lines",
+            "remove_catalog_line",
+        }
 
         active_biz = _get_active_business_from_request(self.request)
-        if active_biz:
-            return qs.filter(assigned_business_id=active_biz.id).distinct().order_by("-created_at")
 
         if role_is(u, "SBO"):
-            business = Business.objects.filter(owner_id=u.id, is_active=True).order_by("id").first()
+            business = active_biz or Business.objects.filter(owner_id=u.id, is_active=True).order_by("id").first()
             if not business:
                 return qs.none()
+
+            if action in provider_list_actions:
+                return qs.filter(assigned_business_id=business.id).distinct().order_by("-created_at")
+
+            if action in provider_detailish_actions:
+                return self._provider_visible_queryset_for_business(qs, business)
+
             return qs.filter(assigned_business_id=business.id).distinct().order_by("-created_at")
 
-        if role_is(u, "EMPLOYEE"):
-            biz_ids = list(
-                BusinessMember.objects.filter(user_id=u.id, is_active=True).values_list("business_id", flat=True)
-            )
+        if role_is(u, "EMPLOYEE", "PM", "PROPERTY_MGR"):
+            if active_biz:
+                if action in provider_list_actions:
+                    return qs.filter(assigned_business_id=active_biz.id).distinct().order_by("-created_at")
+
+                if action in provider_detailish_actions:
+                    return self._provider_visible_queryset_for_business(qs, active_biz)
+
+                return qs.filter(assigned_business_id=active_biz.id).distinct().order_by("-created_at")
+
+            biz_ids = self._employee_business_ids(u)
             if not biz_ids:
                 return qs.none()
+
+            if action in provider_list_actions:
+                return qs.filter(assigned_business_id__in=biz_ids).distinct().order_by("-created_at")
+
+            if action in provider_detailish_actions:
+                union_ids: set[int] = set(qs.filter(assigned_business_id__in=biz_ids).values_list("id", flat=True))
+                for biz in Business.objects.filter(id__in=biz_ids, is_active=True):
+                    union_ids.update(self._eligible_marketplace_ticket_ids_for_business(biz))
+                if not union_ids:
+                    return qs.none()
+                return qs.filter(id__in=list(union_ids)).distinct().order_by("-created_at")
+
             return qs.filter(assigned_business_id__in=biz_ids).distinct().order_by("-created_at")
 
         return qs.none()
@@ -448,7 +551,26 @@ class TicketViewSet(viewsets.ModelViewSet):
             "_role_rank", "id"
         )[:200]
 
-        return Response(BusinessMemberLiteSerializer(qs, many=True).data)
+        return Response(
+            [
+                {
+                    "id": m.id,
+                    "role": m.role,
+                    "is_active": m.is_active,
+                    "user_id": m.user_id,
+                    "user_email": getattr(m.user, "email", "") or "",
+                    "user_name": (
+                        (
+                            (getattr(m.user, "first_name", "") or "").strip()
+                            + " "
+                            + (getattr(m.user, "last_name", "") or "").strip()
+                        ).strip()
+                        or (getattr(m.user, "email", "") or "")
+                    ),
+                }
+                for m in qs
+            ]
+        )
 
     @action(detail=True, methods=["post"], url_path="assign_member")
     def assign_member(self, request, pk=None):
@@ -612,6 +734,224 @@ class TicketViewSet(viewsets.ModelViewSet):
 
         _system_msg(ticket, u, f"Invoice created (#{inv.id}).")
         return Response(InvoiceSerializer(inv).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="add-catalog-item")
+    def add_catalog_item(self, request, pk=None):
+        u = request.user
+        if role_is(u, "CUSTOMER"):
+            return Response({"detail": "Customers cannot add catalog items."}, status=403)
+
+        active_biz = _get_active_business_from_request(request)
+        if not active_biz:
+            return Response({"detail": "X-Business-Id required."}, status=400)
+
+        locked_resp = _enforce_business_not_locked(active_biz)
+        if locked_resp:
+            return locked_resp
+
+        ticket = self.get_object()
+        if not ticket.assigned_business_id:
+            assign_ticket_to_business(ticket, active_biz)
+        elif ticket.assigned_business_id != active_biz.id:
+            return Response({"detail": "Ticket is assigned to a different business."}, status=403)
+
+        mem = get_active_membership(u, active_biz.id)
+        if mem and not getattr(mem, "can_manage_invoices", False) and getattr(active_biz, "owner_id", None) != u.id:
+            return Response({"detail": "Not allowed."}, status=403)
+
+        ser = CatalogLineAddSerializer(data=request.data or {})
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+
+        item = ServiceCatalogItem.objects.filter(
+            id=int(data["catalog_item_id"]),
+            business_id=active_biz.id,
+        ).first()
+        if not item:
+            return Response({"detail": "Catalog item not found for this business."}, status=404)
+
+        invoice = _get_or_create_ticket_draft_invoice(ticket, active_biz, u)
+        qty_to_add = Decimal(str(data.get("quantity") or "1.00"))
+
+        matching_lines = list(
+            InvoiceLineItem.objects.filter(
+                invoice_id=invoice.id,
+                catalog_item_id=item.id,
+            ).order_by("id")
+        )
+
+        if matching_lines:
+            master = matching_lines[0]
+            merged_qty = Decimal("0.00")
+
+            for li in matching_lines:
+                merged_qty += Decimal(str(li.quantity or "0.00"))
+
+            merged_qty += qty_to_add
+
+            master.quantity = merged_qty
+            master.unit_price = item.unit_price
+            master.unit_cost = item.unit_cost
+            master.description = item.description or ""
+            master.item_type = item.item_type or InvoiceLineItem.ItemType.CUSTOM
+            master.unit_label = item.unit_label or ""
+            master.name = item.name
+            master.save()
+
+            for extra in matching_lines[1:]:
+                extra.delete()
+
+            line = master
+        else:
+            max_sort = (
+                InvoiceLineItem.objects.filter(invoice_id=invoice.id)
+                .order_by("-sort_order")
+                .values_list("sort_order", flat=True)
+                .first()
+                or 0
+            )
+
+            line = InvoiceLineItem.objects.create(
+                invoice=invoice,
+                catalog_item=item,
+                name=item.name,
+                description=item.description or "",
+                item_type=item.item_type or InvoiceLineItem.ItemType.CUSTOM,
+                unit_label=item.unit_label or "",
+                quantity=qty_to_add,
+                unit_price=item.unit_price,
+                unit_cost=item.unit_cost,
+                sort_order=max_sort + 10,
+            )
+
+        if data.get("due_date") is not None:
+            invoice.due_date = data.get("due_date")
+        if data.get("payment_method"):
+            invoice.payment_method = data["payment_method"]
+
+        invoice.recompute_totals_from_lines()
+        invoice.save()
+
+        ticket.total_amount_cents = _money_to_cents(invoice.total)
+        ticket.payment_method = invoice.payment_method or Ticket.PaymentMethod.CARD
+        ticket.save(update_fields=["total_amount_cents", "payment_method"])
+
+        _system_msg(ticket, u, f"Added catalog item '{item.name}' to invoice draft.")
+        return Response(
+            {
+                "invoice": InvoiceSerializer(invoice).data,
+                "line_item": InvoiceLineItemSerializer(line).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["get"], url_path="invoice-lines")
+    def invoice_lines(self, request, pk=None):
+        u = request.user
+        if role_is(u, "CUSTOMER"):
+            return Response({"detail": "Customers cannot view invoice draft lines here."}, status=403)
+
+        active_biz = _get_active_business_from_request(request)
+        if not active_biz:
+            return Response({"detail": "X-Business-Id required."}, status=400)
+
+        ticket = self.get_object()
+        invoice = (
+            Invoice.objects.filter(ticket_id=ticket.id)
+            .order_by(
+                Case(
+                    When(status=Invoice.Status.DRAFT, then=Value(0)),
+                    When(status=Invoice.Status.SENT, then=Value(1)),
+                    When(status=Invoice.Status.PAID, then=Value(2)),
+                    default=Value(9),
+                    output_field=IntegerField(),
+                ),
+                "-created_at",
+            )
+            .first()
+        )
+        if not invoice:
+            return Response({"invoice": None, "results": []})
+
+        lines = InvoiceLineItem.objects.filter(invoice_id=invoice.id).order_by("sort_order", "id")
+        return Response(
+            {
+                "invoice": InvoiceSerializer(invoice).data,
+                "results": InvoiceLineItemSerializer(lines, many=True).data,
+            }
+        )
+
+    @action(detail=True, methods=["post"], url_path="remove-catalog-line")
+    def remove_catalog_line(self, request, pk=None):
+        u = request.user
+        if role_is(u, "CUSTOMER"):
+            return Response({"detail": "Customers cannot remove catalog items."}, status=403)
+
+        active_biz = _get_active_business_from_request(request)
+        if not active_biz:
+            return Response({"detail": "X-Business-Id required."}, status=400)
+
+        locked_resp = _enforce_business_not_locked(active_biz)
+        if locked_resp:
+            return locked_resp
+
+        ticket = self.get_object()
+
+        catalog_item_id = request.data.get("catalog_item_id")
+        qty_to_remove = Decimal(str(request.data.get("quantity") or "1.00"))
+
+        if not catalog_item_id:
+            return Response({"detail": "catalog_item_id required"}, status=400)
+
+        if qty_to_remove <= 0:
+            return Response({"detail": "quantity must be > 0"}, status=400)
+
+        invoice = (
+            Invoice.objects.filter(ticket_id=ticket.id, status=Invoice.Status.DRAFT)
+            .order_by("-created_at")
+            .first()
+        )
+        if not invoice:
+            return Response({"detail": "No draft invoice found."}, status=404)
+
+        matching_lines = list(
+            InvoiceLineItem.objects.filter(
+                invoice_id=invoice.id,
+                catalog_item_id=int(catalog_item_id),
+            ).order_by("id")
+        )
+        if not matching_lines:
+            return Response({"detail": "Line item not found."}, status=404)
+
+        master = matching_lines[0]
+        merged_qty = Decimal("0.00")
+        for li in matching_lines:
+            merged_qty += Decimal(str(li.quantity or "0.00"))
+
+        master.quantity = merged_qty
+        master.save()
+
+        for extra in matching_lines[1:]:
+            extra.delete()
+
+        master.quantity = Decimal(str(master.quantity or "0.00")) - qty_to_remove
+
+        removed_name = master.name
+
+        if master.quantity <= 0:
+            master.delete()
+        else:
+            master.save()
+
+        invoice.recompute_totals_from_lines()
+        invoice.save()
+
+        ticket.total_amount_cents = _money_to_cents(invoice.total)
+        ticket.payment_method = invoice.payment_method or Ticket.PaymentMethod.CARD
+        ticket.save(update_fields=["total_amount_cents", "payment_method"])
+
+        _system_msg(ticket, u, f"Removed quantity from '{removed_name}'.")
+        return Response({"invoice": InvoiceSerializer(invoice).data, "ok": True})
 
     @action(detail=True, methods=["post"], url_path="mark_viewed")
     def mark_viewed(self, request, pk=None):
@@ -1125,7 +1465,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, TicketParticipantRequired]
 
     def get_queryset(self):
-        qs = Invoice.objects.all().order_by("-created_at")
+        qs = Invoice.objects.all().prefetch_related("line_items").order_by("-created_at")
         ticket_id = self.request.query_params.get("ticket")
         if ticket_id and _invoice_has("ticket_id"):
             qs = qs.filter(ticket_id=ticket_id)

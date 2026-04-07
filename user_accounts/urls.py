@@ -1,4 +1,3 @@
-# backend/user_accounts/urls.py
 from __future__ import annotations
 
 from django.urls import include, path
@@ -62,6 +61,7 @@ from user_accounts.viewsets.tickets import (
 )
 
 from user_accounts.viewsets.templates import DocumentTemplateViewSet
+from user_accounts.viewsets.service_catalog import ServiceCatalogItemViewSet
 from user_accounts.viewsets.categories import ServiceCategoryViewSet
 from user_accounts.viewsets.marketplace import ServiceRequestViewSet
 from user_accounts.viewsets.bootstrap import BootstrapMyBusinessAPIView
@@ -179,6 +179,7 @@ router.register(r"me/businesses", MeBusinessesViewSet, basename="me-businesses")
 # ----------------------------
 router.register(r"service-categories", ServiceCategoryViewSet, basename="service-categories")
 router.register(r"service-requests", ServiceRequestViewSet, basename="service-requests")
+router.register(r"service-catalog", ServiceCatalogItemViewSet, basename="service-catalog")
 
 router.register(r"tickets", TicketViewSet, basename="tickets")
 router.register(r"ticket-messages", TicketMessageViewSet, basename="ticket-messages")

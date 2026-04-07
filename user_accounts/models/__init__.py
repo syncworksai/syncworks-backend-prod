@@ -20,7 +20,7 @@ from .service_requests import ServiceRequest, ServiceRequestPhoto
 from .tickets import Ticket, TicketMessage, TicketAttachment, TicketQuote, TicketViewEvent
 
 # ✅ Job invoices (ticket invoices)
-from .billing import Invoice
+from .billing import Invoice, InvoiceLineItem
 
 # ✅ Cash fee invoices (monthly platform fee on cash GMV)
 from .cash_fee_invoice import CashFeeInvoice
@@ -148,6 +148,7 @@ __all__ = [
     "TicketQuote",
     "TicketViewEvent",
     "Invoice",
+    "InvoiceLineItem",
     "CashFeeInvoice",
     "Connection",
     "InviteCode",

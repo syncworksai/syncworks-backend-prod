@@ -591,8 +591,8 @@ def provider_start(ticket: Ticket, actor_user):
 
 @transaction.atomic
 def provider_complete(ticket: Ticket, actor_user):
-    if ticket.status != Ticket.Status.IN_PROGRESS:
-        raise ValueError("Ticket must be IN_PROGRESS before completing.")
+    if ticket.status not in (Ticket.Status.IN_PROGRESS, Ticket.Status.APPROVED, Ticket.Status.ACCEPTED):
+        raise ValueError("Ticket must be in an active work state before completing.")
 
     ticket.status = Ticket.Status.COMPLETED
     ticket.completed_at = timezone.now()
@@ -678,12 +678,19 @@ def provider_send_invoice(ticket: Ticket, invoice: Invoice, actor_user):
     if not invoice.ticket_id:
         invoice.ticket = ticket
 
+    try:
+        invoice.recompute_totals_from_lines(save=True)
+    except Exception:
+        pass
+
     invoice.status = Invoice.Status.SENT
     invoice.save()
 
     ticket.status = Ticket.Status.INVOICED
     ticket.invoiced_at = timezone.now()
-    ticket.save(update_fields=["status", "invoiced_at"])
+    ticket.total_amount_cents = int((invoice.total or 0) * 100)
+    ticket.payment_method = invoice.payment_method or Ticket.PaymentMethod.CARD
+    ticket.save(update_fields=["status", "invoiced_at", "total_amount_cents", "payment_method"])
 
     TicketMessage.objects.create(
         ticket=ticket,
