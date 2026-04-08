@@ -365,11 +365,9 @@ class TicketViewSet(viewsets.ModelViewSet):
         if role_is(u, "CUSTOMER"):
             return qs.filter(customer_id=u.id).distinct().order_by("-created_at")
 
-        # Explicit marketplace endpoint has its own scoped service method and should not depend on get_queryset.
         if action == "marketplace":
             return qs.none()
 
-        # Provider list endpoints should stay "assigned tickets only" unless the dedicated marketplace route is used.
         provider_list_actions = {None, "list", "my"}
         provider_detailish_actions = {
             "retrieve",
@@ -999,6 +997,9 @@ class TicketViewSet(viewsets.ModelViewSet):
 
         if ticket.assigned_business_id is not None:
             return Response({"detail": "Ticket is already assigned."}, status=400)
+
+        if str(ticket.status or "").upper() != Ticket.Status.NEW:
+            return Response({"detail": "Only NEW marketplace tickets can be declined."}, status=400)
 
         if not is_ticket_eligible_for_business(ticket, active_biz):
             return Response({"detail": "Ticket not eligible for your business region/services."}, status=403)

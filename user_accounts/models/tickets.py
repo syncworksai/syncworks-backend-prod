@@ -1,4 +1,3 @@
-# backend/user_accounts/models/tickets.py
 from __future__ import annotations
 
 from django.conf import settings
@@ -92,9 +91,6 @@ class Ticket(models.Model):
 
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.NEW)
 
-    # ----------------------------
-    # ✅ CASH BILLING TRACKING
-    # ----------------------------
     payment_method = models.CharField(
         max_length=20,
         choices=PaymentMethod.choices,
@@ -120,6 +116,16 @@ class Ticket(models.Model):
         help_text="YYYY-MM last month this ticket's cash fee was included in.",
     )
 
+    # Archive support for SBO/provider queue
+    archived_at = models.DateTimeField(null=True, blank=True)
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="tickets_archived",
+    )
+
     created_at = models.DateTimeField(default=timezone.now)
 
     assigned_at = models.DateTimeField(null=True, blank=True)
@@ -141,10 +147,15 @@ class Ticket(models.Model):
             models.Index(fields=["assigned_business", "created_at"]),
             models.Index(fields=["assigned_business", "payment_method", "cash_confirmed_at"]),
             models.Index(fields=["payment_method", "cash_confirmed_at"]),
+            models.Index(fields=["assigned_business", "archived_at"]),
         ]
 
     def __str__(self) -> str:
         return f"Ticket #{self.id} ({self.status})"
+
+    @property
+    def is_archived(self) -> bool:
+        return self.archived_at is not None
 
 
 class TicketViewEvent(models.Model):

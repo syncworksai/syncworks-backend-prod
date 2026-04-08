@@ -135,7 +135,11 @@ def is_ticket_eligible_for_business(ticket: Ticket, business: Business) -> bool:
 
 
 def marketplace_tickets_for_business(business: Business):
-    qs = Ticket.objects.filter(is_marketplace=True).order_by("-created_at")
+    qs = Ticket.objects.filter(
+        is_marketplace=True,
+        assigned_business__isnull=True,
+        status=Ticket.Status.NEW,
+    ).order_by("-created_at")
 
     if not business or not getattr(business, "is_active", False):
         return qs.none()
@@ -148,7 +152,6 @@ def marketplace_tickets_for_business(business: Business):
         return qs.none()
 
     qs = qs.filter(category_id__in=offered_ids)
-    qs = qs.filter(assigned_business__isnull=True)
 
     declined_ids = TicketViewEvent.objects.filter(
         business_id=business.id,
@@ -160,8 +163,8 @@ def marketplace_tickets_for_business(business: Business):
     qs = qs.exclude(id__in=declined_ids)
 
     qs = qs.filter(
-        Q(service_zip__isnull=False) & ~Q(service_zip="")
-        | Q(service_request__zip_code__isnull=False) & ~Q(service_request__zip_code="")
+        Q(service_zip__isnull=False) & ~Q(service_zip="") |
+        Q(service_request__zip_code__isnull=False) & ~Q(service_request__zip_code="")
     )
 
     base_zip = (getattr(business, "base_zip", "") or "").strip()
@@ -177,6 +180,8 @@ def marketplace_tickets_for_business(business: Business):
         "service_zip",
         "category_id",
         "is_marketplace",
+        "status",
+        "assigned_business_id",
         "service_request__zip_code",
     ):
         if is_ticket_eligible_for_business(t, business):
@@ -257,7 +262,7 @@ def create_request_and_ticket(
         zip_code=clean_zip,
     )
 
-    t = Ticket.objects.create(
+    Ticket.objects.create(
         service_request=sr,
         customer=customer,
         category=category,
@@ -267,6 +272,8 @@ def create_request_and_ticket(
         service_address=clean_addr,
         service_radius_miles=clean_radius,
     )
+
+    t = sr.ticket
 
     TicketMessage.objects.create(
         ticket=t,

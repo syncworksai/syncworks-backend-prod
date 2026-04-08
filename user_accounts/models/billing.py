@@ -117,6 +117,7 @@ class Invoice(models.Model):
     def mark_paid(self, *, method: str | None = None) -> None:
         if method:
             self.payment_method = method
+
         self.status = self.Status.PAID
         self.amount_paid = self.total
         self.paid_at = timezone.now()
@@ -125,6 +126,24 @@ class Invoice(models.Model):
         if self.payment_method == self.PaymentMethod.CARD:
             self.platform_fee_collected = True
             self.platform_fee_collected_at = timezone.now()
+
+        # Sync ticket lifecycle
+        if self.ticket_id and self.ticket:
+            self.ticket.status = Ticket.Status.PAID
+            self.ticket.paid_at = self.paid_at
+            if not self.ticket.invoiced_at:
+                self.ticket.invoiced_at = self.paid_at
+            self.ticket.total_amount_cents = int((_d(self.total) * Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+            self.ticket.payment_method = self.payment_method or Ticket.PaymentMethod.CARD
+            self.ticket.save(
+                update_fields=[
+                    "status",
+                    "paid_at",
+                    "invoiced_at",
+                    "total_amount_cents",
+                    "payment_method",
+                ]
+            )
 
     def mark_platform_fee_collected(self) -> None:
         self.platform_fee_collected = True

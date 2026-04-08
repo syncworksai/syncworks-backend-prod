@@ -516,6 +516,8 @@ class TicketSerializer(serializers.ModelSerializer):
     assigned_business_name = serializers.SerializerMethodField()
     assigned_business_card = serializers.SerializerMethodField()
 
+    is_archived = serializers.SerializerMethodField()
+
     class Meta:
         model = Ticket
         fields = [
@@ -541,6 +543,8 @@ class TicketSerializer(serializers.ModelSerializer):
             "total_amount_cents",
             "cash_confirmed_at",
             "cash_fee_invoiced_month",
+            "archived_at",
+            "is_archived",
             "created_at",
             "assigned_at",
             "accepted_at",
@@ -560,6 +564,8 @@ class TicketSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id",
             "customer",
+            "archived_at",
+            "is_archived",
             "created_at",
             "assigned_at",
             "accepted_at",
@@ -647,6 +653,12 @@ class TicketSerializer(serializers.ModelSerializer):
         except Exception:
             pass
         return None
+
+    def get_is_archived(self, obj) -> bool:
+        try:
+            return bool(obj.archived_at)
+        except Exception:
+            return False
 
 
 class TicketMessageSerializer(serializers.ModelSerializer):
