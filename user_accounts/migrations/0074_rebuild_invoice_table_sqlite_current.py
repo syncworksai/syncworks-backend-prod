@@ -109,6 +109,24 @@ SELECT 1;
 """
 
 
+def rebuild_invoice_table_sqlite_only(apps, schema_editor):
+    if schema_editor.connection.vendor != "sqlite":
+        return
+
+    statements = [s.strip() for s in SQLITE_REBUILD_SQL.split(";") if s.strip()]
+    for statement in statements:
+        schema_editor.execute(statement + ";")
+
+
+def reverse_sqlite_only(apps, schema_editor):
+    if schema_editor.connection.vendor != "sqlite":
+        return
+
+    statements = [s.strip() for s in SQLITE_REVERSE_SQL.split(";") if s.strip()]
+    for statement in statements:
+        schema_editor.execute(statement + ";")
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -116,8 +134,8 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunSQL(
-            sql=SQLITE_REBUILD_SQL,
-            reverse_sql=SQLITE_REVERSE_SQL,
+        migrations.RunPython(
+            rebuild_invoice_table_sqlite_only,
+            reverse_code=reverse_sqlite_only,
         ),
     ]
