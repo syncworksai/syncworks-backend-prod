@@ -18,6 +18,7 @@ from user_accounts.models import (
     TicketViewEvent,
     FavoriteBusiness,
     TicketQuote,
+    ServiceCategory,
 )
 from user_accounts.models.billing import Invoice
 
@@ -105,11 +106,133 @@ def _business_radius(business: Business) -> int:
     return r
 
 
+def _category_ancestor_ids(category: ServiceCategory | None) -> set[int]:
+    """
+    Returns the current category id plus all parent ids up to the root.
+    Leaf example:
+      Fix leaking pipe -> Plumbing -> Home & Property Services
+    returns {leaf_id, group_id, root_id}
+    """
+    ids: set[int] = set()
+    cur = category
+    guard = 0
+
+    while cur is not None and guard < 50:
+        try:
+            if cur.id:
+                ids.add(int(cur.id))
+        except Exception:
+            pass
+        cur = getattr(cur, "parent", None)
+        guard += 1
+
+    return ids
+
+
+def _category_descendant_leaf_ids(category: ServiceCategory | None) -> set[int]:
+    """
+    If a business selected a broad category like Pest Control,
+    return all selectable leaf descendants under it.
+    If it's already a leaf, return just itself.
+    """
+    if category is None:
+        return set()
+
+    try:
+        children = list(category.children.all())
+    except Exception:
+        children = []
+
+    if not children:
+        try:
+            return {int(category.id)} if category.id else set()
+        except Exception:
+            return set()
+
+    found: set[int] = set()
+    stack = children[:]
+    guard = 0
+
+    while stack and guard < 5000:
+        cur = stack.pop()
+        guard += 1
+
+        try:
+            cur_children = list(cur.children.all())
+        except Exception:
+            cur_children = []
+
+        if not cur_children:
+            try:
+                if cur.id:
+                    found.add(int(cur.id))
+            except Exception:
+                pass
+        else:
+            stack.extend(cur_children)
+
+    return found
+
+
+def _business_service_scope_ids(business: Business) -> set[int]:
+    """
+    Expands business.services_offered into the actual ticket-matchable ids.
+
+    If business selected:
+    - a leaf: include that leaf
+    - a group: include all leaf descendants
+    - a root: include all leaf descendants under that root
+    """
+    scope: set[int] = set()
+
+    try:
+        offered = list(business.services_offered.all())
+    except Exception:
+        offered = []
+
+    for cat in offered:
+        scope.update(_category_descendant_leaf_ids(cat))
+
+    return scope
+
+
 def _business_can_take_category(business: Business, ticket: Ticket) -> bool:
+    """
+    Ticket can match if:
+    - exact leaf selected by business
+    - business selected the ticket's parent group
+    - business selected the ticket's root
+    """
     if not ticket.category_id:
         return False
-    offered_ids = list(business.services_offered.values_list("id", flat=True))
-    return ticket.category_id in offered_ids
+
+    try:
+      # exact or expanded descendant matching
+        scoped_leaf_ids = _business_service_scope_ids(business)
+        if int(ticket.category_id) in scoped_leaf_ids:
+            return True
+    except Exception:
+        pass
+
+    try:
+        ticket_cat = ticket.category
+    except Exception:
+        ticket_cat = None
+
+    if not ticket_cat:
+        return False
+
+    try:
+        offered_ids = set(int(x) for x in business.services_offered.values_list("id", flat=True))
+    except Exception:
+        offered_ids = set()
+
+    if not offered_ids:
+        return False
+
+    # direct ancestor matching safety check
+    ticket_ancestors = _category_ancestor_ids(ticket_cat)
+    return bool(ticket_ancestors & offered_ids)
 
 
 def is_ticket_eligible_for_business(ticket: Ticket, business: Business) -> bool:
@@ -139,7 +262,7 @@ def marketplace_tickets_for_business(business: Business):
         is_marketplace=True,
         assigned_business__isnull=True,
         status=Ticket.Status.NEW,
-    ).order_by("-created_at")
+    ).select_related("category", "service_request").order_by("-created_at")
 
     if not business or not getattr(business, "is_active", False):
         return qs.none()
@@ -147,11 +270,11 @@ def marketplace_tickets_for_business(business: Business):
     if not getattr(business, "accepts_marketplace_tickets", False):
         return qs.none()
 
-    offered_ids = list(business.services_offered.values_list("id", flat=True))
-    if not offered_ids:
+    try:
+        if not business.services_offered.exists():
+            return qs.none()
+    except Exception:
         return qs.none()
-
-    qs = qs.filter(category_id__in=offered_ids)
 
     declined_ids = TicketViewEvent.objects.filter(
         business_id=business.id,
@@ -171,11 +294,13 @@ def marketplace_tickets_for_business(business: Business):
     if not base_zip:
         return qs.none()
 
-    exact = qs.filter(Q(service_zip__iexact=base_zip) | Q(service_request__zip_code__iexact=base_zip))
+    exact_zip = qs.filter(Q(service_zip__iexact=base_zip) | Q(service_request__zip_code__iexact=base_zip))
+    exact_zip = [t for t in exact_zip if is_ticket_eligible_for_business(t, business)]
+
     candidates = qs.exclude(Q(service_zip__iexact=base_zip) | Q(service_request__zip_code__iexact=base_zip))
 
-    ids: list[int] = []
-    for t in candidates.select_related("service_request").only(
+    matched_ids: list[int] = []
+    for t in candidates.only(
         "id",
         "service_zip",
         "category_id",
@@ -183,21 +308,21 @@ def marketplace_tickets_for_business(business: Business):
         "status",
         "assigned_business_id",
         "service_request__zip_code",
+        "category__id",
+        "category__parent_id",
     ):
         if is_ticket_eligible_for_business(t, business):
-            ids.append(t.id)
+            matched_ids.append(t.id)
 
-    if ids:
-        return (exact | Ticket.objects.filter(id__in=ids)).distinct().order_by("-created_at")
+    combined_ids = [t.id for t in exact_zip] + matched_ids
+    if not combined_ids:
+        return qs.none()
 
-    return exact.distinct().order_by("-created_at")
+    return Ticket.objects.filter(id__in=combined_ids).select_related("category", "service_request").distinct().order_by("-created_at")
 
 
 def ticket_eligible_businesses(ticket: Ticket):
-    qs = Business.objects.filter(is_active=True).order_by("name")
-
-    if ticket.category_id:
-        qs = qs.filter(services_offered__id=ticket.category_id)
+    qs = Business.objects.filter(is_active=True).prefetch_related("services_offered").order_by("name")
 
     if ticket.is_marketplace:
         qs = qs.filter(accepts_marketplace_tickets=True)
@@ -206,18 +331,16 @@ def ticket_eligible_businesses(ticket: Ticket):
     if not tzip:
         return Business.objects.none()
 
-    exact = qs.filter(base_zip__iexact=tzip)
-    candidates = qs.exclude(base_zip__iexact=tzip).exclude(Q(base_zip__isnull=True) | Q(base_zip=""))
+    matched_ids: list[int] = []
 
-    ids: list[int] = []
-    for b in candidates.only("id", "base_zip", "service_radius_miles", "accepts_marketplace_tickets", "is_active"):
-        if _zip_within_radius((b.base_zip or ""), tzip, _business_radius(b)):
-            ids.append(b.id)
+    for b in qs.only("id", "name", "base_zip", "service_radius_miles", "accepts_marketplace_tickets", "is_active"):
+        if is_ticket_eligible_for_business(ticket, b):
+            matched_ids.append(b.id)
 
-    if ids:
-        return (exact | Business.objects.filter(id__in=ids)).distinct().order_by("name")
+    if not matched_ids:
+        return Business.objects.none()
 
-    return exact.distinct().order_by("name")
+    return Business.objects.filter(id__in=matched_ids).distinct().order_by("name")
 
 
 def _coerce_radius(service_radius_miles: Optional[int]) -> int:
