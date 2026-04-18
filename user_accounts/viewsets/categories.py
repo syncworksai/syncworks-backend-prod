@@ -17,6 +17,7 @@ def _truthy(v) -> bool:
 class ServiceCategoryViewSet(viewsets.ReadOnlyModelViewSet):
     """
     Wizard endpoints:
+      GET /api/v1/service-categories/
       GET /api/v1/service-categories/roots/
       GET /api/v1/service-categories/{id}/children/
       GET /api/v1/service-categories/search/?q=jump
@@ -28,12 +29,22 @@ class ServiceCategoryViewSet(viewsets.ReadOnlyModelViewSet):
       ?parent=<id>
       ?roots=1
       ?leaf_only=1
+
+    IMPORTANT:
+    We disable pagination here because the setup wizard and category picker
+    need the full active taxonomy, not just the first global DRF page.
     """
     serializer_class = ServiceCategorySerializer
     permission_classes = [AllowAny]
+    pagination_class = None
 
     def _base_qs(self):
-        return ServiceCategory.objects.filter(is_active=True).select_related("parent").order_by("sort_order", "name")
+        return (
+            ServiceCategory.objects
+            .filter(is_active=True)
+            .select_related("parent")
+            .order_by("sort_order", "name")
+        )
 
     def get_queryset(self):
         qs = self._base_qs()
