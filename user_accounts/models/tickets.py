@@ -116,7 +116,6 @@ class Ticket(models.Model):
         help_text="YYYY-MM last month this ticket's cash fee was included in.",
     )
 
-    # Archive support for SBO/provider queue
     archived_at = models.DateTimeField(null=True, blank=True)
     archived_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -148,6 +147,8 @@ class Ticket(models.Model):
             models.Index(fields=["assigned_business", "payment_method", "cash_confirmed_at"]),
             models.Index(fields=["payment_method", "cash_confirmed_at"]),
             models.Index(fields=["assigned_business", "archived_at"]),
+            models.Index(fields=["is_marketplace", "created_at"]),
+            models.Index(fields=["is_marketplace", "status"]),
         ]
 
     def __str__(self) -> str:
@@ -156,6 +157,14 @@ class Ticket(models.Model):
     @property
     def is_archived(self) -> bool:
         return self.archived_at is not None
+
+    @property
+    def ticket_code(self) -> str:
+        try:
+            prefix = "MP" if bool(self.is_marketplace) else "DT"
+            return f"{prefix}-{int(self.id):06d}"
+        except Exception:
+            return "DT-000000"
 
 
 class TicketViewEvent(models.Model):

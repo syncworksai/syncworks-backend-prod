@@ -504,6 +504,11 @@ class AssignedBusinessCardSerializer(serializers.ModelSerializer):
 class TicketSerializer(serializers.ModelSerializer):
     customer = serializers.PrimaryKeyRelatedField(read_only=True)
 
+    ticket_code = serializers.SerializerMethodField()
+    customer_name = serializers.SerializerMethodField()
+    service_address_display = serializers.SerializerMethodField()
+    quick_summary = serializers.SerializerMethodField()
+
     category_name = serializers.SerializerMethodField()
     category_key = serializers.SerializerMethodField()
     category_path = serializers.SerializerMethodField()
@@ -522,8 +527,12 @@ class TicketSerializer(serializers.ModelSerializer):
         model = Ticket
         fields = [
             "id",
-            "service_request",
+            "ticket_code",
             "customer",
+            "customer_name",
+            "service_address_display",
+            "quick_summary",
+            "service_request",
             "category",
             "category_name",
             "category_key",
@@ -563,7 +572,11 @@ class TicketSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "ticket_code",
             "customer",
+            "customer_name",
+            "service_address_display",
+            "quick_summary",
             "archived_at",
             "is_archived",
             "created_at",
@@ -589,6 +602,56 @@ class TicketSerializer(serializers.ModelSerializer):
             "assigned_business_name",
             "assigned_business_card",
         ]
+
+    def _is_customer_request(self) -> bool:
+        try:
+            request = self.context.get("request")
+            user = getattr(request, "user", None)
+            role = (getattr(user, "role", "") or "").upper()
+            return role == "CUSTOMER"
+        except Exception:
+            return False
+
+    def get_ticket_code(self, obj) -> str:
+        try:
+            return obj.ticket_code
+        except Exception:
+            try:
+                prefix = "MP" if bool(getattr(obj, "is_marketplace", False)) else "DT"
+                return f"{prefix}-{int(obj.id):06d}"
+            except Exception:
+                return "DT-000000"
+
+    def get_customer_name(self, obj) -> str:
+        try:
+            return _user_display(getattr(obj, "customer", None))
+        except Exception:
+            return "Customer"
+
+    def get_service_address_display(self, obj) -> str:
+        try:
+            if (obj.service_address or "").strip():
+                return obj.service_address.strip()
+        except Exception:
+            pass
+        try:
+            sr = getattr(obj, "service_request", None)
+            if sr and (sr.address or "").strip():
+                return sr.address.strip()
+        except Exception:
+            pass
+        return "No service address"
+
+    def get_quick_summary(self, obj):
+        try:
+            return {
+                "type": "Marketplace" if bool(obj.is_marketplace) else "Direct",
+                "status": obj.status,
+                "assigned": bool(obj.assigned_business_id),
+                "payment": getattr(obj, "payment_method", "—"),
+            }
+        except Exception:
+            return {}
 
     def get_category_name(self, obj) -> str:
         try:
@@ -616,6 +679,8 @@ class TicketSerializer(serializers.ModelSerializer):
             return ""
 
     def get_latest_quote(self, obj):
+        if self._is_customer_request():
+            return None
         try:
             q = obj.quotes.order_by("-created_at").first()
             return TicketQuoteSerializer(q).data if q else None
@@ -625,7 +690,21 @@ class TicketSerializer(serializers.ModelSerializer):
     def get_latest_invoice(self, obj):
         try:
             inv = obj.invoices.order_by("-created_at").prefetch_related("line_items").first()
-            return InvoiceSerializer(inv).data if inv else None
+            if not inv:
+                return None
+
+            if self._is_customer_request():
+                visible_statuses = set()
+                try:
+                    visible_statuses.add(Invoice.Status.SENT)
+                    visible_statuses.add(Invoice.Status.PAID)
+                except Exception:
+                    visible_statuses.update({"SENT", "PAID"})
+
+                if str(getattr(inv, "status", "")).upper() not in {str(x).upper() for x in visible_statuses}:
+                    return None
+
+            return InvoiceSerializer(inv).data
         except Exception:
             return None
 

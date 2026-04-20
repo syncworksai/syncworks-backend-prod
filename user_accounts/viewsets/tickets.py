@@ -5,6 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from django.db.models import Q, Case, When, IntegerField, Value
 from django.template import Context, Engine, TemplateSyntaxError
+from django.utils import timezone
 
 from rest_framework import serializers, viewsets, status
 from rest_framework.decorators import action
@@ -331,6 +332,16 @@ class TicketViewSet(viewsets.ModelViewSet):
             .order_by("-created_at")
         )
 
+    def _apply_archive_filter(self, qs):
+        archived = self.request.query_params.get("archived")
+        if archived is None:
+            return qs
+
+        truthy = str(archived).strip().lower() in {"1", "true", "yes", "y", "on"}
+        if truthy:
+            return qs.filter(archived_at__isnull=False)
+        return qs.filter(archived_at__isnull=True)
+
     def _eligible_marketplace_ticket_ids_for_business(self, business: Business | None) -> list[int]:
         if not business:
             return []
@@ -356,7 +367,7 @@ class TicketViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         u = self.request.user
-        qs = self._base_queryset()
+        qs = self._apply_archive_filter(self._base_queryset())
         action = getattr(self, "action", None)
 
         if getattr(u, "is_superuser", False) or getattr(u, "is_platform_admin", False):
@@ -394,6 +405,8 @@ class TicketViewSet(viewsets.ModelViewSet):
             "add_catalog_item",
             "invoice_lines",
             "remove_catalog_line",
+            "archive",
+            "unarchive",
         }
 
         active_biz = _get_active_business_from_request(self.request)
@@ -447,6 +460,28 @@ class TicketViewSet(viewsets.ModelViewSet):
     def my(self, request):
         return Response(TicketSerializer(self.get_queryset(), many=True, context=self.get_serializer_context()).data)
 
+    @action(detail=False, methods=["get"], url_path="kpi-summary")
+    def kpi_summary(self, request):
+        u = request.user
+        if not (getattr(u, "is_superuser", False) or getattr(u, "is_platform_admin", False)):
+            return Response({"detail": "Not authorized."}, status=403)
+
+        qs = Ticket.objects.all()
+
+        return Response(
+            {
+                "tickets_total": qs.count(),
+                "tickets_direct": qs.filter(is_marketplace=False).count(),
+                "tickets_marketplace": qs.filter(is_marketplace=True).count(),
+                "tickets_archived": qs.filter(archived_at__isnull=False).count(),
+                "tickets_active": qs.filter(archived_at__isnull=True).count(),
+                "completed_direct": qs.filter(is_marketplace=False, status=Ticket.Status.COMPLETED).count(),
+                "completed_marketplace": qs.filter(is_marketplace=True, status=Ticket.Status.COMPLETED).count(),
+                "paid_direct": qs.filter(is_marketplace=False, status=Ticket.Status.PAID).count(),
+                "paid_marketplace": qs.filter(is_marketplace=True, status=Ticket.Status.PAID).count(),
+            }
+        )
+
     @action(detail=False, methods=["get"], url_path="marketplace")
     def marketplace(self, request):
         u = request.user
@@ -463,6 +498,84 @@ class TicketViewSet(viewsets.ModelViewSet):
 
         qs = marketplace_tickets_for_business(active_biz)
         return Response(TicketSerializer(qs, many=True, context=self.get_serializer_context()).data)
+
+    @action(detail=True, methods=["post"], url_path="archive")
+    def archive(self, request, pk=None):
+        ticket = self.get_object()
+        u = request.user
+
+        if role_is(u, "CUSTOMER"):
+            return Response({"detail": "Customers cannot archive tickets."}, status=403)
+
+        active_biz = _get_active_business_from_request(request)
+        if active_biz:
+            locked_resp = _enforce_business_not_locked(active_biz)
+            if locked_resp:
+                return locked_resp
+
+            if ticket.assigned_business_id and ticket.assigned_business_id != active_biz.id:
+                return Response({"detail": "Ticket belongs to a different business."}, status=403)
+
+        if ticket.archived_at:
+            return Response(
+                {
+                    "detail": "Ticket is already archived.",
+                    "ticket": TicketSerializer(ticket, context=self.get_serializer_context()).data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        ticket.archived_at = timezone.now()
+        ticket.archived_by = u
+        ticket.save(update_fields=["archived_at", "archived_by"])
+
+        _system_msg(ticket, u, "Ticket archived.")
+        ticket.refresh_from_db()
+        return Response(
+            {
+                "detail": "Ticket archived.",
+                "ticket": TicketSerializer(ticket, context=self.get_serializer_context()).data,
+            }
+        )
+
+    @action(detail=True, methods=["post"], url_path="unarchive")
+    def unarchive(self, request, pk=None):
+        ticket = self.get_object()
+        u = request.user
+
+        if role_is(u, "CUSTOMER"):
+            return Response({"detail": "Customers cannot unarchive tickets."}, status=403)
+
+        active_biz = _get_active_business_from_request(request)
+        if active_biz:
+            locked_resp = _enforce_business_not_locked(active_biz)
+            if locked_resp:
+                return locked_resp
+
+            if ticket.assigned_business_id and ticket.assigned_business_id != active_biz.id:
+                return Response({"detail": "Ticket belongs to a different business."}, status=403)
+
+        if not ticket.archived_at:
+            return Response(
+                {
+                    "detail": "Ticket is already active.",
+                    "ticket": TicketSerializer(ticket, context=self.get_serializer_context()).data,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        ticket.archived_at = None
+        ticket.archived_by = None
+        ticket.save(update_fields=["archived_at", "archived_by"])
+
+        _system_msg(ticket, u, "Ticket restored from archive.")
+        ticket.refresh_from_db()
+        return Response(
+            {
+                "detail": "Ticket restored.",
+                "ticket": TicketSerializer(ticket, context=self.get_serializer_context()).data,
+            }
+        )
 
     @action(detail=True, methods=["get"], url_path="eligible-providers")
     def eligible_providers(self, request, pk=None):
