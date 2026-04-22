@@ -108,6 +108,17 @@ def _employee_can_complete(mem: Optional[BusinessMember], ticket: Ticket) -> boo
     return bool(_employee_is_assigned_tech(mem, ticket) or getattr(mem, "can_close_tickets", False))
 
 
+def _employee_can_manual_override(mem: Optional[BusinessMember]) -> bool:
+    if not mem:
+        return False
+    return bool(
+        getattr(mem, "can_manage_schedule", False)
+        or getattr(mem, "can_assign_tickets", False)
+        or getattr(mem, "can_close_tickets", False)
+        or _member_role(mem) in {"OWNER", "MANAGER", "DISPATCH", "ADMIN"}
+    )
+
+
 def _get_active_business_from_request(request) -> Business | None:
     raw = (
         request.headers.get("X-Business-Id")
@@ -344,6 +355,10 @@ class CatalogLineAddSerializer(serializers.Serializer):
         return v
 
 
+class TicketManualStatusSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=Ticket.Status.choices)
+
+
 class TicketViewSet(viewsets.ModelViewSet):
     serializer_class = TicketSerializer
     permission_classes = [IsAuthenticated]
@@ -421,6 +436,7 @@ class TicketViewSet(viewsets.ModelViewSet):
             "on_site",
             "start",
             "complete",
+            "set_status",
             "needs_quote",
             "send_quote",
             "approve_quote",
@@ -791,6 +807,103 @@ class TicketViewSet(viewsets.ModelViewSet):
         ticket.save(update_fields=["assigned_member"])
 
         _system_msg(ticket, u, "Unassigned technician/member.")
+        ticket.refresh_from_db()
+        return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
+
+    @action(detail=True, methods=["post"], url_path="set-status")
+    def set_status(self, request, pk=None):
+        u = request.user
+        if role_is(u, "CUSTOMER"):
+            return Response({"detail": "Customers cannot manually change ticket status."}, status=403)
+
+        active_biz = _get_active_business_from_request(request)
+        if not active_biz:
+            return Response({"detail": "X-Business-Id required."}, status=400)
+
+        locked_resp = _enforce_business_not_locked(active_biz)
+        if locked_resp:
+            return locked_resp
+
+        ticket = self.get_object()
+        if ticket.assigned_business_id and ticket.assigned_business_id != active_biz.id:
+            return Response({"detail": "Ticket is assigned to a different business."}, status=403)
+
+        mem = get_active_membership(u, active_biz.id)
+        is_owner = getattr(active_biz, "owner_id", None) == u.id
+        if mem and not _employee_can_manual_override(mem) and not is_owner:
+            return Response({"detail": "Not allowed."}, status=403)
+
+        ser = TicketManualStatusSerializer(data=request.data or {})
+        ser.is_valid(raise_exception=True)
+        new_status = str(ser.validated_data["status"] or "").upper()
+
+        now = timezone.now()
+        update_fields = ["status"]
+
+        ticket.status = new_status
+
+        if new_status == Ticket.Status.ASSIGNED:
+            if not ticket.assigned_at:
+                ticket.assigned_at = now
+                update_fields.append("assigned_at")
+
+        elif new_status == Ticket.Status.ACCEPTED:
+            if not ticket.accepted_at:
+                ticket.accepted_at = now
+                update_fields.append("accepted_at")
+
+        elif new_status == Ticket.Status.SCHEDULED:
+            if not ticket.scheduled_at:
+                ticket.scheduled_at = now
+                update_fields.append("scheduled_at")
+
+        elif new_status == Ticket.Status.EN_ROUTE:
+            if not ticket.en_route_at:
+                ticket.en_route_at = now
+                update_fields.append("en_route_at")
+
+        elif new_status == Ticket.Status.ON_SITE:
+            if not ticket.on_site_at:
+                ticket.on_site_at = now
+                update_fields.append("on_site_at")
+
+        elif new_status == Ticket.Status.IN_PROGRESS:
+            if not ticket.started_at:
+                ticket.started_at = now
+                update_fields.append("started_at")
+
+        elif new_status == Ticket.Status.AWAITING_APPROVAL:
+            if not ticket.awaiting_approval_at:
+                ticket.awaiting_approval_at = now
+                update_fields.append("awaiting_approval_at")
+
+        elif new_status == Ticket.Status.COMPLETED:
+            if not ticket.completed_at:
+                ticket.completed_at = now
+                update_fields.append("completed_at")
+
+        elif new_status == Ticket.Status.INVOICED:
+            if not ticket.invoiced_at:
+                ticket.invoiced_at = now
+                update_fields.append("invoiced_at")
+
+        elif new_status == Ticket.Status.PAID:
+            if not ticket.paid_at:
+                ticket.paid_at = now
+                update_fields.append("paid_at")
+
+        elif new_status == Ticket.Status.CANCELLED:
+            if not ticket.cancelled_at:
+                ticket.cancelled_at = now
+                update_fields.append("cancelled_at")
+
+        elif new_status == Ticket.Status.CLOSED:
+            if not ticket.closed_at:
+                ticket.closed_at = now
+                update_fields.append("closed_at")
+
+        ticket.save(update_fields=update_fields)
+        _system_msg(ticket, u, f"Manual status override: {new_status}.")
         ticket.refresh_from_db()
         return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
 
