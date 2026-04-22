@@ -52,6 +52,9 @@ from user_accounts.services.tickets import (
     marketplace_tickets_for_business,
     is_ticket_eligible_for_business,
     provider_accept,
+    provider_schedule,
+    provider_mark_en_route,
+    provider_mark_on_site,
     provider_start,
     provider_complete,
     cancel_ticket,
@@ -68,6 +71,10 @@ def role_is(u, *names: str) -> bool:
     return r in {n.upper() for n in names}
 
 
+def _member_role(mem: Optional[BusinessMember]) -> str:
+    return str(getattr(mem, "role", "") or "").upper()
+
+
 def _employee_can_change_status(mem: Optional[BusinessMember]) -> bool:
     if not mem:
         return False
@@ -78,6 +85,27 @@ def _employee_can_assign(mem: Optional[BusinessMember]) -> bool:
     if not mem:
         return False
     return bool(getattr(mem, "can_assign_tickets", False))
+
+
+def _employee_can_schedule(mem: Optional[BusinessMember]) -> bool:
+    if not mem:
+        return False
+    return bool(
+        getattr(mem, "can_manage_schedule", False)
+        or _member_role(mem) in {"OWNER", "MANAGER", "DISPATCH", "ADMIN"}
+    )
+
+
+def _employee_is_assigned_tech(mem: Optional[BusinessMember], ticket: Ticket) -> bool:
+    if not mem:
+        return False
+    return int(getattr(ticket, "assigned_member_id", 0) or 0) == int(getattr(mem, "user_id", 0) or 0)
+
+
+def _employee_can_complete(mem: Optional[BusinessMember], ticket: Ticket) -> bool:
+    if not mem:
+        return False
+    return bool(_employee_is_assigned_tech(mem, ticket) or getattr(mem, "can_close_tickets", False))
 
 
 def _get_active_business_from_request(request) -> Business | None:
@@ -388,6 +416,9 @@ class TicketViewSet(viewsets.ModelViewSet):
             "mark_viewed",
             "decline_marketplace",
             "accept",
+            "schedule",
+            "en_route",
+            "on_site",
             "start",
             "complete",
             "needs_quote",
@@ -678,6 +709,9 @@ class TicketViewSet(viewsets.ModelViewSet):
                         ).strip()
                         or (getattr(m.user, "email", "") or "")
                     ),
+                    "can_manage_schedule": bool(getattr(m, "can_manage_schedule", False)),
+                    "can_assign_tickets": bool(getattr(m, "can_assign_tickets", False)),
+                    "can_close_tickets": bool(getattr(m, "can_close_tickets", False)),
                 }
                 for m in qs
             ]
@@ -720,7 +754,12 @@ class TicketViewSet(viewsets.ModelViewSet):
             return Response({"detail": "BusinessMember not found"}, status=404)
 
         ticket.assigned_member_id = bm.user_id
-        ticket.save(update_fields=["assigned_member_id"])
+        if str(ticket.status or "").upper() == Ticket.Status.NEW and ticket.assigned_business_id == active_biz.id:
+            ticket.status = Ticket.Status.ASSIGNED
+            ticket.assigned_at = ticket.assigned_at or timezone.now()
+            ticket.save(update_fields=["assigned_member_id", "status", "assigned_at"])
+        else:
+            ticket.save(update_fields=["assigned_member_id"])
 
         _system_msg(ticket, u, f"Assigned to {bm.user.email if bm.user_id else 'member'}.")
         ticket.refresh_from_db()
@@ -1207,6 +1246,107 @@ class TicketViewSet(viewsets.ModelViewSet):
 
         return Response({"detail": "Only provider can accept."}, status=403)
 
+    @action(detail=True, methods=["post"], url_path="schedule")
+    def schedule(self, request, pk=None):
+        ticket = self.get_object()
+        u = request.user
+
+        if role_is(u, "CUSTOMER"):
+            return Response({"detail": "Customers cannot schedule tickets."}, status=403)
+
+        active_biz = _get_active_business_from_request(request)
+        if not active_biz:
+            return Response({"detail": "X-Business-Id required."}, status=400)
+
+        locked_resp = _enforce_business_not_locked(active_biz)
+        if locked_resp:
+            return locked_resp
+
+        if not ticket.assigned_business_id:
+            assign_ticket_to_business(ticket, active_biz)
+        elif ticket.assigned_business_id != active_biz.id:
+            return Response({"detail": "Ticket is assigned to a different business."}, status=403)
+
+        mem = get_active_membership(u, active_biz.id)
+        if mem and not _employee_can_schedule(mem) and getattr(active_biz, "owner_id", None) != u.id:
+            return Response({"detail": "Not allowed."}, status=403)
+
+        try:
+            provider_schedule(ticket, u, mem)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=403)
+
+        ticket.refresh_from_db()
+        return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
+
+    @action(detail=True, methods=["post"], url_path="en-route")
+    def en_route(self, request, pk=None):
+        ticket = self.get_object()
+        u = request.user
+
+        if role_is(u, "CUSTOMER"):
+            return Response({"detail": "Customers cannot mark En Route."}, status=403)
+
+        active_biz = _get_active_business_from_request(request)
+        if not active_biz:
+            return Response({"detail": "X-Business-Id required."}, status=400)
+
+        locked_resp = _enforce_business_not_locked(active_biz)
+        if locked_resp:
+            return locked_resp
+
+        if ticket.assigned_business_id != active_biz.id:
+            return Response({"detail": "Ticket is assigned to a different business."}, status=403)
+
+        mem = get_active_membership(u, active_biz.id)
+        if mem and not _employee_is_assigned_tech(mem, ticket) and getattr(active_biz, "owner_id", None) != u.id:
+            return Response({"detail": "Only the assigned technician can mark En Route."}, status=403)
+
+        try:
+            provider_mark_en_route(ticket, u, mem)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=403)
+
+        ticket.refresh_from_db()
+        return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
+
+    @action(detail=True, methods=["post"], url_path="on-site")
+    def on_site(self, request, pk=None):
+        ticket = self.get_object()
+        u = request.user
+
+        if role_is(u, "CUSTOMER"):
+            return Response({"detail": "Customers cannot mark On Site."}, status=403)
+
+        active_biz = _get_active_business_from_request(request)
+        if not active_biz:
+            return Response({"detail": "X-Business-Id required."}, status=400)
+
+        locked_resp = _enforce_business_not_locked(active_biz)
+        if locked_resp:
+            return locked_resp
+
+        if ticket.assigned_business_id != active_biz.id:
+            return Response({"detail": "Ticket is assigned to a different business."}, status=403)
+
+        mem = get_active_membership(u, active_biz.id)
+        if mem and not _employee_is_assigned_tech(mem, ticket) and getattr(active_biz, "owner_id", None) != u.id:
+            return Response({"detail": "Only the assigned technician can mark On Site."}, status=403)
+
+        try:
+            provider_mark_on_site(ticket, u, mem)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=403)
+
+        ticket.refresh_from_db()
+        return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
+
     @action(detail=True, methods=["post"], url_path="start")
     def start(self, request, pk=None):
         ticket = self.get_object()
@@ -1222,13 +1362,16 @@ class TicketViewSet(viewsets.ModelViewSet):
                 return locked_resp
 
             mem = get_active_membership(u, active_biz.id)
-            if mem and not _employee_can_change_status(mem) and getattr(active_biz, "owner_id", None) != u.id:
-                return Response({"detail": "Not allowed."}, status=403)
+            is_owner = getattr(active_biz, "owner_id", None) == u.id
+            if mem and not _employee_is_assigned_tech(mem, ticket) and not is_owner:
+                return Response({"detail": "Only the assigned technician can start work."}, status=403)
 
             try:
-                provider_start(ticket, u)
+                provider_start(ticket, u, mem if not is_owner else None)
             except ValueError as e:
                 return Response({"detail": str(e)}, status=400)
+            except Exception as e:
+                return Response({"detail": str(e)}, status=403)
 
             ticket.refresh_from_db()
             return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
@@ -1240,7 +1383,7 @@ class TicketViewSet(viewsets.ModelViewSet):
                 if locked_resp:
                     return locked_resp
             try:
-                provider_start(ticket, u)
+                provider_start(ticket, u, None)
             except ValueError as e:
                 return Response({"detail": str(e)}, status=400)
 
@@ -1258,11 +1401,11 @@ class TicketViewSet(viewsets.ModelViewSet):
                     return locked_resp
 
             mem = get_active_membership(u, ticket.assigned_business_id)
-            if not _employee_can_change_status(mem):
-                return Response({"detail": "Not allowed."}, status=403)
+            if not _employee_is_assigned_tech(mem, ticket):
+                return Response({"detail": "Only the assigned technician can start work."}, status=403)
 
             try:
-                provider_start(ticket, u)
+                provider_start(ticket, u, mem)
             except ValueError as e:
                 return Response({"detail": str(e)}, status=400)
 
@@ -1286,13 +1429,16 @@ class TicketViewSet(viewsets.ModelViewSet):
                 return locked_resp
 
             mem = get_active_membership(u, active_biz.id)
-            if mem and not _employee_can_change_status(mem) and getattr(active_biz, "owner_id", None) != u.id:
+            is_owner = getattr(active_biz, "owner_id", None) == u.id
+            if mem and not _employee_can_complete(mem, ticket) and not is_owner:
                 return Response({"detail": "Not allowed."}, status=403)
 
             try:
-                provider_complete(ticket, u)
+                provider_complete(ticket, u, mem if not is_owner else None)
             except ValueError as e:
                 return Response({"detail": str(e)}, status=400)
+            except Exception as e:
+                return Response({"detail": str(e)}, status=403)
 
             ticket.refresh_from_db()
             return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
@@ -1305,7 +1451,7 @@ class TicketViewSet(viewsets.ModelViewSet):
                     return locked_resp
 
             try:
-                provider_complete(ticket, u)
+                provider_complete(ticket, u, None)
             except ValueError as e:
                 return Response({"detail": str(e)}, status=400)
 
@@ -1323,11 +1469,11 @@ class TicketViewSet(viewsets.ModelViewSet):
                     return locked_resp
 
             mem = get_active_membership(u, ticket.assigned_business_id)
-            if not _employee_can_change_status(mem):
+            if not _employee_can_complete(mem, ticket):
                 return Response({"detail": "Not allowed."}, status=403)
 
             try:
-                provider_complete(ticket, u)
+                provider_complete(ticket, u, mem)
             except ValueError as e:
                 return Response({"detail": str(e)}, status=400)
 
