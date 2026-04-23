@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from django.db.models import Q
-from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -9,10 +8,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from user_accounts.models import Business, BusinessMember
-from user_accounts.permissions import (
-    IsSboOrPlatformOwner,
-    CanManageTeamForBusiness,
-)
 from user_accounts.serializers.business import BusinessSerializer, BusinessMemberSerializer
 from user_accounts.serializers.employees import (
     EmployeeInviteCreateSerializer,
@@ -32,6 +27,51 @@ def _is_platform_admin(user) -> bool:
         or getattr(user, "is_superuser", False)
         or getattr(user, "is_staff", False)
     )
+
+
+def _can_access_business(user, business: Business) -> bool:
+    if _is_platform_admin(user):
+        return True
+    if getattr(business, "owner_id", None) == getattr(user, "id", None):
+        return True
+    return BusinessMember.objects.filter(
+        business=business,
+        user=user,
+        is_active=True,
+    ).exists()
+
+
+def _can_manage_team(user, business: Business) -> bool:
+    if _is_platform_admin(user):
+        return True
+
+    if getattr(business, "owner_id", None) == getattr(user, "id", None):
+        return True
+
+    member = BusinessMember.objects.filter(
+        business=business,
+        user=user,
+        is_active=True,
+    ).first()
+
+    if not member:
+        return False
+
+    member_role = str(getattr(member, "role", "") or "").upper()
+    return bool(
+        getattr(member, "can_manage_team", False)
+        or member_role in {"OWNER", "MANAGER", "DISPATCH", "ADMIN"}
+    )
+
+
+def _require_business_access(user, business: Business) -> None:
+    if not _can_access_business(user, business):
+        raise PermissionDenied("You do not have access to this business.")
+
+
+def _require_team_manage_access(user, business: Business) -> None:
+    if not _can_manage_team(user, business):
+        raise PermissionDenied("You do not have permission to manage team members for this business.")
 
 
 class BusinessViewSet(viewsets.ModelViewSet):
@@ -86,7 +126,7 @@ class BusinessTeamViewSet(viewsets.ViewSet):
       GET  /businesses/{id}/members/
     """
 
-    permission_classes = [IsAuthenticated, IsSboOrPlatformOwner]
+    permission_classes = [IsAuthenticated]
 
     def _get_business(self, pk: int) -> Business:
         try:
@@ -94,15 +134,25 @@ class BusinessTeamViewSet(viewsets.ViewSet):
         except Business.DoesNotExist:
             raise ValidationError({"detail": "Business not found."})
 
-    @action(
-        detail=True,
-        methods=["post"],
-        url_path="invite-employee",
-        permission_classes=[IsAuthenticated, IsSboOrPlatformOwner, CanManageTeamForBusiness],
-    )
+    @action(detail=True, methods=["get"], url_path="members")
+    def members(self, request, pk=None):
+        business = self._get_business(pk)
+        _require_business_access(request.user, business)
+
+        qs = (
+            BusinessMember.objects.filter(business=business)
+            .select_related("user")
+            .order_by("id")
+        )
+        return Response(
+            BusinessMemberSerializer(qs, many=True).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"], url_path="invite-employee")
     def invite_employee(self, request, pk=None):
         business = self._get_business(pk)
-        CanManageTeamForBusiness().check_object_permission(request, self, business)
+        _require_team_manage_access(request.user, business)
 
         ser = EmployeeInviteCreateSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
@@ -119,26 +169,6 @@ class BusinessTeamViewSet(viewsets.ViewSet):
             status=status.HTTP_201_CREATED,
         )
 
-    @action(
-        detail=True,
-        methods=["get"],
-        url_path="members",
-        permission_classes=[IsAuthenticated, IsSboOrPlatformOwner, CanManageTeamForBusiness],
-    )
-    def members(self, request, pk=None):
-        business = self._get_business(pk)
-        CanManageTeamForBusiness().check_object_permission(request, self, business)
-
-        qs = (
-            BusinessMember.objects.filter(business=business)
-            .select_related("user")
-            .order_by("id")
-        )
-        return Response(
-            BusinessMemberSerializer(qs, many=True).data,
-            status=status.HTTP_200_OK,
-        )
-
 
 class BusinessMemberViewSet(viewsets.ModelViewSet):
     """
@@ -147,25 +177,28 @@ class BusinessMemberViewSet(viewsets.ModelViewSet):
       POST  /business-members/{id}/terminate/
     """
 
-    queryset = BusinessMember.objects.select_related("user", "business").all()
     serializer_class = BusinessMemberSerializer
-    permission_classes = [IsAuthenticated, IsSboOrPlatformOwner]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
+
         if _is_platform_admin(user):
-            return BusinessMember.objects.all().order_by("-created_at")
+            return BusinessMember.objects.select_related("user", "business").all().order_by("-created_at")
 
         business_ids = Business.objects.filter(
             Q(owner=user) | Q(members__user=user, members__is_active=True)
         ).values_list("id", flat=True)
 
-        return BusinessMember.objects.filter(business_id__in=business_ids).order_by("-created_at")
+        return (
+            BusinessMember.objects.select_related("user", "business")
+            .filter(business_id__in=business_ids)
+            .order_by("-created_at")
+        )
 
     def partial_update(self, request, *args, **kwargs):
         member = self.get_object()
-
-        CanManageTeamForBusiness().check_object_permission(request, self, member.business)
+        _require_team_manage_access(request.user, member.business)
 
         allowed = {
             "role",
@@ -190,7 +223,7 @@ class BusinessMemberViewSet(viewsets.ModelViewSet):
         for k, v in payload.items():
             setattr(member, k, v)
 
-        if payload.get("is_active") is False and member.terminated_at is None:
+        if payload.get("is_active") is False and getattr(member, "terminated_at", None) is None:
             terminate_member(member=member, terminated_by=request.user)
 
         member.save()
@@ -199,7 +232,7 @@ class BusinessMemberViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="terminate")
     def terminate(self, request, pk=None):
         member = self.get_object()
-        CanManageTeamForBusiness().check_object_permission(request, self, member.business)
+        _require_team_manage_access(request.user, member.business)
 
         terminate_member(member=member, terminated_by=request.user)
         return Response(self.get_serializer(member).data, status=status.HTTP_200_OK)
