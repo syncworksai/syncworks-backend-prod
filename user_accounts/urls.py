@@ -66,7 +66,12 @@ from user_accounts.viewsets.categories import ServiceCategoryViewSet
 from user_accounts.viewsets.marketplace import ServiceRequestViewSet
 from user_accounts.viewsets.bootstrap import BootstrapMyBusinessAPIView
 
-from user_accounts.viewsets.business import BusinessMemberViewSet, BusinessViewSet
+from user_accounts.viewsets.business import (
+    BusinessMemberViewSet,
+    BusinessViewSet,
+    BusinessTeamViewSet,
+    EmployeeInviteAcceptViewSet,
+)
 from user_accounts.viewsets.me_businesses import MeBusinessesViewSet
 
 from user_accounts.viewsets.promo import PromoCodeViewSet, PromoRedemptionViewSet
@@ -260,6 +265,25 @@ salesos_pipeline_detail = SalesPipelineViewSet.as_view({"get": "retrieve", "patc
 
 
 urlpatterns = [
+    # ----------------------------
+    # SBO / Business Team Routes
+    # ----------------------------
+    path(
+        "businesses/<int:pk>/members/",
+        BusinessTeamViewSet.as_view({"get": "members"}),
+        name="business-team-members",
+    ),
+    path(
+        "businesses/<int:pk>/invite-employee/",
+        BusinessTeamViewSet.as_view({"post": "invite_employee"}),
+        name="business-invite-employee",
+    ),
+    path(
+        "auth/employee-invites/accept/",
+        EmployeeInviteAcceptViewSet.as_view({"post": "accept"}),
+        name="employee-invites-accept",
+    ),
+
     # ----------------------------
     # Me Business Cards
     # ----------------------------
