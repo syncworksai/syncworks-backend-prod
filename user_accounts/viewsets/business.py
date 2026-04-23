@@ -163,6 +163,7 @@ class BusinessTeamViewSet(viewsets.ViewSet):
             email=ser.validated_data["email"],
             seat_role=ser.validated_data["role"],
             permissions=ser.validated_data.get("permissions") or None,
+            **request.data,
         )
         return Response(
             EmployeeInviteResponseSerializer(res.invite).data,
