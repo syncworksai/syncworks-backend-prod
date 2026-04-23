@@ -32,19 +32,80 @@ def _coerce_employee_role(raw_role: str) -> str:
 
 
 def _set_employee_role(user: User) -> None:
+    changed = False
+
     if getattr(user, "role", None) != "EMPLOYEE":
         user.role = "EMPLOYEE"
-        user.save(update_fields=["role"])
+        changed = True
 
-    changed = False
     if getattr(user, "is_staff", False):
         user.is_staff = False
         changed = True
+
     if getattr(user, "is_superuser", False):
         user.is_superuser = False
         changed = True
+
     if changed:
-        user.save(update_fields=["is_staff", "is_superuser"])
+        update_fields = ["role", "is_staff", "is_superuser"]
+        if not getattr(user, "username", ""):
+            user.username = user.email
+            update_fields.append("username")
+        user.save(update_fields=update_fields)
+
+
+def _apply_permissions_to_member(member: BusinessMember, permissions: Optional[Dict[str, bool]]) -> None:
+    if not permissions:
+        return
+
+    allowed = {
+        "can_manage_team",
+        "can_manage_settings",
+        "can_view_financials",
+        "can_manage_invoices",
+        "can_create_tickets",
+        "can_assign_tickets",
+        "can_close_tickets",
+        "can_manage_schedule",
+        "can_manage_categories",
+        "can_manage_properties",
+        "can_manage_connections",
+    }
+
+    changed = []
+    for key, value in permissions.items():
+        if key in allowed and hasattr(member, key):
+            setattr(member, key, bool(value))
+            changed.append(key)
+
+    if changed:
+        member.save(update_fields=changed)
+
+
+def _copy_invite_permissions_to_member(invite: InviteCode, member: BusinessMember) -> None:
+    mapping = [
+        "can_manage_team",
+        "can_manage_settings",
+        "can_view_financials",
+        "can_manage_invoices",
+        "can_create_tickets",
+        "can_assign_tickets",
+        "can_close_tickets",
+        "can_manage_schedule",
+        "can_manage_categories",
+        "can_manage_properties",
+        "can_manage_connections",
+    ]
+
+    changed = []
+    for key in mapping:
+        if hasattr(member, key) and hasattr(invite, key):
+            value = bool(getattr(invite, key, False))
+            setattr(member, key, value)
+            changed.append(key)
+
+    if changed:
+        member.save(update_fields=changed)
 
 
 @transaction.atomic
@@ -82,68 +143,49 @@ def invite_employee(
         defaults={"role": seat_role, "is_active": True},
     )
 
-    changed_fields = []
-
+    member_changed = []
     if getattr(member, "role", None) != seat_role:
         member.role = seat_role
-        changed_fields.append("role")
-
-    if getattr(member, "terminated_at", None) is not None:
-        member.terminated_at = None
-        changed_fields.append("terminated_at")
+        member_changed.append("role")
 
     if not getattr(member, "is_active", False):
         member.is_active = True
-        changed_fields.append("is_active")
+        member_changed.append("is_active")
 
-    if changed_fields:
-        member.save(update_fields=changed_fields)
+    if hasattr(member, "terminated_at") and getattr(member, "terminated_at", None) is not None:
+        member.terminated_at = None
+        member_changed.append("terminated_at")
 
-    if permissions:
-        if hasattr(member, "apply_permissions"):
-            member.apply_permissions(permissions)
-            member.save()
-        else:
-            for key, value in permissions.items():
-                if hasattr(member, key):
-                    setattr(member, key, bool(value))
-            member.save()
+    if member_changed:
+        member.save(update_fields=member_changed)
 
-    # Project-specific helper if it exists
-    if hasattr(InviteCode.objects, "create_employee_invite"):
-        invite = InviteCode.objects.create_employee_invite(
-            business=business,
-            invited_by=invited_by,
-            email=email,
-            member=member,
-        )
-    else:
-        payload = {
-            "email": email,
-            "member_id": member.id,
-            "business_id": business.id,
-            "role": seat_role,
-        }
+    _apply_permissions_to_member(member, permissions)
 
-        create_kwargs: Dict[str, Any] = {
-            "payload": payload,
-        }
+    invite_fields: Dict[str, Any] = {
+        "business": business,
+        "created_by": invited_by,
+        "email": email,
+        "role": seat_role,
+    }
 
-        # Common optional fields across invite models
-        if hasattr(InviteCode, "business_id"):
-            create_kwargs["business"] = business
-        if hasattr(InviteCode, "created_by_id"):
-            create_kwargs["created_by"] = invited_by
-        if hasattr(InviteCode, "invited_by_id"):
-            create_kwargs["invited_by"] = invited_by
-        if hasattr(InviteCode, "email"):
-            create_kwargs["email"] = email
-        if hasattr(InviteCode, "kind"):
-            create_kwargs["kind"] = "EMPLOYEE"
-        if hasattr(InviteCode, "member_id"):
-            create_kwargs["member"] = member
+    allowed_invite_perm_fields = [
+        "can_manage_team",
+        "can_manage_settings",
+        "can_view_financials",
+        "can_manage_invoices",
+        "can_create_tickets",
+        "can_assign_tickets",
+        "can_close_tickets",
+        "can_manage_schedule",
+        "can_manage_categories",
+        "can_manage_properties",
+        "can_manage_connections",
+    ]
 
-        invite = InviteCode.objects.create(**create_kwargs)
+    for key in allowed_invite_perm_fields:
+        invite_fields[key] = bool((permissions or {}).get(key, False))
+
+    invite = InviteCode.objects.create(**invite_fields)
 
     return InviteEmployeeResult(invite=invite, user=user, member=member)
 
@@ -162,61 +204,80 @@ def accept_employee_invite(
 
     invite = InviteCode.objects.select_for_update().get(code=code)
 
-    invite_kind = str(getattr(invite, "kind", "") or "").upper()
-    if invite_kind and invite_kind != "EMPLOYEE":
-        raise ValueError("Invite is not an employee invite")
-
-    used_at = getattr(invite, "used_at", None)
-    if used_at is not None:
+    if getattr(invite, "used_at", None) is not None:
         raise ValueError("Invite already used")
 
-    is_expired = getattr(invite, "is_expired", False)
-    if is_expired:
+    if getattr(invite, "is_expired", False):
         raise ValueError("Invite expired")
 
-    payload = getattr(invite, "payload", None) or {}
-    email = (payload.get("email") or getattr(invite, "email", "") or "").strip().lower()
-    member_id = payload.get("member_id") or getattr(invite, "member_id", None)
+    email = (getattr(invite, "email", "") or "").strip().lower()
+    business = getattr(invite, "business", None)
+    seat_role = getattr(invite, "role", None)
 
-    if not email or not member_id:
-        raise ValueError("Invite payload invalid")
+    if not email or not business:
+        raise ValueError("Invite is missing required onboarding data")
 
-    user = User.objects.get(email=email)
-    member = BusinessMember.objects.select_for_update().get(id=member_id, user=user)
+    user, _ = User.objects.get_or_create(
+        email=email,
+        defaults={
+            "role": "EMPLOYEE",
+            "username": email,
+        },
+    )
 
     validate_password(password, user=user)
 
-    user.first_name = first_name or ""
-    user.last_name = last_name or ""
+    update_fields = []
+    if first_name is not None:
+        user.first_name = first_name or ""
+        update_fields.append("first_name")
+    if last_name is not None:
+        user.last_name = last_name or ""
+        update_fields.append("last_name")
+
     user.set_password(password)
     user.role = "EMPLOYEE"
+    update_fields.extend(["password", "role"])
 
-    user_update_fields = ["first_name", "last_name", "password", "role"]
     if not getattr(user, "username", ""):
         user.username = email
-        user_update_fields.append("username")
+        update_fields.append("username")
 
-    user.save(update_fields=user_update_fields)
+    user.save(update_fields=list(dict.fromkeys(update_fields)))
 
-    member.is_active = True
-    if hasattr(member, "terminated_at"):
+    member, _ = BusinessMember.objects.get_or_create(
+        business=business,
+        user=user,
+        defaults={
+            "role": seat_role or BusinessMemberRole.TECHNICIAN,
+            "is_active": True,
+        },
+    )
+
+    member_fields = []
+    if seat_role and getattr(member, "role", None) != seat_role:
+        member.role = seat_role
+        member_fields.append("role")
+
+    if not getattr(member, "is_active", False):
+        member.is_active = True
+        member_fields.append("is_active")
+
+    if hasattr(member, "terminated_at") and getattr(member, "terminated_at", None) is not None:
         member.terminated_at = None
-        member.save(update_fields=["is_active", "terminated_at"])
+        member_fields.append("terminated_at")
+
+    if member_fields:
+        member.save(update_fields=member_fields)
+
+    _copy_invite_permissions_to_member(invite, member)
+
+    invite.used_at = timezone.now()
+    if hasattr(invite, "accepted_by"):
+        invite.accepted_by = user
+        invite.save(update_fields=["used_at", "accepted_by"])
     else:
-        member.save(update_fields=["is_active"])
-
-    if hasattr(invite, "used_at"):
-        invite.used_at = timezone.now()
-    if hasattr(invite, "used_by"):
-        invite.used_by = user
-
-    invite_update_fields = []
-    if hasattr(invite, "used_at"):
-        invite_update_fields.append("used_at")
-    if hasattr(invite, "used_by"):
-        invite_update_fields.append("used_by")
-    if invite_update_fields:
-        invite.save(update_fields=invite_update_fields)
+        invite.save(update_fields=["used_at"])
 
     token, _ = Token.objects.get_or_create(user=user)
 
@@ -226,6 +287,8 @@ def accept_employee_invite(
             "id": user.id,
             "email": user.email,
             "role": getattr(user, "role", None),
+            "first_name": user.first_name,
+            "last_name": user.last_name,
         },
         "business_id": member.business_id,
         "business_member_id": member.id,
