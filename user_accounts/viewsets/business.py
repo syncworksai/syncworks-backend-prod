@@ -1,14 +1,29 @@
-# backend/user_accounts/viewsets/business.py
 from __future__ import annotations
 
 from django.db.models import Q
-from rest_framework import viewsets
+from django.utils import timezone
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from user_accounts.models.business import Business, BusinessMember
+from user_accounts.models import Business, BusinessMember
+from user_accounts.permissions import (
+    IsSboOrPlatformOwner,
+    CanManageTeamForBusiness,
+)
 from user_accounts.serializers.business import BusinessSerializer, BusinessMemberSerializer
+from user_accounts.serializers.employees import (
+    EmployeeInviteCreateSerializer,
+    EmployeeInviteResponseSerializer,
+    EmployeeInviteAcceptSerializer,
+)
+from user_accounts.services.employees import (
+    invite_employee,
+    accept_employee_invite,
+    terminate_member,
+)
 
 
 def _is_platform_admin(user) -> bool:
@@ -40,7 +55,6 @@ class BusinessViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         business = serializer.save(owner=self.request.user)
 
-        # ensure OWNER membership
         membership, created = BusinessMember.objects.get_or_create(
             business=business,
             user=self.request.user,
@@ -55,9 +69,6 @@ class BusinessViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="me")
     def me(self, request):
-        """
-        Paginated "my businesses" list (same shape as /businesses/)
-        """
         qs = self.get_queryset()
         page = self.paginate_queryset(qs)
         if page is not None:
@@ -68,12 +79,149 @@ class BusinessViewSet(viewsets.ModelViewSet):
         return Response(ser.data)
 
 
+class BusinessTeamViewSet(viewsets.ViewSet):
+    """
+    Routes:
+      POST /businesses/{id}/invite-employee/
+      GET  /businesses/{id}/members/
+    """
+
+    permission_classes = [IsAuthenticated, IsSboOrPlatformOwner]
+
+    def _get_business(self, pk: int) -> Business:
+        try:
+            return Business.objects.get(pk=pk)
+        except Business.DoesNotExist:
+            raise ValidationError({"detail": "Business not found."})
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="invite-employee",
+        permission_classes=[IsAuthenticated, IsSboOrPlatformOwner, CanManageTeamForBusiness],
+    )
+    def invite_employee(self, request, pk=None):
+        business = self._get_business(pk)
+        CanManageTeamForBusiness().check_object_permission(request, self, business)
+
+        ser = EmployeeInviteCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        res = invite_employee(
+            business=business,
+            invited_by=request.user,
+            email=ser.validated_data["email"],
+            seat_role=ser.validated_data["role"],
+            permissions=ser.validated_data.get("permissions") or None,
+        )
+        return Response(
+            EmployeeInviteResponseSerializer(res.invite).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="members",
+        permission_classes=[IsAuthenticated, IsSboOrPlatformOwner, CanManageTeamForBusiness],
+    )
+    def members(self, request, pk=None):
+        business = self._get_business(pk)
+        CanManageTeamForBusiness().check_object_permission(request, self, business)
+
+        qs = (
+            BusinessMember.objects.filter(business=business)
+            .select_related("user")
+            .order_by("id")
+        )
+        return Response(
+            BusinessMemberSerializer(qs, many=True).data,
+            status=status.HTTP_200_OK,
+        )
+
+
 class BusinessMemberViewSet(viewsets.ModelViewSet):
+    """
+    Routes:
+      PATCH /business-members/{id}/
+      POST  /business-members/{id}/terminate/
+    """
+
+    queryset = BusinessMember.objects.select_related("user", "business").all()
     serializer_class = BusinessMemberSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsSboOrPlatformOwner]
 
     def get_queryset(self):
         user = self.request.user
         if _is_platform_admin(user):
             return BusinessMember.objects.all().order_by("-created_at")
-        return BusinessMember.objects.filter(user=user).order_by("-created_at")
+
+        business_ids = Business.objects.filter(
+            Q(owner=user) | Q(members__user=user, members__is_active=True)
+        ).values_list("id", flat=True)
+
+        return BusinessMember.objects.filter(business_id__in=business_ids).order_by("-created_at")
+
+    def partial_update(self, request, *args, **kwargs):
+        member = self.get_object()
+
+        CanManageTeamForBusiness().check_object_permission(request, self, member.business)
+
+        allowed = {
+            "role",
+            "is_active",
+            "can_view_invoices",
+            "can_send_quotes",
+            "can_assign_tickets",
+            "can_manage_team",
+            "can_post_internal_messages",
+            "can_manage_schedule",
+            "can_close_tickets",
+            "can_manage_invoices",
+            "can_manage_settings",
+            "can_view_financials",
+            "can_create_tickets",
+            "can_manage_categories",
+            "can_manage_properties",
+            "can_manage_connections",
+        }
+        payload = {k: v for k, v in request.data.items() if k in allowed}
+
+        for k, v in payload.items():
+            setattr(member, k, v)
+
+        if payload.get("is_active") is False and member.terminated_at is None:
+            terminate_member(member=member, terminated_by=request.user)
+
+        member.save()
+        return Response(self.get_serializer(member).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="terminate")
+    def terminate(self, request, pk=None):
+        member = self.get_object()
+        CanManageTeamForBusiness().check_object_permission(request, self, member.business)
+
+        terminate_member(member=member, terminated_by=request.user)
+        return Response(self.get_serializer(member).data, status=status.HTTP_200_OK)
+
+
+class EmployeeInviteAcceptViewSet(viewsets.ViewSet):
+    """
+    Route:
+      POST /auth/employee-invites/accept/
+    """
+
+    permission_classes = []
+
+    @action(detail=False, methods=["post"], url_path="accept")
+    def accept(self, request):
+        ser = EmployeeInviteAcceptSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        out = accept_employee_invite(
+            code=ser.validated_data["code"],
+            first_name=ser.validated_data.get("first_name", ""),
+            last_name=ser.validated_data.get("last_name", ""),
+            password=ser.validated_data["password"],
+        )
+        return Response(out, status=status.HTTP_200_OK)
