@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, Tuple
 
 from django.db import transaction
@@ -117,7 +118,12 @@ def generate_monthly_cash_fee_invoices(
             res.invoices_skipped_zero += 1
             continue
 
-        fee_cents = int(round(cash_gmv_cents * (int(fee_bps) / 10000.0)))
+        fee_cents = int(
+            (Decimal(cash_gmv_cents) * Decimal(int(fee_bps)) / Decimal("10000")).quantize(
+                Decimal("1"),
+                rounding=ROUND_HALF_UP,
+            )
+        )
         fee_cents = max(0, fee_cents)
 
         due_date = timezone.localdate() + timedelta(days=max(0, int(due_days)))
