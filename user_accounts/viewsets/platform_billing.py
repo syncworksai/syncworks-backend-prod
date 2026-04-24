@@ -378,6 +378,25 @@ def _sync_subscription_snapshot(profile: PlatformBillingProfile, sub_obj: dict):
     )
 
 
+def _sync_user_subscription_snapshot(profile: UserBillingProfile, sub_obj: dict):
+    if not profile or not sub_obj:
+        return
+
+    profile.stripe_subscription_id = str(sub_obj.get("id") or profile.stripe_subscription_id or "")
+    profile.subscription_status = str(sub_obj.get("status") or profile.subscription_status or "")
+    profile.subscription_cancel_at_period_end = bool(sub_obj.get("cancel_at_period_end"))
+    profile.subscription_current_period_end = _dt_from_unix(sub_obj.get("current_period_end"))
+    profile.save(
+        update_fields=[
+            "stripe_customer_id",
+            "stripe_subscription_id",
+            "subscription_status",
+            "subscription_cancel_at_period_end",
+            "subscription_current_period_end",
+        ]
+    )
+
+
 def _sync_connect_snapshot_for_business(business: Business, account_obj: dict):
     if not business or not account_obj:
         return
@@ -953,6 +972,7 @@ class StripeWebhookAPIView(APIView):
 
             if mode == "subscription":
                 business_id = meta.get("business_id")
+                user_id = meta.get("user_id")
                 subscription_id = data.get("subscription")
 
                 if business_id and customer_id and subscription_id:
@@ -975,6 +995,16 @@ class StripeWebhookAPIView(APIView):
                         if profile.pk:
                             profile.refresh_from_db()
 
+                if user_id and customer_id and subscription_id:
+                    uprof, _ = UserBillingProfile.objects.get_or_create(user_id=int(user_id))
+                    uprof.stripe_customer_id = customer_id or uprof.stripe_customer_id
+                    try:
+                        sub = stripe.Subscription.retrieve(subscription_id)
+                        _sync_user_subscription_snapshot(uprof, sub)
+                    except Exception:
+                        uprof.stripe_subscription_id = str(subscription_id)
+                        uprof.save(update_fields=["stripe_customer_id", "stripe_subscription_id"])
+
         if etype in ("customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"):
             customer_id = str(data.get("customer") or "").strip()
             if customer_id:
@@ -989,6 +1019,10 @@ class StripeWebhookAPIView(APIView):
                         except Exception:
                             pass
                         profile.save(update_fields=["is_locked", "locked_at", "lock_reason"])
+
+                uprof = UserBillingProfile.objects.filter(stripe_customer_id=customer_id).first()
+                if uprof:
+                    _sync_user_subscription_snapshot(uprof, data)
 
         if etype == "account.updated":
             _sync_connect_snapshot_by_account_id(data)

@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone as dt_timezone
 from typing import Any
 from urllib.parse import urlencode
 
 import stripe
 from django.conf import settings
+from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -346,7 +348,7 @@ class CancelSubscriptionAPIView(APIView):
                 profile.subscription_status = sub.get("status") or profile.subscription_status
                 cpe = sub.get("current_period_end")
                 if cpe:
-                    profile.subscription_current_period_end = timezone.datetime.fromtimestamp(int(cpe), tz=timezone.utc)
+                    profile.subscription_current_period_end = datetime.fromtimestamp(int(cpe), tz=dt_timezone.utc)
                 profile.save(
                     update_fields=[
                         "subscription_cancel_at_period_end",
@@ -379,7 +381,7 @@ class CancelSubscriptionAPIView(APIView):
             user_profile.subscription_status = sub.get("status") or user_profile.subscription_status
             cpe = sub.get("current_period_end")
             if cpe:
-                user_profile.subscription_current_period_end = timezone.datetime.fromtimestamp(int(cpe), tz=timezone.utc)
+                user_profile.subscription_current_period_end = datetime.fromtimestamp(int(cpe), tz=dt_timezone.utc)
             user_profile.save(
                 update_fields=[
                     "subscription_cancel_at_period_end",
