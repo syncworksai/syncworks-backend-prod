@@ -81,6 +81,7 @@ INSTALLED_APPS = [
     "tickets",
     "pm",
     "billing",
+    "platform_growth.apps.PlatformGrowthConfig",
 ]
 
 # -------------------------------------------------

@@ -10,6 +10,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
 
     # Main API
+    path("api/v1/platform-growth/", include("platform_growth.urls")),
     path("api/v1/", include("user_accounts.urls")),
 ]
 
