@@ -1,3 +1,4 @@
+# platform_growth/views.py
 from __future__ import annotations
 
 from datetime import timedelta
@@ -11,6 +12,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from platform_growth.models import (
+    GrowthAutomationRecipe,
+    GrowthChannelConnection,
+    GrowthContentDraft,
+    GrowthContentQueueItem,
+    GrowthOAuthState,
+    GrowthOAuthToken,
+    GrowthScheduledPostJob,
     PlatformActivationEvent,
     PlatformAutomationFlow,
     PlatformCampaign,
@@ -20,6 +28,13 @@ from platform_growth.models import (
     PlatformMessage,
 )
 from platform_growth.serializers import (
+    GrowthAutomationRecipeSerializer,
+    GrowthChannelConnectionSerializer,
+    GrowthContentDraftSerializer,
+    GrowthContentQueueItemSerializer,
+    GrowthOAuthStateSerializer,
+    GrowthOAuthTokenSerializer,
+    GrowthScheduledPostJobSerializer,
     PlatformAutomationFlowSerializer,
     PlatformCampaignSerializer,
     PlatformContentSerializer,
@@ -47,6 +62,9 @@ class PlatformGrowthDashboardAPIView(APIView):
             "open_conversations": PlatformConversation.objects.exclude(status=PlatformConversation.Status.CLOSED).count(),
             "messages_last_24h": PlatformMessage.objects.filter(sent_at__gte=today - timedelta(hours=24)).count(),
             "events_last_24h": PlatformActivationEvent.objects.filter(created_at__gte=today - timedelta(hours=24)).count(),
+            "growth_channels": GrowthChannelConnection.objects.count(),
+            "growth_drafts": GrowthContentDraft.objects.count(),
+            "growth_queue_items": GrowthContentQueueItem.objects.count(),
         }
         return Response(data)
 
@@ -114,6 +132,74 @@ class PlatformAutomationFlowViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsGodMode]
     serializer_class = PlatformAutomationFlowSerializer
     queryset = PlatformAutomationFlow.objects.all().order_by("name")
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
+class GrowthChannelConnectionViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, IsGodMode]
+    serializer_class = GrowthChannelConnectionSerializer
+    queryset = GrowthChannelConnection.objects.all().order_by("provider", "-created_at")
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
+class GrowthOAuthStateViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, IsGodMode]
+    serializer_class = GrowthOAuthStateSerializer
+    queryset = GrowthOAuthState.objects.all().order_by("-created_at")
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    @action(detail=True, methods=["post"])
+    def mark_used(self, request, pk=None):
+        state_obj = self.get_object()
+        state_obj.status = GrowthOAuthState.Status.USED
+        state_obj.used_at = timezone.now()
+        state_obj.save(update_fields=["status", "used_at", "updated_at"])
+        return Response(self.get_serializer(state_obj).data)
+
+
+class GrowthOAuthTokenViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    permission_classes = [IsAuthenticated, IsGodMode]
+    serializer_class = GrowthOAuthTokenSerializer
+    queryset = GrowthOAuthToken.objects.select_related("connection").all().order_by("-created_at")
+
+
+class GrowthContentDraftViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, IsGodMode]
+    serializer_class = GrowthContentDraftSerializer
+    queryset = GrowthContentDraft.objects.all().order_by("-updated_at", "-created_at")
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
+class GrowthContentQueueItemViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, IsGodMode]
+    serializer_class = GrowthContentQueueItemSerializer
+    queryset = GrowthContentQueueItem.objects.select_related("draft", "channel_connection").all().order_by("scheduled_for", "-created_at")
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
+class GrowthAutomationRecipeViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, IsGodMode]
+    serializer_class = GrowthAutomationRecipeSerializer
+    queryset = GrowthAutomationRecipe.objects.all().order_by("name")
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
+class GrowthScheduledPostJobViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, IsGodMode]
+    serializer_class = GrowthScheduledPostJobSerializer
+    queryset = GrowthScheduledPostJob.objects.select_related("queue_item").all().order_by("run_at", "-created_at")
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
