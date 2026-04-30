@@ -1,6 +1,13 @@
 from django.contrib import admin
 
 from platform_growth.models import (
+    GrowthAutomationRecipe,
+    GrowthChannelConnection,
+    GrowthContentDraft,
+    GrowthContentQueueItem,
+    GrowthOAuthState,
+    GrowthOAuthToken,
+    GrowthScheduledPostJob,
     PlatformActivationEvent,
     PlatformAutomationFlow,
     PlatformCampaign,
@@ -51,3 +58,43 @@ class PlatformAutomationFlowAdmin(admin.ModelAdmin):
 class PlatformActivationEventAdmin(admin.ModelAdmin):
     list_display = ("id", "source", "event_type", "external_id", "processed_at", "created_at")
     search_fields = ("event_type", "external_id")
+
+
+@admin.register(GrowthChannelConnection)
+class GrowthChannelConnectionAdmin(admin.ModelAdmin):
+    list_display = ("id", "provider", "account_label", "external_account_id", "status", "connected_at")
+    search_fields = ("provider", "account_label", "external_account_id")
+
+
+@admin.register(GrowthOAuthState)
+class GrowthOAuthStateAdmin(admin.ModelAdmin):
+    list_display = ("id", "provider", "status", "expires_at", "used_at", "created_at")
+    search_fields = ("provider", "state")
+
+
+@admin.register(GrowthOAuthToken)
+class GrowthOAuthTokenAdmin(admin.ModelAdmin):
+    list_display = ("id", "provider", "connection", "is_active", "expires_at", "created_at")
+    search_fields = ("provider", "connection__external_account_id")
+
+
+@admin.register(GrowthContentDraft)
+class GrowthContentDraftAdmin(admin.ModelAdmin):
+    list_display = ("id", "title", "status", "source", "updated_at")
+    search_fields = ("title", "body", "source")
+
+
+@admin.register(GrowthContentQueueItem)
+class GrowthContentQueueItemAdmin(admin.ModelAdmin):
+    list_display = ("id", "draft", "channel_connection", "status", "scheduled_for", "posted_at")
+
+
+@admin.register(GrowthAutomationRecipe)
+class GrowthAutomationRecipeAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "trigger_type", "is_active", "last_run_at")
+    search_fields = ("name", "trigger_type")
+
+
+@admin.register(GrowthScheduledPostJob)
+class GrowthScheduledPostJobAdmin(admin.ModelAdmin):
+    list_display = ("id", "queue_item", "run_at", "status", "attempts", "last_attempt_at")

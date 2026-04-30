@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -209,3 +211,154 @@ class PlatformActivationEvent(TimeStampedModel):
             models.Index(fields=["source", "event_type"]),
             models.Index(fields=["external_id"]),
         ]
+
+
+class GrowthChannelConnection(TimeStampedModel):
+    class Provider(models.TextChoices):
+        META = "META", "Meta"
+        INSTAGRAM = "INSTAGRAM", "Instagram"
+        LINKEDIN = "LINKEDIN", "LinkedIn"
+        X = "X", "X"
+        YOUTUBE = "YOUTUBE", "YouTube"
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        CONNECTED = "CONNECTED", "Connected"
+        ERROR = "ERROR", "Error"
+        DISCONNECTED = "DISCONNECTED", "Disconnected"
+
+    provider = models.CharField(max_length=32, choices=Provider.choices)
+    account_label = models.CharField(max_length=180, blank=True)
+    external_account_id = models.CharField(max_length=180, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    scopes = models.JSONField(default=list, blank=True)
+    connected_at = models.DateTimeField(null=True, blank=True)
+    disconnected_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        ordering = ["provider", "-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["provider", "external_account_id"], name="uniq_growth_provider_external_account"),
+        ]
+
+
+def default_oauth_state_expiry():
+    return timezone.now() + timedelta(minutes=15)
+
+
+class GrowthOAuthState(TimeStampedModel):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        USED = "USED", "Used"
+        EXPIRED = "EXPIRED", "Expired"
+        CANCELED = "CANCELED", "Canceled"
+
+    provider = models.CharField(max_length=32)
+    state = models.CharField(max_length=255, unique=True)
+    redirect_uri = models.URLField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    expires_at = models.DateTimeField(default=default_oauth_state_expiry)
+    used_at = models.DateTimeField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["provider", "status"]), models.Index(fields=["expires_at"])]
+
+
+class GrowthOAuthToken(TimeStampedModel):
+    connection = models.ForeignKey(GrowthChannelConnection, on_delete=models.CASCADE, related_name="oauth_tokens")
+    provider = models.CharField(max_length=32)
+    token_type = models.CharField(max_length=32, blank=True)
+    access_token = models.TextField(blank=True)  # TODO: encrypt at rest in a future phase.
+    refresh_token = models.TextField(blank=True)  # TODO: encrypt at rest in a future phase.
+    expires_at = models.DateTimeField(null=True, blank=True)
+    scope = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class GrowthContentDraft(TimeStampedModel):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        READY = "READY", "Ready"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        ARCHIVED = "ARCHIVED", "Archived"
+
+    title = models.CharField(max_length=180)
+    body = models.TextField(blank=True)
+    media_urls = models.JSONField(default=list, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    source = models.CharField(max_length=40, blank=True)
+    prompt = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        ordering = ["-updated_at", "-created_at"]
+
+
+class GrowthContentQueueItem(TimeStampedModel):
+    class Status(models.TextChoices):
+        QUEUED = "QUEUED", "Queued"
+        SCHEDULED = "SCHEDULED", "Scheduled"
+        CANCELED = "CANCELED", "Canceled"
+        FAILED = "FAILED", "Failed"
+        POSTED = "POSTED", "Posted"
+
+    draft = models.ForeignKey(GrowthContentDraft, on_delete=models.CASCADE, related_name="queue_items")
+    channel_connection = models.ForeignKey(GrowthChannelConnection, on_delete=models.CASCADE, related_name="queue_items")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUEUED)
+    scheduled_for = models.DateTimeField(null=True, blank=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+    fail_reason = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        ordering = ["scheduled_for", "-created_at"]
+        indexes = [models.Index(fields=["status", "scheduled_for"])]
+
+
+class GrowthAutomationRecipe(TimeStampedModel):
+    name = models.CharField(max_length=180)
+    trigger_type = models.CharField(max_length=120)
+    is_active = models.BooleanField(default=True)
+    recipe = models.JSONField(default=dict, blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        ordering = ["name"]
+
+
+class GrowthScheduledPostJob(TimeStampedModel):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        READY = "READY", "Ready"
+        PAUSED = "PAUSED", "Paused"
+        CANCELED = "CANCELED", "Canceled"
+        COMPLETED = "COMPLETED", "Completed"
+
+    queue_item = models.ForeignKey(GrowthContentQueueItem, on_delete=models.CASCADE, related_name="scheduled_jobs")
+    run_at = models.DateTimeField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    attempts = models.PositiveIntegerField(default=0)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        ordering = ["run_at", "-created_at"]
+        indexes = [models.Index(fields=["status", "run_at"])]

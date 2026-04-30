@@ -353,3 +353,17 @@ LOGGING = {
         "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
     },
 }
+
+# -------------------------------------------------
+# Meta OAuth / Growth OS
+# -------------------------------------------------
+META_APP_ID = env("META_APP_ID", "") or ""
+META_APP_SECRET = env("META_APP_SECRET", "") or ""
+META_OAUTH_REDIRECT_URI = env("META_OAUTH_REDIRECT_URI", "") or ""
+META_OAUTH_SCOPES = [
+    x.strip()
+    for x in (env("META_OAUTH_SCOPES", "public_profile,pages_show_list,instagram_basic") or "public_profile,pages_show_list,instagram_basic").split(",")
+    if x.strip()
+]
+META_GRAPH_API_VERSION = env("META_GRAPH_API_VERSION", "v23.0") or "v23.0"
+GROWTH_OAUTH_STATE_TTL_SECONDS = env_int("GROWTH_OAUTH_STATE_TTL_SECONDS", 900)
