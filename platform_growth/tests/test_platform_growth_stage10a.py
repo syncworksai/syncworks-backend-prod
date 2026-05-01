@@ -1,9 +1,8 @@
-# platform_growth/tests/test_platform_growth_stage10a.py
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
-from platform_growth.models import PlatformAutomationExecution, PlatformAutomationRule
+from platform_growth.models import PlatformAutomationExecution, PlatformAutomationRule, PlatformLead
 from platform_growth.services.automation_engine import evaluate_rules
 
 User = get_user_model()
@@ -72,3 +71,91 @@ class TestPlatformGrowthStage10A(TestCase):
         self.assertTrue(PlatformAutomationExecution.objects.filter(rule=rule).exists())
         execution = PlatformAutomationExecution.objects.get(rule=rule)
         self.assertTrue(execution.result.get("no_outbound_sent"))
+
+    def test_lead_create_endpoint_triggers_automation_rule(self):
+        self.client.force_authenticate(user=self.god)
+
+        rule = PlatformAutomationRule.objects.create(
+            name="Lead Create Hook",
+            trigger_type=PlatformAutomationRule.TriggerType.LEAD_CREATED,
+            action_type=PlatformAutomationRule.ActionType.LOG_ACTIVATION_EVENT,
+            status=PlatformAutomationRule.Status.ACTIVE,
+            created_by=self.god,
+        )
+
+        res = self.client.post(
+            "/api/v1/platform-growth/leads/",
+            {
+                "source": "MANUAL",
+                "full_name": "Hook Test Lead",
+                "email": "hook@example.com",
+                "status": PlatformLead.Status.NEW,
+            },
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, 201)
+        self.assertTrue(PlatformAutomationExecution.objects.filter(rule=rule).exists())
+
+    def test_lead_status_change_triggers_automation_rule(self):
+        self.client.force_authenticate(user=self.god)
+
+        lead = PlatformLead.objects.create(
+            source="MANUAL",
+            full_name="Status Hook Lead",
+            email="status@example.com",
+            status=PlatformLead.Status.NEW,
+        )
+
+        rule = PlatformAutomationRule.objects.create(
+            name="Lead Status Hook",
+            trigger_type=PlatformAutomationRule.TriggerType.LEAD_STATUS_CHANGED,
+            action_type=PlatformAutomationRule.ActionType.GENERATE_MESSAGE_DRAFT,
+            status=PlatformAutomationRule.Status.ACTIVE,
+            created_by=self.god,
+        )
+
+        res = self.client.patch(
+            f"/api/v1/platform-growth/leads/{lead.id}/",
+            {"status": PlatformLead.Status.QUALIFIED},
+            format="json",
+        )
+
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(PlatformAutomationExecution.objects.filter(rule=rule).exists())
+
+    def test_meta_webhook_inbound_message_triggers_automation_rule(self):
+        rule = PlatformAutomationRule.objects.create(
+            name="Inbound Message Hook",
+            trigger_type=PlatformAutomationRule.TriggerType.INBOUND_MESSAGE_RECEIVED,
+            action_type=PlatformAutomationRule.ActionType.LOG_ACTIVATION_EVENT,
+            status=PlatformAutomationRule.Status.ACTIVE,
+            created_by=self.god,
+        )
+
+        payload = {
+            "object": "page",
+            "entry": [
+                {
+                    "id": "entry-1",
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "from": "sender-123",
+                                        "id": "msg-123",
+                                        "text": {"body": "Interested in SyncWorks"},
+                                    }
+                                ]
+                            }
+                        }
+                    ],
+                }
+            ],
+        }
+
+        res = self.client.post("/api/v1/platform-growth/meta/webhook/", payload, format="json")
+
+        self.assertEqual(res.status_code, 202)
+        self.assertTrue(PlatformAutomationExecution.objects.filter(rule=rule).exists())

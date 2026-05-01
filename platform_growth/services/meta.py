@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from django.utils import timezone
 
-from platform_growth.models import PlatformActivationEvent, PlatformConversation, PlatformLead, PlatformMessage
+from platform_growth.models import (
+    PlatformActivationEvent,
+    PlatformAutomationRule,
+    PlatformConversation,
+    PlatformLead,
+    PlatformMessage,
+)
+from platform_growth.services.automation_engine import evaluate_rules
 
 
 def record_meta_event(payload: dict, event_type: str = "meta.webhook") -> PlatformActivationEvent:
@@ -33,6 +40,7 @@ def record_possible_message(change_payload: dict) -> int:
         return 0
 
     saved = 0
+
     for msg in messages:
         if not isinstance(msg, dict):
             continue
@@ -41,7 +49,7 @@ def record_possible_message(change_payload: dict) -> int:
         external_message_id = _safe_text(msg.get("id"))
         text = _safe_text((msg.get("text") or {}).get("body") if isinstance(msg.get("text"), dict) else msg.get("text"))
 
-        lead, _ = PlatformLead.objects.get_or_create(
+        lead, created = PlatformLead.objects.get_or_create(
             source="META",
             external_id=sender_id,
             defaults={
@@ -49,6 +57,19 @@ def record_possible_message(change_payload: dict) -> int:
                 "last_activity_at": timezone.now(),
             },
         )
+
+        if created:
+            evaluate_rules(
+                trigger_type=PlatformAutomationRule.TriggerType.LEAD_CREATED,
+                payload={
+                    "lead_id": lead.id,
+                    "source": lead.source,
+                    "external_id": lead.external_id,
+                    "full_name": lead.full_name,
+                },
+                user=None,
+            )
+
         lead.last_activity_at = timezone.now()
         lead.save(update_fields=["last_activity_at", "updated_at"])
 
@@ -66,8 +87,10 @@ def record_possible_message(change_payload: dict) -> int:
             external_message_id=external_message_id,
             raw_payload=msg,
         )
+
         convo.last_message_at = timezone.now()
         convo.save(update_fields=["last_message_at", "updated_at"])
+
         saved += 1
 
     return saved

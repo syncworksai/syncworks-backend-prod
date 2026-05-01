@@ -45,28 +45,11 @@ from platform_growth.serializers import (
     PlatformLeadSerializer,
     PlatformMessageSerializer,
 )
-from platform_growth.services.automation_engine import seed_system_templates
+from platform_growth.services.automation_engine import evaluate_rules, seed_system_templates
 from platform_growth.services.funnel import lead_status_breakdown
 from platform_growth.services.meta import record_meta_event, record_possible_message
-from platform_growth.services.oauth_state import generate_state_token
 from platform_growth.services.posting import build_outbound_payload
 from user_accounts.permissions import IsGodMode
-
-
-def build_meta_authorization_url(*, state: str, redirect_uri: str) -> str:
-    return ""
-
-
-def exchange_code_for_token(*, code: str, redirect_uri: str) -> dict:
-    raise ValueError("Meta OAuth setup is paused.")
-
-
-def fetch_meta_account_metadata(access_token: str) -> dict:
-    return {}
-
-
-def normalize_meta_error(error: str) -> str:
-    return str(error or "Meta OAuth setup is paused.")
 
 
 class PlatformGrowthDashboardAPIView(APIView):
@@ -109,6 +92,7 @@ class PlatformContentViewSet(viewsets.ModelViewSet):
 
 
 class PlatformLeadViewSet(
+    mixins.CreateModelMixin,
     mixins.ListModelMixin,
     mixins.RetrieveModelMixin,
     mixins.UpdateModelMixin,
@@ -117,6 +101,39 @@ class PlatformLeadViewSet(
     permission_classes = [IsAuthenticated, IsGodMode]
     serializer_class = PlatformLeadSerializer
     queryset = PlatformLead.objects.all().order_by("-last_activity_at", "-created_at")
+
+    def perform_create(self, serializer):
+        lead = serializer.save()
+
+        evaluate_rules(
+            trigger_type=PlatformAutomationRule.TriggerType.LEAD_CREATED,
+            payload={
+                "lead_id": lead.id,
+                "source": lead.source,
+                "status": lead.status,
+                "email": lead.email,
+                "full_name": lead.full_name,
+            },
+            user=self.request.user,
+        )
+
+    def perform_update(self, serializer):
+        current = self.get_object()
+        old_status = current.status
+
+        lead = serializer.save()
+
+        if old_status != lead.status:
+            evaluate_rules(
+                trigger_type=PlatformAutomationRule.TriggerType.LEAD_STATUS_CHANGED,
+                payload={
+                    "lead_id": lead.id,
+                    "old_status": old_status,
+                    "new_status": lead.status,
+                    "source": lead.source,
+                },
+                user=self.request.user,
+            )
 
 
 class PlatformConversationViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
@@ -320,6 +337,7 @@ class MetaWebhookEventAPIView(APIView):
             for entry in entry_items:
                 if not isinstance(entry, dict):
                     continue
+
                 event = record_meta_event(entry, event_type=f"meta.{object_name}.entry")
                 created_events.append(event.id)
 
@@ -328,8 +346,16 @@ class MetaWebhookEventAPIView(APIView):
                     for idx, change in enumerate(changes):
                         if not isinstance(change, dict):
                             continue
+
                         record_meta_event(change, event_type=f"meta.{object_name}.change.{idx}")
-                        record_possible_message(change)
+                        saved_messages = record_possible_message(change)
+
+                        if saved_messages:
+                            evaluate_rules(
+                                trigger_type=PlatformAutomationRule.TriggerType.INBOUND_MESSAGE_RECEIVED,
+                                payload=change,
+                                user=None,
+                            )
 
         if not created_events:
             event = record_meta_event(payload, event_type=f"meta.{object_name}.raw")
