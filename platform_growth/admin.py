@@ -1,3 +1,4 @@
+# platform_growth/admin.py
 from django.contrib import admin
 
 from platform_growth.models import (
@@ -15,6 +16,8 @@ from platform_growth.models import (
     PlatformConversation,
     PlatformLead,
     PlatformMessage,
+    PlatformAutomationRule,
+    PlatformAutomationExecution,
 )
 
 
@@ -98,3 +101,15 @@ class GrowthAutomationRecipeAdmin(admin.ModelAdmin):
 @admin.register(GrowthScheduledPostJob)
 class GrowthScheduledPostJobAdmin(admin.ModelAdmin):
     list_display = ("id", "queue_item", "run_at", "status", "attempts", "last_attempt_at")
+
+
+@admin.register(PlatformAutomationRule)
+class PlatformAutomationRuleAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "trigger_type", "action_type", "status", "is_system_template")
+    search_fields = ("name", "description", "trigger_type", "action_type")
+
+
+@admin.register(PlatformAutomationExecution)
+class PlatformAutomationExecutionAdmin(admin.ModelAdmin):
+    list_display = ("id", "rule", "trigger_type", "status", "created_at", "completed_at")
+    search_fields = ("rule__name", "trigger_type", "status")

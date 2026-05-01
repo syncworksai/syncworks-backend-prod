@@ -18,6 +18,10 @@ from platform_growth.views import (
     PlatformConversationViewSet,
     PlatformGrowthDashboardAPIView,
     PlatformLeadViewSet,
+    PlatformAutomationRuleViewSet,
+    PlatformAutomationExecutionViewSet,
+    OAuthMetaStartAPIView,
+    OAuthMetaCallbackAPIView,
 )
 
 router = DefaultRouter()
@@ -26,6 +30,8 @@ router.register(r"content", PlatformContentViewSet, basename="platform-growth-co
 router.register(r"leads", PlatformLeadViewSet, basename="platform-growth-leads")
 router.register(r"conversations", PlatformConversationViewSet, basename="platform-growth-conversations")
 router.register(r"flows", PlatformAutomationFlowViewSet, basename="platform-growth-flows")
+router.register(r"automation-rules", PlatformAutomationRuleViewSet, basename="platform-growth-automation-rules")
+router.register(r"automation-executions", PlatformAutomationExecutionViewSet, basename="platform-growth-automation-executions")
 
 router.register(r"growth/channels", GrowthChannelConnectionViewSet, basename="platform-growth-channels")
 router.register(r"growth/oauth-states", GrowthOAuthStateViewSet, basename="platform-growth-oauth-states")
@@ -37,6 +43,8 @@ router.register(r"growth/scheduled-jobs", GrowthScheduledPostJobViewSet, basenam
 
 urlpatterns = [
     path("dashboard/", PlatformGrowthDashboardAPIView.as_view(), name="platform-growth-dashboard"),
+    path("growth/oauth/meta/start/", OAuthMetaStartAPIView.as_view(), name="platform-growth-meta-oauth-start"),
+    path("growth/oauth/meta/callback/", OAuthMetaCallbackAPIView.as_view(), name="platform-growth-meta-oauth-callback"),
     path("meta/webhook/", MetaWebhookEventAPIView.as_view(), name="platform-growth-meta-webhook"),
     path("meta/webhook/verify/", MetaWebhookVerificationAPIView.as_view(), name="platform-growth-meta-webhook-verify"),
     path("", include(router.urls)),

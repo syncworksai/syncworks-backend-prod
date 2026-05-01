@@ -18,6 +18,8 @@ from platform_growth.models import (
     PlatformConversation,
     PlatformLead,
     PlatformMessage,
+    PlatformAutomationRule,
+    PlatformAutomationExecution,
 )
 
 
@@ -134,3 +136,19 @@ class GrowthScheduledPostJobSerializer(serializers.ModelSerializer):
         model = GrowthScheduledPostJob
         fields = "__all__"
         read_only_fields = ("id", "created_at", "updated_at", "created_by", "attempts", "last_attempt_at", "last_error")
+
+
+class PlatformAutomationRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PlatformAutomationRule
+        fields = "__all__"
+        read_only_fields = ("id", "created_at", "updated_at", "created_by")
+
+
+class PlatformAutomationExecutionSerializer(serializers.ModelSerializer):
+    rule_name = serializers.CharField(source="rule.name", read_only=True)
+
+    class Meta:
+        model = PlatformAutomationExecution
+        fields = ("id", "rule", "rule_name", "trigger_type", "trigger_payload", "status", "result", "error_message", "created_at", "completed_at")
+        read_only_fields = fields

@@ -1,4 +1,3 @@
-# platform_growth/views.py
 from __future__ import annotations
 
 from datetime import timedelta
@@ -20,7 +19,9 @@ from platform_growth.models import (
     GrowthOAuthToken,
     GrowthScheduledPostJob,
     PlatformActivationEvent,
+    PlatformAutomationExecution,
     PlatformAutomationFlow,
+    PlatformAutomationRule,
     PlatformCampaign,
     PlatformContent,
     PlatformConversation,
@@ -35,17 +36,37 @@ from platform_growth.serializers import (
     GrowthOAuthStateSerializer,
     GrowthOAuthTokenSerializer,
     GrowthScheduledPostJobSerializer,
+    PlatformAutomationExecutionSerializer,
     PlatformAutomationFlowSerializer,
+    PlatformAutomationRuleSerializer,
     PlatformCampaignSerializer,
     PlatformContentSerializer,
     PlatformConversationSerializer,
     PlatformLeadSerializer,
     PlatformMessageSerializer,
 )
+from platform_growth.services.automation_engine import seed_system_templates
 from platform_growth.services.funnel import lead_status_breakdown
 from platform_growth.services.meta import record_meta_event, record_possible_message
+from platform_growth.services.oauth_state import generate_state_token
 from platform_growth.services.posting import build_outbound_payload
 from user_accounts.permissions import IsGodMode
+
+
+def build_meta_authorization_url(*, state: str, redirect_uri: str) -> str:
+    return ""
+
+
+def exchange_code_for_token(*, code: str, redirect_uri: str) -> dict:
+    raise ValueError("Meta OAuth setup is paused.")
+
+
+def fetch_meta_account_metadata(access_token: str) -> dict:
+    return {}
+
+
+def normalize_meta_error(error: str) -> str:
+    return str(error or "Meta OAuth setup is paused.")
 
 
 class PlatformGrowthDashboardAPIView(APIView):
@@ -145,6 +166,15 @@ class GrowthChannelConnectionViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
+    @action(detail=True, methods=["post"])
+    def disconnect(self, request, pk=None):
+        conn = self.get_object()
+        conn.status = GrowthChannelConnection.Status.DISCONNECTED
+        conn.disconnected_at = timezone.now()
+        conn.save(update_fields=["status", "disconnected_at", "updated_at"])
+        conn.oauth_tokens.filter(is_active=True).update(is_active=False, updated_at=timezone.now())
+        return Response(self.get_serializer(conn).data)
+
 
 class GrowthOAuthStateViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsGodMode]
@@ -203,6 +233,62 @@ class GrowthScheduledPostJobViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
+
+
+class PlatformAutomationRuleViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, IsGodMode]
+    serializer_class = PlatformAutomationRuleSerializer
+    queryset = PlatformAutomationRule.objects.all().order_by("name", "-created_at")
+
+    def get_queryset(self):
+        seed_system_templates(user=self.request.user)
+        return super().get_queryset()
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    @action(detail=True, methods=["post"])
+    def run_test(self, request, pk=None):
+        rule = self.get_object()
+        if rule.status != PlatformAutomationRule.Status.ACTIVE:
+            return Response({"detail": "Rule is not active or did not match."}, status=status.HTTP_400_BAD_REQUEST)
+
+        payload = request.data if isinstance(request.data, dict) else {}
+
+        from platform_growth.services.automation_engine import execute_rule
+
+        execution = execute_rule(rule, payload=payload, user=request.user)
+        return Response(PlatformAutomationExecutionSerializer(execution).data)
+
+
+class PlatformAutomationExecutionViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    permission_classes = [IsAuthenticated, IsGodMode]
+    serializer_class = PlatformAutomationExecutionSerializer
+    queryset = PlatformAutomationExecution.objects.select_related("rule").all().order_by("-created_at")
+
+
+class OAuthMetaStartAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsGodMode]
+
+    def post(self, request):
+        return Response(
+            {
+                "detail": "Meta OAuth setup is paused. Configure platform_growth.services.meta_oauth before enabling this endpoint."
+            },
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
+
+
+class OAuthMetaCallbackAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsGodMode]
+
+    def get(self, request):
+        return Response(
+            {
+                "detail": "Meta OAuth setup is paused. Configure platform_growth.services.meta_oauth before enabling this endpoint."
+            },
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
 
 
 class MetaWebhookVerificationAPIView(APIView):

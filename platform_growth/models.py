@@ -1,3 +1,4 @@
+# platform_growth/models.py
 from __future__ import annotations
 
 from datetime import timedelta
@@ -362,3 +363,58 @@ class GrowthScheduledPostJob(TimeStampedModel):
     class Meta:
         ordering = ["run_at", "-created_at"]
         indexes = [models.Index(fields=["status", "run_at"])]
+
+
+class PlatformAutomationRule(TimeStampedModel):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        ACTIVE = "ACTIVE", "Active"
+        PAUSED = "PAUSED", "Paused"
+        ARCHIVED = "ARCHIVED", "Archived"
+
+    class TriggerType(models.TextChoices):
+        LEAD_CREATED = "lead_created", "Lead Created"
+        LEAD_STATUS_CHANGED = "lead_status_changed", "Lead Status Changed"
+        TICKET_COMPLETED = "ticket_completed", "Ticket Completed"
+        INBOUND_MESSAGE_RECEIVED = "inbound_message_received", "Inbound Message Received"
+        CONTENT_DRAFT_CREATED = "content_draft_created", "Content Draft Created"
+
+    class ActionType(models.TextChoices):
+        CREATE_FOLLOW_UP_TASK = "create_follow_up_task", "Create Follow-up Task"
+        GENERATE_MESSAGE_DRAFT = "generate_message_draft", "Generate Message Draft"
+        GENERATE_SOCIAL_POST_DRAFT = "generate_social_post_draft", "Generate Social Post Draft"
+        ADD_LEAD_TO_PIPELINE = "add_lead_to_pipeline", "Add Lead To Pipeline"
+        LOG_ACTIVATION_EVENT = "log_activation_event", "Log Activation Event"
+
+    name = models.CharField(max_length=180)
+    description = models.TextField(blank=True)
+    trigger_type = models.CharField(max_length=64, choices=TriggerType.choices)
+    action_type = models.CharField(max_length=64, choices=ActionType.choices)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    conditions = models.JSONField(default=dict, blank=True)
+    action_config = models.JSONField(default=dict, blank=True)
+    is_system_template = models.BooleanField(default=False)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        ordering = ["name", "-created_at"]
+
+
+class PlatformAutomationExecution(models.Model):
+    class Status(models.TextChoices):
+        QUEUED = "QUEUED", "Queued"
+        COMPLETED = "COMPLETED", "Completed"
+        FAILED = "FAILED", "Failed"
+        SKIPPED = "SKIPPED", "Skipped"
+
+    rule = models.ForeignKey(PlatformAutomationRule, on_delete=models.CASCADE, related_name="executions")
+    trigger_type = models.CharField(max_length=64)
+    trigger_payload = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUEUED)
+    result = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
