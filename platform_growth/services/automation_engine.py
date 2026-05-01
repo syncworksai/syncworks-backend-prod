@@ -1,9 +1,13 @@
-# platform_growth/services/automation_engine.py
 from __future__ import annotations
 
 from django.utils import timezone
 
-from platform_growth.models import PlatformActivationEvent, PlatformAutomationExecution, PlatformAutomationRule
+from platform_growth.models import (
+    GrowthContentDraft,
+    PlatformActivationEvent,
+    PlatformAutomationExecution,
+    PlatformAutomationRule,
+)
 
 
 SYSTEM_TEMPLATES = [
@@ -50,10 +54,11 @@ def seed_system_templates(user=None):
 
 
 def execute_rule(rule, payload, user=None):
+    payload = payload or {}
     execution = PlatformAutomationExecution.objects.create(
         rule=rule,
         trigger_type=rule.trigger_type,
-        trigger_payload=payload or {},
+        trigger_payload=payload,
         status=PlatformAutomationExecution.Status.QUEUED,
     )
 
@@ -65,6 +70,39 @@ def execute_rule(rule, payload, user=None):
             "no_outbound_sent": True,
         }
 
+        if rule.action_type == PlatformAutomationRule.ActionType.GENERATE_MESSAGE_DRAFT:
+            name = str(payload.get("name") or payload.get("full_name") or "there").strip() or "there"
+            draft = GrowthContentDraft.objects.create(
+                title="Auto Message Draft",
+                body=f"Hi {name}, thanks for your interest in SyncWorks.",
+                source="AUTOMATION",
+                status=GrowthContentDraft.Status.DRAFT,
+                created_by=user,
+                metadata={"automation_rule_id": rule.id, "trigger_type": rule.trigger_type},
+            )
+            result["draft_id"] = draft.id
+            result["draft_type"] = "message"
+
+        elif rule.action_type == PlatformAutomationRule.ActionType.GENERATE_SOCIAL_POST_DRAFT:
+            draft = GrowthContentDraft.objects.create(
+                title="Auto Social Post",
+                body="New lead activity detected. Promote service or follow up.",
+                source="AUTOMATION",
+                status=GrowthContentDraft.Status.DRAFT,
+                created_by=user,
+                metadata={"automation_rule_id": rule.id, "trigger_type": rule.trigger_type},
+            )
+            result["draft_id"] = draft.id
+            result["draft_type"] = "social_post"
+
+        elif rule.action_type == PlatformAutomationRule.ActionType.CREATE_FOLLOW_UP_TASK:
+            lead_id = payload.get("lead_id")
+            result["task"] = {
+                "type": "follow_up",
+                "lead_id": lead_id,
+                "note": "Follow up with lead within 24 hours",
+            }
+
         if rule.action_type == PlatformAutomationRule.ActionType.LOG_ACTIVATION_EVENT:
             event = PlatformActivationEvent.objects.create(
                 event_type=f"automation.{rule.trigger_type}",
@@ -72,7 +110,7 @@ def execute_rule(rule, payload, user=None):
                 payload={
                     "rule_id": rule.id,
                     "rule_name": rule.name,
-                    "payload": payload or {},
+                    "payload": payload,
                 },
             )
             result["activation_event_id"] = event.id
