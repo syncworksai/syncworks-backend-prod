@@ -106,13 +106,13 @@ class PlatformLeadViewSet(
         lead = serializer.save()
 
         evaluate_rules(
-            trigger_type=PlatformAutomationRule.TriggerType.LEAD_CREATED,
+            PlatformAutomationRule.TriggerType.LEAD_CREATED,
             payload={
                 "lead_id": lead.id,
                 "source": lead.source,
                 "status": lead.status,
-                "email": lead.email,
                 "full_name": lead.full_name,
+                "email": lead.email,
             },
             user=self.request.user,
         )
@@ -125,12 +125,14 @@ class PlatformLeadViewSet(
 
         if old_status != lead.status:
             evaluate_rules(
-                trigger_type=PlatformAutomationRule.TriggerType.LEAD_STATUS_CHANGED,
+                PlatformAutomationRule.TriggerType.LEAD_STATUS_CHANGED,
                 payload={
                     "lead_id": lead.id,
                     "old_status": old_status,
                     "new_status": lead.status,
                     "source": lead.source,
+                    "full_name": lead.full_name,
+                    "email": lead.email,
                 },
                 user=self.request.user,
             )
@@ -224,6 +226,48 @@ class GrowthContentDraftViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
+    @action(detail=True, methods=["post"])
+    def queue(self, request, pk=None):
+        draft = self.get_object()
+        channel_connection_id = request.data.get("channel_connection")
+        scheduled_for = request.data.get("scheduled_for")
+
+        channel_connection = None
+        if channel_connection_id:
+            channel_connection = GrowthChannelConnection.objects.filter(id=channel_connection_id).first()
+            if channel_connection is None:
+                return Response({"detail": "channel_connection not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if channel_connection is None:
+            channel_connection, _ = GrowthChannelConnection.objects.get_or_create(
+                provider=GrowthChannelConnection.Provider.META,
+                external_account_id="safe-mode",
+                defaults={
+                    "account_label": "Manual / Safe Mode",
+                    "status": GrowthChannelConnection.Status.CONNECTED,
+                    "created_by": request.user,
+                    "metadata": {"safe_mode": True, "internal_placeholder": True},
+                },
+            )
+
+            if channel_connection.status != GrowthChannelConnection.Status.CONNECTED:
+                channel_connection.status = GrowthChannelConnection.Status.CONNECTED
+                channel_connection.save(update_fields=["status", "updated_at"])
+
+        queue_item = GrowthContentQueueItem.objects.create(
+            draft=draft,
+            channel_connection=channel_connection,
+            status=GrowthContentQueueItem.Status.QUEUED,
+            scheduled_for=scheduled_for or None,
+            metadata={
+                "safe_mode": True,
+                "no_external_post": True,
+            },
+            created_by=request.user,
+        )
+
+        return Response(GrowthContentQueueItemSerializer(queue_item).data, status=status.HTTP_201_CREATED)
+
 
 class GrowthContentQueueItemViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsGodMode]
@@ -232,6 +276,24 @@ class GrowthContentQueueItemViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
+
+    @action(detail=True, methods=["post"], url_path="simulate-post")
+    def simulate_post(self, request, pk=None):
+        queue_item = self.get_object()
+        queue_item.status = GrowthContentQueueItem.Status.POSTED
+        queue_item.posted_at = timezone.now()
+
+        metadata = dict(queue_item.metadata or {})
+        metadata.update(
+            {
+                "simulated_post": True,
+                "no_external_post": True,
+            }
+        )
+        queue_item.metadata = metadata
+        queue_item.save(update_fields=["status", "posted_at", "metadata", "updated_at"])
+
+        return Response(self.get_serializer(queue_item).data)
 
 
 class GrowthAutomationRecipeViewSet(viewsets.ModelViewSet):
@@ -289,9 +351,7 @@ class OAuthMetaStartAPIView(APIView):
 
     def post(self, request):
         return Response(
-            {
-                "detail": "Meta OAuth setup is paused. Configure platform_growth.services.meta_oauth before enabling this endpoint."
-            },
+            {"detail": "Meta OAuth is temporarily paused in this environment."},
             status=status.HTTP_501_NOT_IMPLEMENTED,
         )
 
@@ -301,9 +361,7 @@ class OAuthMetaCallbackAPIView(APIView):
 
     def get(self, request):
         return Response(
-            {
-                "detail": "Meta OAuth setup is paused. Configure platform_growth.services.meta_oauth before enabling this endpoint."
-            },
+            {"detail": "Meta OAuth callback is temporarily paused in this environment."},
             status=status.HTTP_501_NOT_IMPLEMENTED,
         )
 
@@ -352,8 +410,8 @@ class MetaWebhookEventAPIView(APIView):
 
                         if saved_messages:
                             evaluate_rules(
-                                trigger_type=PlatformAutomationRule.TriggerType.INBOUND_MESSAGE_RECEIVED,
-                                payload=change,
+                                PlatformAutomationRule.TriggerType.INBOUND_MESSAGE_RECEIVED,
+                                payload={"object": object_name, "change": change, "entry_id": entry.get("id")},
                                 user=None,
                             )
 
