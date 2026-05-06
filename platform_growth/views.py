@@ -6,7 +6,7 @@ from django.conf import settings
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -50,6 +50,66 @@ from platform_growth.services.funnel import lead_status_breakdown
 from platform_growth.services.meta import record_meta_event, record_possible_message
 from platform_growth.services.posting import build_outbound_payload
 from user_accounts.permissions import IsGodMode
+
+
+class IsGodModeOrSBO(BasePermission):
+    message = "Not allowed."
+
+    def has_permission(self, request, view):
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+
+        from user_accounts.services.god_mode import is_god_mode
+
+        if is_god_mode(user):
+            return True
+
+        return (getattr(user, "role", "") or "").upper() == "SBO"
+
+
+def _is_god_mode_user(user) -> bool:
+    from user_accounts.services.god_mode import is_god_mode
+
+    return is_god_mode(user)
+
+
+def _is_sbo_user(user) -> bool:
+    return (getattr(user, "role", "") or "").upper() == "SBO"
+
+
+def _model_has_field(model, field_name: str) -> bool:
+    try:
+        return any(field.name == field_name for field in model._meta.get_fields())
+    except Exception:
+        return False
+
+
+def _safe_user_scoped_queryset(queryset, user):
+    """
+    Stage 11 safety:
+    - God Mode can see all.
+    - SBO can only see records scoped to created_by when the model supports it.
+    - If a model has no owner field yet, do NOT expose platform-wide data to SBO.
+    """
+    if _is_god_mode_user(user):
+        return queryset
+
+    if not _is_sbo_user(user):
+        return queryset.none()
+
+    model = getattr(queryset, "model", None)
+    if model is not None and _model_has_field(model, "created_by"):
+        return queryset.filter(created_by=user)
+
+    return queryset.none()
+
+
+def _serializer_save_with_created_by(serializer, user):
+    model = getattr(getattr(serializer, "Meta", None), "model", None)
+    if model is not None and _model_has_field(model, "created_by"):
+        return serializer.save(created_by=user)
+    return serializer.save()
 
 
 class PlatformGrowthDashboardAPIView(APIView):
@@ -98,21 +158,24 @@ class PlatformLeadViewSet(
     mixins.UpdateModelMixin,
     viewsets.GenericViewSet,
 ):
-    permission_classes = [IsAuthenticated, IsGodMode]
+    permission_classes = [IsAuthenticated, IsGodModeOrSBO]
     serializer_class = PlatformLeadSerializer
     queryset = PlatformLead.objects.all().order_by("-last_activity_at", "-created_at")
 
+    def get_queryset(self):
+        return _safe_user_scoped_queryset(super().get_queryset(), self.request.user)
+
     def perform_create(self, serializer):
-        lead = serializer.save()
+        lead = _serializer_save_with_created_by(serializer, self.request.user)
 
         evaluate_rules(
             PlatformAutomationRule.TriggerType.LEAD_CREATED,
             payload={
                 "lead_id": lead.id,
-                "source": lead.source,
-                "status": lead.status,
-                "full_name": lead.full_name,
-                "email": lead.email,
+                "source": getattr(lead, "source", ""),
+                "status": getattr(lead, "status", ""),
+                "full_name": getattr(lead, "full_name", ""),
+                "email": getattr(lead, "email", ""),
             },
             user=self.request.user,
         )
@@ -130,18 +193,32 @@ class PlatformLeadViewSet(
                     "lead_id": lead.id,
                     "old_status": old_status,
                     "new_status": lead.status,
-                    "source": lead.source,
-                    "full_name": lead.full_name,
-                    "email": lead.email,
+                    "source": getattr(lead, "source", ""),
+                    "full_name": getattr(lead, "full_name", ""),
+                    "email": getattr(lead, "email", ""),
                 },
                 user=self.request.user,
             )
 
 
 class PlatformConversationViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
-    permission_classes = [IsAuthenticated, IsGodMode]
+    permission_classes = [IsAuthenticated, IsGodModeOrSBO]
     serializer_class = PlatformConversationSerializer
     queryset = PlatformConversation.objects.select_related("lead").prefetch_related("messages").all()
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+
+        if _is_god_mode_user(self.request.user):
+            return qs
+
+        if not _is_sbo_user(self.request.user):
+            return qs.none()
+
+        if _model_has_field(PlatformLead, "created_by"):
+            return qs.filter(lead__created_by=self.request.user)
+
+        return qs.none()
 
     @action(detail=True, methods=["get"])
     def messages(self, request, pk=None):
@@ -178,9 +255,12 @@ class PlatformAutomationFlowViewSet(viewsets.ModelViewSet):
 
 
 class GrowthChannelConnectionViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, IsGodMode]
+    permission_classes = [IsAuthenticated, IsGodModeOrSBO]
     serializer_class = GrowthChannelConnectionSerializer
     queryset = GrowthChannelConnection.objects.all().order_by("provider", "-created_at")
+
+    def get_queryset(self):
+        return _safe_user_scoped_queryset(super().get_queryset(), self.request.user)
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
@@ -219,9 +299,12 @@ class GrowthOAuthTokenViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, 
 
 
 class GrowthContentDraftViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, IsGodMode]
+    permission_classes = [IsAuthenticated, IsGodModeOrSBO]
     serializer_class = GrowthContentDraftSerializer
     queryset = GrowthContentDraft.objects.all().order_by("-updated_at", "-created_at")
+
+    def get_queryset(self):
+        return _safe_user_scoped_queryset(super().get_queryset(), self.request.user)
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
@@ -238,14 +321,17 @@ class GrowthContentDraftViewSet(viewsets.ModelViewSet):
             if channel_connection is None:
                 return Response({"detail": "channel_connection not found."}, status=status.HTTP_400_BAD_REQUEST)
 
+            if not _is_god_mode_user(request.user) and getattr(channel_connection, "created_by_id", None) != request.user.id:
+                return Response({"detail": "channel_connection not found."}, status=status.HTTP_400_BAD_REQUEST)
+
         if channel_connection is None:
             channel_connection, _ = GrowthChannelConnection.objects.get_or_create(
                 provider=GrowthChannelConnection.Provider.META,
                 external_account_id="safe-mode",
+                created_by=request.user,
                 defaults={
                     "account_label": "Manual / Safe Mode",
                     "status": GrowthChannelConnection.Status.CONNECTED,
-                    "created_by": request.user,
                     "metadata": {"safe_mode": True, "internal_placeholder": True},
                 },
             )
@@ -270,9 +356,12 @@ class GrowthContentDraftViewSet(viewsets.ModelViewSet):
 
 
 class GrowthContentQueueItemViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, IsGodMode]
+    permission_classes = [IsAuthenticated, IsGodModeOrSBO]
     serializer_class = GrowthContentQueueItemSerializer
     queryset = GrowthContentQueueItem.objects.select_related("draft", "channel_connection").all().order_by("scheduled_for", "-created_at")
+
+    def get_queryset(self):
+        return _safe_user_scoped_queryset(super().get_queryset(), self.request.user)
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
@@ -297,18 +386,47 @@ class GrowthContentQueueItemViewSet(viewsets.ModelViewSet):
 
 
 class GrowthAutomationRecipeViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, IsGodMode]
+    permission_classes = [IsAuthenticated, IsGodModeOrSBO]
     serializer_class = GrowthAutomationRecipeSerializer
     queryset = GrowthAutomationRecipe.objects.all().order_by("name")
+
+    def get_queryset(self):
+        if _is_god_mode_user(self.request.user):
+            return super().get_queryset()
+
+        if _is_sbo_user(self.request.user):
+            qs = super().get_queryset()
+            if _model_has_field(GrowthAutomationRecipe, "created_by"):
+                return qs.filter(created_by=self.request.user)
+            return qs
+
+        return super().get_queryset().none()
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
 
 class GrowthScheduledPostJobViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, IsGodMode]
+    permission_classes = [IsAuthenticated, IsGodModeOrSBO]
     serializer_class = GrowthScheduledPostJobSerializer
     queryset = GrowthScheduledPostJob.objects.select_related("queue_item").all().order_by("run_at", "-created_at")
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+
+        if _is_god_mode_user(self.request.user):
+            return qs
+
+        if not _is_sbo_user(self.request.user):
+            return qs.none()
+
+        if _model_has_field(GrowthScheduledPostJob, "created_by"):
+            return qs.filter(created_by=self.request.user)
+
+        if _model_has_field(GrowthContentQueueItem, "created_by"):
+            return qs.filter(queue_item__created_by=self.request.user)
+
+        return qs.none()
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
