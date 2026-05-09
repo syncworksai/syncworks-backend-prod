@@ -39,6 +39,16 @@ class ServiceRequest(models.Model):
     title = models.CharField(max_length=160)
     description = models.TextField(blank=True, default="")
 
+    # Native marketplace intake fields.
+    # These are parsed from the compatibility "SyncWorks Intake:" JSON block
+    # embedded in description, while preserving the original description.
+    priority = models.CharField(max_length=50, blank=True, default="")
+    needed_by_date = models.DateField(null=True, blank=True)
+    preferred_time_window = models.CharField(max_length=120, blank=True, default="")
+    preferred_start_date = models.DateField(null=True, blank=True)
+    preferred_end_date = models.DateField(null=True, blank=True)
+    intake_payload = models.JSONField(default=dict, blank=True)
+
     # These exist in your ServiceRequestSerializer fields
     address = models.CharField(max_length=255, blank=True, default="")
     zip_code = models.CharField(max_length=20, blank=True, default="")
@@ -52,7 +62,7 @@ class ServiceRequest(models.Model):
         related_name="preferred_service_requests",
     )
 
-    # ✅ NEW: Direct-to-business routing (Business Cards “Schedule again”)
+    # Direct-to-business routing (Business Cards “Schedule again”)
     target_business = models.ForeignKey(
         Business,
         on_delete=models.SET_NULL,

@@ -379,18 +379,82 @@ def create_request_and_ticket(
     service_address: str = "",
     is_marketplace: bool = False,
 ) -> ServiceRequest:
+    import json
+    from datetime import date
+
     clean_zip = (service_zip or "").strip()
     clean_addr = (service_address or "").strip()
     clean_radius = _coerce_radius(service_radius_miles)
+
+    intake_payload = {}
+    priority = ""
+    needed_by_date = None
+    preferred_time_window = ""
+    preferred_start_date = None
+    preferred_end_date = None
+
+    raw_description = description or ""
+
+    try:
+        marker = "SyncWorks Intake:"
+        idx = raw_description.find(marker)
+
+        if idx >= 0:
+            json_text = raw_description[idx + len(marker):].strip()
+
+            try:
+                intake_payload = json.loads(json_text)
+            except Exception:
+                first = json_text.find("{")
+                last = json_text.rfind("}")
+
+                if first >= 0 and last > first:
+                    intake_payload = json.loads(json_text[first:last + 1])
+
+        if isinstance(intake_payload, dict):
+            priority = str(
+                intake_payload.get("priority")
+                or intake_payload.get("priority_label")
+                or ""
+            ).strip()
+
+            preferred_time_window = str(
+                intake_payload.get("preferred_time_window") or ""
+            ).strip()
+
+            def _parse_date(v):
+                if not v:
+                    return None
+
+                if isinstance(v, date):
+                    return v
+
+                try:
+                    return date.fromisoformat(str(v))
+                except Exception:
+                    return None
+
+            needed_by_date = _parse_date(intake_payload.get("needed_by_date"))
+            preferred_start_date = _parse_date(intake_payload.get("preferred_start_date"))
+            preferred_end_date = _parse_date(intake_payload.get("preferred_end_date"))
+
+    except Exception:
+        intake_payload = {}
 
     sr = ServiceRequest.objects.create(
         customer=customer,
         category=category,
         title=title,
-        description=description or "",
+        description=raw_description,
         preferred_sbo_user=preferred_sbo_user,
         address=clean_addr,
         zip_code=clean_zip,
+        priority=priority,
+        needed_by_date=needed_by_date,
+        preferred_time_window=preferred_time_window,
+        preferred_start_date=preferred_start_date,
+        preferred_end_date=preferred_end_date,
+        intake_payload=intake_payload if isinstance(intake_payload, dict) else {},
     )
 
     Ticket.objects.create(
