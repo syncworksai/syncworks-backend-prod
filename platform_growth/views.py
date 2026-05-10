@@ -309,6 +309,48 @@ class GrowthContentDraftViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
+    @action(detail=False, methods=["post"], url_path="starter")
+    def starter(self, request):
+        starter_type = request.data.get("starter_type")
+        starter_content = {
+            "lead_follow_up": {
+                "title": "Lead Follow-Up Draft",
+                "body": "Thanks for reaching out — we can help. Want to get on the schedule?",
+            },
+            "review_request": {
+                "title": "Review Request Draft",
+                "body": "Thanks again for choosing us. If we earned it, a quick review helps our small business grow.",
+            },
+            "weekly_tip": {
+                "title": "Weekly Service Tip Draft",
+                "body": "Quick service tip: small maintenance today can prevent bigger repairs later. Need help? Send us a request.",
+            },
+            "promo": {
+                "title": "Service Promo Draft",
+                "body": "Booking this week? Ask about our fast-turnaround service slots.",
+            },
+        }
+
+        content = starter_content.get(starter_type)
+        if content is None:
+            return Response({"detail": "Invalid starter_type."}, status=status.HTTP_400_BAD_REQUEST)
+
+        draft = GrowthContentDraft.objects.create(
+            title=content["title"],
+            body=content["body"],
+            status=GrowthContentDraft.Status.DRAFT,
+            source="STARTER",
+            metadata={
+                "safe_mode": True,
+                "starter_type": starter_type,
+                "no_external_post": True,
+                "created_from": "sbo_growth_os_starter",
+            },
+            created_by=request.user,
+        )
+
+        return Response(self.get_serializer(draft).data, status=status.HTTP_201_CREATED)
+
     @action(detail=True, methods=["post"])
     def queue(self, request, pk=None):
         draft = self.get_object()
