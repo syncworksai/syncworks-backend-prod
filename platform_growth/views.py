@@ -48,6 +48,18 @@ from platform_growth.serializers import (
 from platform_growth.services.automation_engine import evaluate_rules, seed_system_templates
 from platform_growth.services.funnel import lead_status_breakdown
 from platform_growth.services.meta import record_meta_event, record_possible_message
+from platform_growth.services.meta_oauth import (
+    MetaOAuthConfigurationError,
+    MetaOAuthRequestError,
+    build_authorization_url,
+    choose_connection_account,
+    exchange_code_for_access_token,
+    expires_at_from_token_payload,
+    fetch_meta_accounts,
+    fetch_meta_profile,
+    get_meta_oauth_config,
+)
+from platform_growth.services.oauth_state import generate_state_token, is_state_expired
 from platform_growth.services.posting import build_outbound_payload
 from user_accounts.permissions import IsGodMode
 
@@ -378,7 +390,7 @@ class GrowthContentDraftViewSet(viewsets.ModelViewSet):
             },
             "review_request": {
                 "title": "Review Request Draft",
-                "body": "Thanks again for choosing us. If we earned it, a quick review helps our small business grow.",
+                "body": "Thanks again for choosing us. If we earned it, a quick review helps your small business grow.",
             },
             "weekly_tip": {
                 "title": "Weekly Service Tip Draft",
@@ -566,22 +578,158 @@ class PlatformAutomationExecutionViewSet(mixins.ListModelMixin, viewsets.Generic
 
 
 class OAuthMetaStartAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsGodMode]
+    permission_classes = [IsAuthenticated, IsGrowthConnectionAdminOrSBO]
 
     def post(self, request):
-        return Response(
-            {"detail": "Meta OAuth is temporarily paused in this environment."},
-            status=status.HTTP_501_NOT_IMPLEMENTED,
+        try:
+            config = get_meta_oauth_config(require_secret=False)
+        except MetaOAuthConfigurationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        state_token = generate_state_token()
+        state_obj = GrowthOAuthState.objects.create(
+            provider=GrowthChannelConnection.Provider.META,
+            state=state_token,
+            redirect_uri=config.redirect_uri,
+            metadata={
+                "scopes": config.scopes,
+                "graph_api_version": config.graph_api_version,
+                "oauth_provider": "meta",
+                "no_external_post": True,
+            },
+            created_by=request.user,
         )
+
+        try:
+            authorization_url = build_authorization_url(state=state_obj.state)
+        except MetaOAuthConfigurationError as exc:
+            state_obj.status = GrowthOAuthState.Status.CANCELED
+            state_obj.save(update_fields=["status", "updated_at"])
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"authorization_url": authorization_url, "state": state_obj.state})
 
 
 class OAuthMetaCallbackAPIView(APIView):
-    permission_classes = [IsAuthenticated, IsGodMode]
+    permission_classes = [IsAuthenticated, IsGrowthConnectionAdminOrSBO]
 
     def get(self, request):
+        code = str(request.query_params.get("code") or "").strip()
+        state_token = str(request.query_params.get("state") or "").strip()
+
+        if not code or not state_token:
+            return Response({"detail": "code and state are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        state_obj = GrowthOAuthState.objects.filter(state=state_token, provider=GrowthChannelConnection.Provider.META).first()
+        if state_obj is None:
+            return Response({"detail": "Invalid OAuth state."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if state_obj.status != GrowthOAuthState.Status.PENDING:
+            return Response({"detail": "OAuth state is not pending."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if is_state_expired(state_obj.expires_at):
+            state_obj.status = GrowthOAuthState.Status.EXPIRED
+            state_obj.save(update_fields=["status", "updated_at"])
+            return Response({"detail": "OAuth state has expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+        owner = state_obj.created_by
+        if owner is None:
+            return Response({"detail": "OAuth state owner is missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if getattr(owner, "id", None) != getattr(request.user, "id", None):
+            return Response({"detail": "OAuth state does not belong to this user."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            token_payload = exchange_code_for_access_token(code=code)
+            user_access_token = str(token_payload.get("access_token") or "").strip()
+            profile = fetch_meta_profile(access_token=user_access_token)
+            accounts_payload = fetch_meta_accounts(access_token=user_access_token)
+            account = choose_connection_account(
+                user_access_token=user_access_token,
+                profile=profile,
+                accounts_payload=accounts_payload,
+            )
+        except MetaOAuthConfigurationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except MetaOAuthRequestError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        existing_connection = GrowthChannelConnection.objects.filter(
+            provider=GrowthChannelConnection.Provider.META,
+            external_account_id=account.external_account_id,
+        ).first()
+
+        if existing_connection is not None and existing_connection.created_by_id not in (None, owner.id):
+            return Response(
+                {"detail": "This Meta account is already connected to another user."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        scopes = list((state_obj.metadata or {}).get("scopes") or get_meta_oauth_config(require_secret=False).scopes)
+        connection_defaults = {
+            "account_label": account.account_label,
+            "status": GrowthChannelConnection.Status.CONNECTED,
+            "scopes": scopes,
+            "connected_at": timezone.now(),
+            "disconnected_at": None,
+            "last_error": "",
+            "metadata": account.metadata,
+            "created_by": owner,
+        }
+
+        connection, _ = GrowthChannelConnection.objects.update_or_create(
+            provider=GrowthChannelConnection.Provider.META,
+            external_account_id=account.external_account_id,
+            defaults=connection_defaults,
+        )
+
+        connection.oauth_tokens.filter(is_active=True).update(is_active=False, updated_at=timezone.now())
+        token = GrowthOAuthToken.objects.create(
+            connection=connection,
+            provider=GrowthChannelConnection.Provider.META,
+            token_type=str(token_payload.get("token_type") or "bearer"),
+            access_token=account.access_token,
+            refresh_token="",
+            expires_at=expires_at_from_token_payload(token_payload),
+            scope=str(token_payload.get("scope") or ",".join(scopes)),
+            is_active=True,
+            metadata={
+                "meta_user_id": profile.get("id"),
+                "account_kind": account.metadata.get("account_kind"),
+                "no_external_post": True,
+            },
+            created_by=owner,
+        )
+
+        state_obj.status = GrowthOAuthState.Status.USED
+        state_obj.used_at = timezone.now()
+        state_metadata = dict(state_obj.metadata or {})
+        state_metadata.update({"connection_id": connection.id, "token_id": token.id})
+        state_obj.metadata = state_metadata
+        state_obj.save(update_fields=["status", "used_at", "metadata", "updated_at"])
+
         return Response(
-            {"detail": "Meta OAuth callback is temporarily paused in this environment."},
-            status=status.HTTP_501_NOT_IMPLEMENTED,
+            {
+                "ok": True,
+                "state": state_obj.state,
+                "connection": {
+                    "id": connection.id,
+                    "provider": connection.provider,
+                    "account_label": connection.account_label,
+                    "external_account_id": connection.external_account_id,
+                    "status": connection.status,
+                    "scopes": connection.scopes,
+                },
+                "token": {
+                    "id": token.id,
+                    "provider": token.provider,
+                    "token_type": token.token_type,
+                    "expires_at": token.expires_at,
+                    "scope": token.scope,
+                    "is_active": token.is_active,
+                },
+                "no_external_post": True,
+            }
         )
 
 
