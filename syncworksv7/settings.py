@@ -248,6 +248,19 @@ STRIPE_INVOICE_WEBHOOK_SECRET = env("STRIPE_INVOICE_WEBHOOK_SECRET", "") or ""
 
 PLATFORM_BASE_URL = env("PLATFORM_BASE_URL", "http://localhost:5174") or "http://localhost:5174"
 
+# -------------------------------------------------
+# Meta OAuth / Growth OS
+# -------------------------------------------------
+META_APP_ID = env("META_APP_ID", "") or ""
+META_APP_SECRET = env("META_APP_SECRET", "") or ""
+META_GRAPH_API_VERSION = env("META_GRAPH_API_VERSION", "v20.0") or "v20.0"
+META_OAUTH_REDIRECT_URI = env("META_OAUTH_REDIRECT_URI", "") or ""
+META_OAUTH_SCOPES = env(
+    "META_OAUTH_SCOPES",
+    "pages_show_list,pages_read_engagement,instagram_basic",
+) or "pages_show_list,pages_read_engagement,instagram_basic"
+META_WEBHOOK_VERIFY_TOKEN = env("META_WEBHOOK_VERIFY_TOKEN", "") or ""
+
 # Optional override:
 # - True  => treat as LIVE mode even if key looks test
 # - False => treat as TEST mode even if key looks live

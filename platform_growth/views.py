@@ -78,6 +78,28 @@ def _is_sbo_user(user) -> bool:
     return (getattr(user, "role", "") or "").upper() == "SBO"
 
 
+def _is_internal_admin_user(user) -> bool:
+    return bool(getattr(user, "is_platform_admin", False))
+
+
+def _is_growth_connection_admin_user(user) -> bool:
+    return _is_god_mode_user(user) or _is_internal_admin_user(user)
+
+
+class IsGrowthConnectionAdminOrSBO(BasePermission):
+    message = "Not allowed."
+
+    def has_permission(self, request, view):
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+
+        if _is_growth_connection_admin_user(user):
+            return True
+
+        return _is_sbo_user(user)
+
+
 def _model_has_field(model, field_name: str) -> bool:
     try:
         return any(field.name == field_name for field in model._meta.get_fields())
@@ -255,12 +277,49 @@ class PlatformAutomationFlowViewSet(viewsets.ModelViewSet):
 
 
 class GrowthChannelConnectionViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, IsGodModeOrSBO]
+    permission_classes = [IsAuthenticated, IsGrowthConnectionAdminOrSBO]
     serializer_class = GrowthChannelConnectionSerializer
     queryset = GrowthChannelConnection.objects.all().order_by("provider", "-created_at")
 
     def get_queryset(self):
+        if _is_growth_connection_admin_user(self.request.user):
+            return super().get_queryset()
         return _safe_user_scoped_queryset(super().get_queryset(), self.request.user)
+
+    def _user_can_manage_connections(self) -> bool:
+        return _is_growth_connection_admin_user(self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        if not self._user_can_manage_connections():
+            return Response(
+                {"detail": "OAuth channel connections must be created server-side."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        if not self._user_can_manage_connections():
+            return Response(
+                {"detail": "OAuth channel connections must be updated server-side."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        if not self._user_can_manage_connections():
+            return Response(
+                {"detail": "OAuth channel connections must be updated server-side."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        if not self._user_can_manage_connections():
+            return Response(
+                {"detail": "OAuth channel connections must be removed server-side."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().destroy(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
