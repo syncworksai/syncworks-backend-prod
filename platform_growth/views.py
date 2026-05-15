@@ -580,7 +580,24 @@ class PlatformAutomationExecutionViewSet(mixins.ListModelMixin, viewsets.Generic
 class OAuthMetaStartAPIView(APIView):
     permission_classes = [IsAuthenticated, IsGrowthConnectionAdminOrSBO]
 
+    VALID_REQUESTED_CHANNELS = {"facebook", "instagram", "meta"}
+
     def post(self, request):
+        requested_channel = str(
+            request.data.get("provider")
+            or request.data.get("channel")
+            or "facebook"
+        ).strip().lower()
+
+        if requested_channel not in self.VALID_REQUESTED_CHANNELS:
+            return Response(
+                {"detail": "Invalid provider. Supported providers: facebook, instagram."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if requested_channel == "meta":
+            requested_channel = "facebook"
+
         try:
             config = get_meta_oauth_config(require_secret=False)
         except MetaOAuthConfigurationError as exc:
@@ -592,6 +609,7 @@ class OAuthMetaStartAPIView(APIView):
             state=state_token,
             redirect_uri=config.redirect_uri,
             metadata={
+                "requested_channel": requested_channel,
                 "scopes": config.scopes,
                 "graph_api_version": config.graph_api_version,
                 "oauth_provider": "meta",
@@ -607,7 +625,13 @@ class OAuthMetaStartAPIView(APIView):
             state_obj.save(update_fields=["status", "updated_at"])
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({"authorization_url": authorization_url, "state": state_obj.state})
+        return Response(
+            {
+                "authorization_url": authorization_url,
+                "state": state_obj.state,
+                "provider": requested_channel,
+            }
+        )
 
 
 class OAuthMetaCallbackAPIView(APIView):
@@ -639,6 +663,8 @@ class OAuthMetaCallbackAPIView(APIView):
         if getattr(owner, "id", None) != getattr(request.user, "id", None):
             return Response({"detail": "OAuth state does not belong to this user."}, status=status.HTTP_403_FORBIDDEN)
 
+        requested_channel = str((state_obj.metadata or {}).get("requested_channel") or "facebook").strip().lower()
+
         try:
             token_payload = exchange_code_for_access_token(code=code)
             user_access_token = str(token_payload.get("access_token") or "").strip()
@@ -654,19 +680,19 @@ class OAuthMetaCallbackAPIView(APIView):
         except MetaOAuthRequestError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
-        existing_connection = GrowthChannelConnection.objects.filter(
+        existing_meta_connection = GrowthChannelConnection.objects.filter(
             provider=GrowthChannelConnection.Provider.META,
             external_account_id=account.external_account_id,
         ).first()
 
-        if existing_connection is not None and existing_connection.created_by_id not in (None, owner.id):
+        if existing_meta_connection is not None and existing_meta_connection.created_by_id not in (None, owner.id):
             return Response(
                 {"detail": "This Meta account is already connected to another user."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         scopes = list((state_obj.metadata or {}).get("scopes") or get_meta_oauth_config(require_secret=False).scopes)
-        connection_defaults = {
+        base_connection_defaults = {
             "account_label": account.account_label,
             "status": GrowthChannelConnection.Status.CONNECTED,
             "scopes": scopes,
@@ -677,16 +703,67 @@ class OAuthMetaCallbackAPIView(APIView):
             "created_by": owner,
         }
 
-        connection, _ = GrowthChannelConnection.objects.update_or_create(
+        meta_connection, _ = GrowthChannelConnection.objects.update_or_create(
             provider=GrowthChannelConnection.Provider.META,
             external_account_id=account.external_account_id,
-            defaults=connection_defaults,
+            defaults=base_connection_defaults,
         )
 
-        connection.oauth_tokens.filter(is_active=True).update(is_active=False, updated_at=timezone.now())
+        target_connection = meta_connection
+        target_provider = GrowthChannelConnection.Provider.META
+
+        if requested_channel == "instagram":
+            selected_account = account.metadata.get("selected_account") or {}
+            ig_account = selected_account.get("instagram_business_account") or account.metadata.get("instagram_business_account") or {}
+            ig_id = str(ig_account.get("id") or "").strip()
+
+            if not ig_id:
+                return Response(
+                    {"detail": "No Instagram Business account is connected to this Facebook Page."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            existing_ig_connection = GrowthChannelConnection.objects.filter(
+                provider=GrowthChannelConnection.Provider.INSTAGRAM,
+                external_account_id=ig_id,
+            ).first()
+
+            if existing_ig_connection is not None and existing_ig_connection.created_by_id not in (None, owner.id):
+                return Response(
+                    {"detail": "This Instagram account is already connected to another user."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            ig_username = str(ig_account.get("username") or ig_account.get("name") or ig_id).strip()
+            ig_label = ig_username if ig_username.startswith("@") else f"@{ig_username}"
+
+            instagram_metadata = {
+                **account.metadata,
+                "parent_meta_connection_id": meta_connection.id,
+                "facebook_page_id": account.external_account_id,
+                "instagram_business_account": ig_account,
+                "account_kind": "instagram_business",
+                "oauth_provider": "meta",
+                "no_external_post": True,
+            }
+
+            instagram_defaults = {
+                **base_connection_defaults,
+                "account_label": ig_label,
+                "metadata": instagram_metadata,
+            }
+
+            target_connection, _ = GrowthChannelConnection.objects.update_or_create(
+                provider=GrowthChannelConnection.Provider.INSTAGRAM,
+                external_account_id=ig_id,
+                defaults=instagram_defaults,
+            )
+            target_provider = GrowthChannelConnection.Provider.INSTAGRAM
+
+        target_connection.oauth_tokens.filter(is_active=True).update(is_active=False, updated_at=timezone.now())
         token = GrowthOAuthToken.objects.create(
-            connection=connection,
-            provider=GrowthChannelConnection.Provider.META,
+            connection=target_connection,
+            provider=target_provider,
             token_type=str(token_payload.get("token_type") or "bearer"),
             access_token=account.access_token,
             refresh_token="",
@@ -695,16 +772,46 @@ class OAuthMetaCallbackAPIView(APIView):
             is_active=True,
             metadata={
                 "meta_user_id": profile.get("id"),
-                "account_kind": account.metadata.get("account_kind"),
+                "account_kind": target_connection.metadata.get("account_kind"),
+                "parent_meta_connection_id": target_connection.metadata.get("parent_meta_connection_id"),
+                "facebook_page_id": target_connection.metadata.get("facebook_page_id"),
+                "requested_channel": requested_channel,
                 "no_external_post": True,
             },
             created_by=owner,
         )
 
+        if target_connection.id != meta_connection.id:
+            meta_connection.oauth_tokens.filter(is_active=True).update(is_active=False, updated_at=timezone.now())
+            GrowthOAuthToken.objects.create(
+                connection=meta_connection,
+                provider=GrowthChannelConnection.Provider.META,
+                token_type=str(token_payload.get("token_type") or "bearer"),
+                access_token=account.access_token,
+                refresh_token="",
+                expires_at=expires_at_from_token_payload(token_payload),
+                scope=str(token_payload.get("scope") or ",".join(scopes)),
+                is_active=True,
+                metadata={
+                    "meta_user_id": profile.get("id"),
+                    "account_kind": meta_connection.metadata.get("account_kind"),
+                    "requested_channel": requested_channel,
+                    "no_external_post": True,
+                },
+                created_by=owner,
+            )
+
         state_obj.status = GrowthOAuthState.Status.USED
         state_obj.used_at = timezone.now()
         state_metadata = dict(state_obj.metadata or {})
-        state_metadata.update({"connection_id": connection.id, "token_id": token.id})
+        state_metadata.update(
+            {
+                "connection_id": target_connection.id,
+                "meta_connection_id": meta_connection.id,
+                "token_id": token.id,
+                "requested_channel": requested_channel,
+            }
+        )
         state_obj.metadata = state_metadata
         state_obj.save(update_fields=["status", "used_at", "metadata", "updated_at"])
 
@@ -712,13 +819,21 @@ class OAuthMetaCallbackAPIView(APIView):
             {
                 "ok": True,
                 "state": state_obj.state,
+                "requested_channel": requested_channel,
                 "connection": {
-                    "id": connection.id,
-                    "provider": connection.provider,
-                    "account_label": connection.account_label,
-                    "external_account_id": connection.external_account_id,
-                    "status": connection.status,
-                    "scopes": connection.scopes,
+                    "id": target_connection.id,
+                    "provider": target_connection.provider,
+                    "account_label": target_connection.account_label,
+                    "external_account_id": target_connection.external_account_id,
+                    "status": target_connection.status,
+                    "scopes": target_connection.scopes,
+                },
+                "meta_connection": {
+                    "id": meta_connection.id,
+                    "provider": meta_connection.provider,
+                    "account_label": meta_connection.account_label,
+                    "external_account_id": meta_connection.external_account_id,
+                    "status": meta_connection.status,
                 },
                 "token": {
                     "id": token.id,
