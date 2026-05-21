@@ -1,33 +1,46 @@
 from __future__ import annotations
 
-from django.urls import path
-
-from platform_affiliates.views.affiliate_portal import (
-    AffiliateMeBusinessesView,
-    AffiliateMeCommissionsView,
-    AffiliateMeView,
-)
-from platform_affiliates.views.godmode_affiliates import (
-    GodModeAffiliateDetailView,
-    GodModeAffiliateListCreateView,
-    GodModeAffiliateOverviewView,
-    GodModeAssignBusinessView,
-)
-from platform_affiliates.views.tracking import ResolveAffiliateCodeView, TrackAffiliateClickView
+from django.conf import settings
+from django.conf.urls.static import static
+from django.contrib import admin
+from django.urls import include, path, re_path
+from django.views.static import serve
 
 urlpatterns = [
-    # Affiliate portal
-    path("me/", AffiliateMeView.as_view(), name="affiliate-me"),
-    path("me/businesses/", AffiliateMeBusinessesView.as_view(), name="affiliate-me-businesses"),
-    path("me/commissions/", AffiliateMeCommissionsView.as_view(), name="affiliate-me-commissions"),
+    path("admin/", admin.site.urls),
 
-    # Tracking
-    path("track-click/", TrackAffiliateClickView.as_view(), name="affiliate-track-click"),
-    path("resolve-code/", ResolveAffiliateCodeView.as_view(), name="affiliate-resolve-code"),
+    # Platform Growth
+    path(
+        "api/v1/platform-growth/",
+        include("platform_growth.urls"),
+    ),
 
-    # God Mode
-    path("godmode/overview/", GodModeAffiliateOverviewView.as_view(), name="affiliate-godmode-overview"),
-    path("godmode/affiliates/", GodModeAffiliateListCreateView.as_view(), name="affiliate-godmode-affiliates"),
-    path("godmode/affiliates/<int:pk>/", GodModeAffiliateDetailView.as_view(), name="affiliate-godmode-affiliate-detail"),
-    path("godmode/assign-business/", GodModeAssignBusinessView.as_view(), name="affiliate-godmode-assign-business"),
+    # Platform Affiliates
+    path(
+        "api/v1/platform-affiliates/",
+        include("platform_affiliates.urls"),
+    ),
+
+    # Main API
+    path(
+        "api/v1/",
+        include("user_accounts.urls"),
+    ),
 ]
+
+# Dev media/static
+if settings.DEBUG:
+    urlpatterns += static(
+        settings.MEDIA_URL,
+        document_root=settings.MEDIA_ROOT,
+    )
+
+# Temporary production media serving
+if not settings.DEBUG:
+    urlpatterns += [
+        re_path(
+            r"^media/(?P<path>.*)$",
+            serve,
+            {"document_root": settings.MEDIA_ROOT},
+        ),
+    ]
