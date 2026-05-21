@@ -41,6 +41,7 @@ def env_int(key: str, default: int) -> int:
 # Core Django
 # -------------------------------------------------
 SECRET_KEY = env("DJANGO_SECRET_KEY", "dev-insecure-secret-change-me") or "dev-insecure-secret-change-me"
+
 DEBUG = env_bool("DJANGO_DEBUG", default=True)
 
 ALLOWED_HOSTS_RAW = env(
@@ -53,13 +54,16 @@ ALLOWED_HOSTS = [h.strip() for h in ALLOWED_HOSTS_RAW.split(",") if h.strip()]
 CSRF_TRUSTED_ORIGINS_RAW = env("DJANGO_CSRF_TRUSTED_ORIGINS", "") or ""
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in CSRF_TRUSTED_ORIGINS_RAW.split(",") if o.strip()]
 
+# -------------------------------------------------
 # CORS
+# -------------------------------------------------
 CORS_ALLOWED_ORIGINS_RAW = env(
     "DJANGO_CORS_ALLOWED_ORIGINS",
     "http://localhost:5174,http://127.0.0.1:5174",
 ) or "http://localhost:5174,http://127.0.0.1:5174"
 
 CORS_ALLOWED_ORIGINS = [o.strip() for o in CORS_ALLOWED_ORIGINS_RAW.split(",") if o.strip()]
+
 CORS_ALLOW_CREDENTIALS = True
 
 from corsheaders.defaults import default_headers  # noqa: E402
@@ -72,6 +76,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 # Apps
 # -------------------------------------------------
 INSTALLED_APPS = [
+    # Django
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -79,17 +84,20 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
-    # 3rd party
+    # Third Party
     "rest_framework",
     "rest_framework.authtoken",
     "corsheaders",
 
-    # local apps
+    # Local Apps
     "user_accounts.apps.UserAccountsConfig",
     "tickets",
     "pm",
     "billing",
     "platform_growth.apps.PlatformGrowthConfig",
+
+    # NEW
+    "platform_affiliates.apps.PlatformAffiliatesConfig",
 ]
 
 # -------------------------------------------------
@@ -157,16 +165,25 @@ else:
 AUTH_USER_MODEL = "user_accounts.User"
 
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
-    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
-    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+    {
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"
+    },
 ]
 
 # -------------------------------------------------
 # Locale / static / media
 # -------------------------------------------------
 LANGUAGE_CODE = "en-us"
+
 TIME_ZONE = env("DJANGO_TIME_ZONE", "America/New_York") or "America/New_York"
 
 USE_I18N = True
@@ -176,7 +193,11 @@ STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 MEDIA_URL = "/media/"
-MEDIA_ROOT = env("DJANGO_MEDIA_ROOT", str(BASE_DIR / "media")) or str(BASE_DIR / "media")
+
+MEDIA_ROOT = (
+    env("DJANGO_MEDIA_ROOT", str(BASE_DIR / "media"))
+    or str(BASE_DIR / "media")
+)
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -224,12 +245,23 @@ GOD_MODE_EMAIL_ALLOWLIST = [
 # Security
 # -------------------------------------------------
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 USE_X_FORWARDED_HOST = True
 
-SESSION_COOKIE_SECURE = env_bool("DJANGO_SESSION_COOKIE_SECURE", default=not DEBUG)
-CSRF_COOKIE_SECURE = env_bool("DJANGO_CSRF_COOKIE_SECURE", default=not DEBUG)
+SESSION_COOKIE_SECURE = env_bool(
+    "DJANGO_SESSION_COOKIE_SECURE",
+    default=not DEBUG,
+)
 
-SECURE_HSTS_SECONDS = env_int("DJANGO_SECURE_HSTS_SECONDS", 0 if DEBUG else 3600)
+CSRF_COOKIE_SECURE = env_bool(
+    "DJANGO_CSRF_COOKIE_SECURE",
+    default=not DEBUG,
+)
+
+SECURE_HSTS_SECONDS = env_int(
+    "DJANGO_SECURE_HSTS_SECONDS",
+    0 if DEBUG else 3600,
+)
 
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool(
     "DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS",
@@ -263,7 +295,10 @@ DEFAULT_FROM_EMAIL = env(
 # -------------------------------------------------
 STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", "") or ""
 STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", "") or ""
-STRIPE_INVOICE_WEBHOOK_SECRET = env("STRIPE_INVOICE_WEBHOOK_SECRET", "") or ""
+STRIPE_INVOICE_WEBHOOK_SECRET = env(
+    "STRIPE_INVOICE_WEBHOOK_SECRET",
+    "",
+) or ""
 
 PLATFORM_BASE_URL = env(
     "PLATFORM_BASE_URL",
@@ -274,6 +309,7 @@ PLATFORM_BASE_URL = env(
 # Meta OAuth / Growth OS
 # -------------------------------------------------
 META_APP_ID = env("META_APP_ID", "") or ""
+
 META_APP_SECRET = env("META_APP_SECRET", "") or ""
 
 META_GRAPH_API_VERSION = env(
