@@ -5,6 +5,10 @@ from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from platform_affiliates.services.cash_fee_commission_service import (
+    record_cash_fee_invoice_commission,
+    record_paid_cash_fee_invoice_commissions_for_all,
+)
 from user_accounts.models import Business, BusinessMember, CashFeeInvoice
 from user_accounts.serializers.cash_fee_invoice import CashFeeInvoiceSerializer
 from user_accounts.services.cash_fee_billing import generate_monthly_cash_fee_invoices
@@ -15,7 +19,6 @@ from user_accounts.services.cash_fee_collection import (
 
 
 def _is_platform_admin(user) -> bool:
-    # Safe + simple: treat staff/superuser as God Mode
     try:
         if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
             return True
@@ -39,17 +42,26 @@ def _user_business_ids(user) -> list[int]:
         ids.update(list(Business.objects.filter(owner_user=user).values_list("id", flat=True)))
     except Exception:
         pass
+
     try:
         ids.update(list(Business.objects.filter(owner=user).values_list("id", flat=True)))
     except Exception:
         pass
+
     try:
         ids.update(list(Business.objects.filter(created_by=user).values_list("id", flat=True)))
     except Exception:
         pass
 
     try:
-        ids.update(list(BusinessMember.objects.filter(user=user, is_active=True).values_list("business_id", flat=True)))
+        ids.update(
+            list(
+                BusinessMember.objects.filter(
+                    user=user,
+                    is_active=True,
+                ).values_list("business_id", flat=True)
+            )
+        )
     except Exception:
         pass
 
@@ -63,8 +75,10 @@ class IsAuthenticatedAndScoped(permissions.BasePermission):
 
     def has_object_permission(self, request, view, obj) -> bool:
         u = request.user
+
         if _is_platform_admin(u):
             return True
+
         try:
             return int(obj.business_id) in set(_user_business_ids(u))
         except Exception:
@@ -88,6 +102,7 @@ class CashFeeInvoiceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         u = self.request.user
+
         if _is_platform_admin(u):
             bid = self.request.query_params.get("business_id")
             if bid:
@@ -98,65 +113,97 @@ class CashFeeInvoiceViewSet(viewsets.ModelViewSet):
             return qs
 
         biz_ids = _user_business_ids(u)
+
         if not biz_ids:
             return qs.none()
+
         return qs.filter(business_id__in=biz_ids)
 
     def create(self, request, *args, **kwargs):
-        return Response({"detail": "Direct create disabled."}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+        return Response(
+            {"detail": "Direct create disabled."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     def partial_update(self, request, *args, **kwargs):
         if not _is_platform_admin(request.user):
-            return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
-        return super().partial_update(request, *args, **kwargs)
+            return Response(
+                {"detail": "Not allowed."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
-    # -------------------------
-    # ✅ Platform Admin Actions
-    # -------------------------
+        return super().partial_update(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"], url_path="mark-paid")
     def mark_paid(self, request, pk=None):
         if not _is_platform_admin(request.user):
-            return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"detail": "Not allowed."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         inv: CashFeeInvoice = self.get_object()
+
         if inv.status == CashFeeInvoice.Status.PAID:
-            return Response({"detail": "Already PAID."}, status=status.HTTP_200_OK)
+            record_cash_fee_invoice_commission(inv)
+            return Response(
+                {"detail": "Already PAID.", "invoice": self.get_serializer(inv).data},
+                status=status.HTTP_200_OK,
+            )
 
         inv.status = CashFeeInvoice.Status.PAID
         inv.paid_at = timezone.now()
         inv.save(update_fields=["status", "paid_at", "updated_at"])
-        return Response(self.get_serializer(inv).data, status=status.HTTP_200_OK)
+
+        record_cash_fee_invoice_commission(inv)
+
+        return Response(
+            self.get_serializer(inv).data,
+            status=status.HTTP_200_OK,
+        )
 
     @action(detail=True, methods=["post"], url_path="void")
     def void(self, request, pk=None):
         if not _is_platform_admin(request.user):
-            return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"detail": "Not allowed."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         inv: CashFeeInvoice = self.get_object()
         inv.status = CashFeeInvoice.Status.VOID
         inv.save(update_fields=["status", "updated_at"])
-        return Response(self.get_serializer(inv).data, status=status.HTTP_200_OK)
+
+        return Response(
+            self.get_serializer(inv).data,
+            status=status.HTTP_200_OK,
+        )
 
     @action(detail=True, methods=["post"], url_path="reopen")
     def reopen(self, request, pk=None):
         if not _is_platform_admin(request.user):
-            return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"detail": "Not allowed."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         inv: CashFeeInvoice = self.get_object()
         inv.status = CashFeeInvoice.Status.OPEN
         inv.paid_at = None
         inv.save(update_fields=["status", "paid_at", "updated_at"])
-        return Response(self.get_serializer(inv).data, status=status.HTTP_200_OK)
 
-    # -------------------------
-    # ✅ Generator (previous month)
-    # -------------------------
+        return Response(
+            self.get_serializer(inv).data,
+            status=status.HTTP_200_OK,
+        )
 
     @action(detail=False, methods=["post"], url_path="generate-previous-month")
     def generate_previous_month(self, request):
         if not _is_platform_admin(request.user):
-            return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"detail": "Not allowed."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         fee_bps = request.data.get("fee_bps", 100)
         due_days = request.data.get("due_days", 7)
@@ -165,12 +212,17 @@ class CashFeeInvoiceViewSet(viewsets.ModelViewSet):
             fee_bps = int(fee_bps)
         except Exception:
             fee_bps = 100
+
         try:
             due_days = int(due_days)
         except Exception:
             due_days = 7
 
-        res = generate_monthly_cash_fee_invoices(fee_bps=fee_bps, due_days=due_days)
+        res = generate_monthly_cash_fee_invoices(
+            fee_bps=fee_bps,
+            due_days=due_days,
+        )
+
         return Response(
             {
                 "businesses_considered": res.businesses_considered,
@@ -182,24 +234,26 @@ class CashFeeInvoiceViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
-    # -------------------------
-    # ✅ Collector (autopay)
-    # -------------------------
-
     @action(detail=False, methods=["post"], url_path="collect-open")
     def collect_open(self, request):
         """
         POST /cash-fee-invoices/collect-open/
         Platform admin only.
-        Charges OPEN invoices (due_only default true).
+        Charges OPEN invoices.
         """
         if not _is_platform_admin(request.user):
-            return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"detail": "Not allowed."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         due_only = request.data.get("due_only", True)
         due_only = bool(due_only)
 
         res = collect_open_cash_fee_invoices(due_only=due_only)
+
+        commissions_checked = record_paid_cash_fee_invoice_commissions_for_all()
+
         return Response(
             {
                 "considered": res.considered,
@@ -207,6 +261,7 @@ class CashFeeInvoiceViewSet(viewsets.ModelViewSet):
                 "skipped_no_card": res.skipped_no_card,
                 "skipped_zero": res.skipped_zero,
                 "failed": res.failed,
+                "affiliate_commissions_checked": commissions_checked,
             },
             status=status.HTTP_200_OK,
         )
@@ -218,9 +273,26 @@ class CashFeeInvoiceViewSet(viewsets.ModelViewSet):
         Platform admin only. Charges a single invoice.
         """
         if not _is_platform_admin(request.user):
-            return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"detail": "Not allowed."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         inv: CashFeeInvoice = self.get_object()
         ok, msg = charge_cash_fee_invoice(inv=inv)
-        payload = {"ok": bool(ok), "message": msg, "invoice": self.get_serializer(inv).data}
-        return Response(payload, status=status.HTTP_200_OK if ok else status.HTTP_400_BAD_REQUEST)
+
+        inv.refresh_from_db()
+
+        if ok:
+            record_cash_fee_invoice_commission(inv)
+
+        payload = {
+            "ok": bool(ok),
+            "message": msg,
+            "invoice": self.get_serializer(inv).data,
+        }
+
+        return Response(
+            payload,
+            status=status.HTTP_200_OK if ok else status.HTTP_400_BAD_REQUEST,
+        )

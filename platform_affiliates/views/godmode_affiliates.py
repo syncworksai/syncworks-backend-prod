@@ -11,12 +11,16 @@ from platform_affiliates.serializers import (
     AffiliatePartnerDetailSerializer,
     AffiliatePartnerListSerializer,
     GodModeAffiliateCreateSerializer,
+    GodModeAffiliateOpsDetailSerializer,
     GodModeAffiliateUpdateSerializer,
     GodModeAssignBusinessSerializer,
     ReferralAttributionSerializer,
 )
 from platform_affiliates.services.attribution_service import assign_business_to_affiliate
-from platform_affiliates.services.metrics_service import affiliate_list_metrics_queryset, get_godmode_overview_metrics
+from platform_affiliates.services.metrics_service import (
+    affiliate_list_metrics_queryset,
+    get_godmode_overview_metrics,
+)
 from user_accounts.models import Business
 
 
@@ -53,7 +57,7 @@ class GodModeAffiliateDetailView(APIView):
 
     def get(self, request, pk: int):
         affiliate = self.get_object(pk)
-        return Response(AffiliatePartnerDetailSerializer(affiliate).data)
+        return Response(GodModeAffiliateOpsDetailSerializer(affiliate).data)
 
     def patch(self, request, pk: int):
         affiliate = self.get_object(pk)
@@ -66,7 +70,7 @@ class GodModeAffiliateDetailView(APIView):
         serializer.is_valid(raise_exception=True)
         affiliate = serializer.save()
 
-        return Response(AffiliatePartnerDetailSerializer(affiliate).data)
+        return Response(GodModeAffiliateOpsDetailSerializer(affiliate).data)
 
 
 class GodModeAssignBusinessView(APIView):

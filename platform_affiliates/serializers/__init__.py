@@ -5,9 +5,11 @@ from .affiliate_partner import (
     AffiliatePartnerDetailSerializer,
     AffiliatePartnerListSerializer,
 )
+from .claim_code import ClaimAffiliateCodeSerializer
 from .commission_ledger import AffiliateCommissionLedgerSerializer
 from .godmode import (
     GodModeAffiliateCreateSerializer,
+    GodModeAffiliateOpsDetailSerializer,
     GodModeAffiliateUpdateSerializer,
     GodModeAssignBusinessSerializer,
 )
@@ -22,8 +24,10 @@ __all__ = [
     "AffiliateApplicationSerializer",
     "AffiliatePartnerDetailSerializer",
     "AffiliatePartnerListSerializer",
+    "ClaimAffiliateCodeSerializer",
     "AffiliateCommissionLedgerSerializer",
     "GodModeAffiliateCreateSerializer",
+    "GodModeAffiliateOpsDetailSerializer",
     "GodModeAffiliateUpdateSerializer",
     "GodModeAssignBusinessSerializer",
     "AffiliatePayoutBatchSerializer",

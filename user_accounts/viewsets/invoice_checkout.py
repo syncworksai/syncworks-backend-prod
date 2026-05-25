@@ -13,6 +13,9 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from platform_affiliates.services.invoice_commission_service import (
+    record_invoice_platform_fee_commission,
+)
 from user_accounts.models import Ticket, TicketMessage
 from user_accounts.models.billing import Invoice
 
@@ -113,6 +116,8 @@ def _mark_invoice_and_ticket_paid(
             dedup_invoice_fields.append(f)
 
     invoice.save(update_fields=dedup_invoice_fields)
+
+    record_invoice_platform_fee_commission(invoice)
 
     ticket = getattr(invoice, "ticket", None)
     if ticket:
