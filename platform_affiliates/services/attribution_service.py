@@ -8,6 +8,7 @@ from rest_framework.exceptions import ValidationError
 
 from platform_affiliates.choices import AttributionSource
 from platform_affiliates.models import AffiliateAuditLog, AffiliatePartner, ReferralAttribution
+from platform_affiliates.services.notification_service import notify_affiliate_business_attributed
 from user_accounts.models import Business
 
 
@@ -66,6 +67,14 @@ def assign_business_to_affiliate(
         before_json={},
         after_json=snapshot_attribution(attribution),
         note=reason or "",
+    )
+
+    transaction.on_commit(
+        lambda: notify_affiliate_business_attributed(
+            affiliate=affiliate,
+            business=business,
+            referral_code=affiliate.code,
+        )
     )
 
     return attribution
