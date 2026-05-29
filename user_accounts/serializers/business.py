@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from rest_framework import serializers
 
 from user_accounts.models import ServiceCategory
@@ -7,6 +9,14 @@ from user_accounts.models.business import Business, BusinessMember, BusinessCate
 
 
 MAX_LOGO_UPLOAD_MB = 5
+ALLOWED_LOGO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".svg"}
+ALLOWED_LOGO_CONTENT_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp",
+    "image/svg+xml",
+}
 
 
 class BusinessCategorySerializer(serializers.ModelSerializer):
@@ -23,7 +33,11 @@ class BusinessSerializer(serializers.ModelSerializer):
         required=False,
     )
 
-    logo = serializers.ImageField(required=False, allow_null=True)
+    # IMPORTANT:
+    # Business.logo is a models.FileField, not ImageField.
+    # Use FileField here and validate size/type manually.
+    logo = serializers.FileField(required=False, allow_null=True)
+
     logo_url = serializers.SerializerMethodField()
     effective_service_radius_miles = serializers.SerializerMethodField()
 
@@ -35,37 +49,46 @@ class BusinessSerializer(serializers.ModelSerializer):
             "owner",
             "is_active",
             "created_at",
+
             "business_email",
             "owner_name",
             "phone",
+
             "logo",
             "logo_url",
+
             "headline",
             "services_text",
             "address",
             "city",
             "state",
             "website",
+
             "business_presence_mode",
             "is_online_only",
+
             "facebook_url",
             "instagram_url",
             "linkedin_url",
             "google_business_url",
             "youtube_url",
             "tiktok_url",
+
             "business_card_code",
+
             "accepts_marketplace_tickets",
             "base_zip",
             "service_radius_miles",
             "effective_service_radius_miles",
             "services_offered",
+
             "expected_gross_monthly",
             "is_licensed",
             "is_insured",
             "is_bonded",
             "background_checked",
             "emergency_service",
+
             "billing_exempt",
             "billing_exempt_reason",
             "billing_exempt_until",
@@ -115,20 +138,19 @@ class BusinessSerializer(serializers.ModelSerializer):
                 f"Logo must be {MAX_LOGO_UPLOAD_MB}MB or smaller."
             )
 
-        content_type = str(getattr(file_obj, "content_type", "") or "").lower()
-        allowed = {
-            "image/png",
-            "image/jpeg",
-            "image/jpg",
-            "image/webp",
-            "image/svg+xml",
-        }
+        filename = str(getattr(file_obj, "name", "") or "").strip()
+        _, ext = os.path.splitext(filename.lower())
 
-        # Some storage/backends may not provide content_type. If missing, allow DRF/Pillow
-        # to validate the ImageField normally.
-        if content_type and content_type not in allowed:
+        if ext and ext not in ALLOWED_LOGO_EXTENSIONS:
             raise serializers.ValidationError(
-                "Logo must be a PNG, JPG, WEBP, or SVG image."
+                "Logo must be a PNG, JPG, JPEG, WEBP, or SVG file."
+            )
+
+        content_type = str(getattr(file_obj, "content_type", "") or "").lower()
+
+        if content_type and content_type not in ALLOWED_LOGO_CONTENT_TYPES:
+            raise serializers.ValidationError(
+                "Logo must be a PNG, JPG, JPEG, WEBP, or SVG file."
             )
 
         return file_obj
