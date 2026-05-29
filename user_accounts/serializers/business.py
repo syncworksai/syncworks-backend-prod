@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from rest_framework import serializers
+
 from user_accounts.models import ServiceCategory
 from user_accounts.models.business import Business, BusinessMember, BusinessCategory
+
+
+MAX_LOGO_UPLOAD_MB = 5
 
 
 class BusinessCategorySerializer(serializers.ModelSerializer):
@@ -15,10 +19,11 @@ class BusinessCategorySerializer(serializers.ModelSerializer):
 class BusinessSerializer(serializers.ModelSerializer):
     services_offered = serializers.PrimaryKeyRelatedField(
         many=True,
-        queryset=ServiceCategory.objects.all(),
+        queryset=ServiceCategory.objects.filter(is_active=True),
         required=False,
     )
 
+    logo = serializers.ImageField(required=False, allow_null=True)
     logo_url = serializers.SerializerMethodField()
     effective_service_radius_miles = serializers.SerializerMethodField()
 
@@ -30,46 +35,37 @@ class BusinessSerializer(serializers.ModelSerializer):
             "owner",
             "is_active",
             "created_at",
-
             "business_email",
             "owner_name",
             "phone",
-
             "logo",
             "logo_url",
-
             "headline",
             "services_text",
             "address",
             "city",
             "state",
             "website",
-
             "business_presence_mode",
             "is_online_only",
-
             "facebook_url",
             "instagram_url",
             "linkedin_url",
             "google_business_url",
             "youtube_url",
             "tiktok_url",
-
             "business_card_code",
-
             "accepts_marketplace_tickets",
             "base_zip",
             "service_radius_miles",
             "effective_service_radius_miles",
             "services_offered",
-
             "expected_gross_monthly",
             "is_licensed",
             "is_insured",
             "is_bonded",
             "background_checked",
             "emergency_service",
-
             "billing_exempt",
             "billing_exempt_reason",
             "billing_exempt_until",
@@ -88,12 +84,15 @@ class BusinessSerializer(serializers.ModelSerializer):
 
     def get_logo_url(self, obj):
         try:
-            if not obj.logo:
+            logo = getattr(obj, "logo", None)
+            if not logo:
                 return None
+
             request = self.context.get("request")
             if request is not None:
-                return request.build_absolute_uri(obj.logo.url)
-            return obj.logo.url
+                return request.build_absolute_uri(logo.url)
+
+            return logo.url
         except Exception:
             return None
 
@@ -103,6 +102,36 @@ class BusinessSerializer(serializers.ModelSerializer):
         if getattr(obj, "business_presence_mode", "") == Business.PRESENCE_ONLINE:
             return None
         return obj.service_radius_miles
+
+    def validate_logo(self, file_obj):
+        if not file_obj:
+            return file_obj
+
+        size = int(getattr(file_obj, "size", 0) or 0)
+        max_bytes = MAX_LOGO_UPLOAD_MB * 1024 * 1024
+
+        if size > max_bytes:
+            raise serializers.ValidationError(
+                f"Logo must be {MAX_LOGO_UPLOAD_MB}MB or smaller."
+            )
+
+        content_type = str(getattr(file_obj, "content_type", "") or "").lower()
+        allowed = {
+            "image/png",
+            "image/jpeg",
+            "image/jpg",
+            "image/webp",
+            "image/svg+xml",
+        }
+
+        # Some storage/backends may not provide content_type. If missing, allow DRF/Pillow
+        # to validate the ImageField normally.
+        if content_type and content_type not in allowed:
+            raise serializers.ValidationError(
+                "Logo must be a PNG, JPG, WEBP, or SVG image."
+            )
+
+        return file_obj
 
     def validate_state(self, v):
         v = (v or "").strip().upper()
@@ -156,29 +185,46 @@ class BusinessSerializer(serializers.ModelSerializer):
     def validate_service_radius_miles(self, v):
         if v is None:
             return v
+
         try:
             v = int(v)
         except Exception:
             raise serializers.ValidationError("service_radius_miles must be an integer.")
+
         if v < 1 or v > 500:
-            raise serializers.ValidationError("service_radius_miles must be between 1 and 500.")
+            raise serializers.ValidationError(
+                "service_radius_miles must be between 1 and 500."
+            )
+
+        return v
+
+    def validate_expected_gross_monthly(self, v):
+        if v in (None, ""):
+            return v
+
+        try:
+            if v < 0:
+                raise serializers.ValidationError(
+                    "expected_gross_monthly must be greater than or equal to 0."
+                )
+        except TypeError:
+            raise serializers.ValidationError("expected_gross_monthly must be a number.")
+
         return v
 
     def validate(self, attrs):
         incoming_mode = attrs.get(
             "business_presence_mode",
-            getattr(self.instance, "business_presence_mode", "")
+            getattr(self.instance, "business_presence_mode", ""),
         )
         incoming_online_only = attrs.get(
             "is_online_only",
-            getattr(self.instance, "is_online_only", False)
+            getattr(self.instance, "is_online_only", False),
         )
 
         if incoming_mode == Business.PRESENCE_ONLINE:
             attrs["is_online_only"] = True
         elif "business_presence_mode" in attrs and incoming_online_only is True:
-            # keep explicit online-only only if user intentionally sent it;
-            # otherwise normalize non-online modes back to False
             attrs["is_online_only"] = bool(attrs.get("is_online_only", False))
 
         return attrs
@@ -186,15 +232,19 @@ class BusinessSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         services = validated_data.pop("services_offered", [])
         business = super().create(validated_data)
+
         if services is not None:
             business.services_offered.set(services)
+
         return business
 
     def update(self, instance, validated_data):
         services = validated_data.pop("services_offered", None)
         instance = super().update(instance, validated_data)
+
         if services is not None:
             instance.services_offered.set(services)
+
         return instance
 
 
