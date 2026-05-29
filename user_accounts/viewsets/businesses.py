@@ -1,6 +1,9 @@
 # backend/user_accounts/viewsets/businesses.py
 from __future__ import annotations
 
+import os
+
+from django.conf import settings
 from django.db.models import Q
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -21,6 +24,10 @@ from user_accounts.services.employees import (
     invite_employee,
     terminate_member,
 )
+
+
+MAX_LOGO_UPLOAD_MB = 5
+ALLOWED_LOGO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".svg"}
 
 
 def _is_platform_admin(user) -> bool:
@@ -121,15 +128,49 @@ def _owner_role_value() -> str:
     return "OWNER"
 
 
+def _logo_url(request, business: Business) -> str | None:
+    try:
+        logo = getattr(business, "logo", None)
+        if not logo:
+            return None
+        if request:
+            return request.build_absolute_uri(logo.url)
+        return logo.url
+    except Exception:
+        return None
+
+
+def _validate_logo_file(file_obj) -> None:
+    if not file_obj:
+        raise ValidationError({"logo": ["No logo file was uploaded."]})
+
+    size = int(getattr(file_obj, "size", 0) or 0)
+    max_bytes = MAX_LOGO_UPLOAD_MB * 1024 * 1024
+
+    if size > max_bytes:
+        raise ValidationError(
+            {"logo": [f"Logo must be {MAX_LOGO_UPLOAD_MB}MB or smaller."]}
+        )
+
+    filename = str(getattr(file_obj, "name", "") or "").strip()
+    _, ext = os.path.splitext(filename.lower())
+
+    if ext not in ALLOWED_LOGO_EXTENSIONS:
+        raise ValidationError(
+            {"logo": ["Logo must be a PNG, JPG, JPEG, WEBP, or SVG file."]}
+        )
+
+
 class BusinessViewSet(viewsets.ModelViewSet):
     """
     /businesses/
     /businesses/{id}/
     /businesses/me/
+    /businesses/{id}/upload-logo/
 
     Supports:
     - JSON PATCH for normal settings
-    - multipart PATCH for business logo uploads
+    - multipart upload through dedicated upload-logo endpoint
     """
 
     serializer_class = BusinessSerializer
@@ -138,7 +179,6 @@ class BusinessViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-
         base_qs = Business.objects.prefetch_related("services_offered")
 
         if _is_platform_admin(user):
@@ -182,11 +222,48 @@ class BusinessViewSet(viewsets.ModelViewSet):
         return super().retrieve(request, *args, **kwargs)
 
     def partial_update(self, request, *args, **kwargs):
-        """
-        Keep PATCH partial and allow multipart/form-data for logo.
-        """
         kwargs["partial"] = True
         return super().partial_update(request, *args, **kwargs)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upload-logo",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def upload_logo(self, request, pk=None):
+        business = self.get_object()
+        _require_business_manage_access(request.user, business)
+
+        file_obj = request.FILES.get("logo") or request.FILES.get("file")
+        _validate_logo_file(file_obj)
+
+        try:
+            os.makedirs(settings.MEDIA_ROOT, exist_ok=True)
+        except Exception:
+            # Let the actual save expose the real error if directory creation fails.
+            pass
+
+        try:
+            business.logo = file_obj
+            business.save(update_fields=["logo"])
+        except Exception as exc:
+            return Response(
+                {
+                    "detail": "Logo upload failed while saving the file.",
+                    "error": str(exc),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response(
+            {
+                "id": business.id,
+                "name": business.name,
+                "logo_url": _logo_url(request, business),
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @action(detail=False, methods=["get"], url_path="me")
     def me(self, request):
