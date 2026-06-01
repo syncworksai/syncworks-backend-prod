@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import os
+import uuid
+from pathlib import Path
 
 from django.conf import settings
 from django.db.models import Q
+from django.utils.text import get_valid_filename
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -257,18 +260,39 @@ class BusinessViewSet(viewsets.ModelViewSet):
         _validate_logo_file(file_obj)
 
         try:
-            os.makedirs(settings.MEDIA_ROOT, exist_ok=True)
-        except Exception:
-            pass
+            media_root = Path(settings.MEDIA_ROOT)
+            upload_dir = media_root / "business_logos"
+            upload_dir.mkdir(parents=True, exist_ok=True)
 
-        try:
-            business.logo = file_obj
+            original_name = str(getattr(file_obj, "name", "") or "logo.png")
+            safe_name = get_valid_filename(original_name)
+            _, ext = os.path.splitext(safe_name.lower())
+
+            if not ext:
+                ext = ".png"
+
+            filename = f"business_{business.id}_{uuid.uuid4().hex[:12]}{ext}"
+            relative_path = f"business_logos/{filename}"
+            absolute_path = upload_dir / filename
+
+            with absolute_path.open("wb+") as destination:
+                for chunk in file_obj.chunks():
+                    destination.write(chunk)
+
+            # Important:
+            # Store the relative path only. This avoids Django's storage layer
+            # trying to write to the old /var/data path.
+            business.logo.name = relative_path
             business.save(update_fields=["logo"])
+
         except Exception as exc:
             return Response(
                 {
                     "detail": "Logo upload failed while saving the file.",
                     "error": str(exc),
+                    "media_root": str(settings.MEDIA_ROOT),
+                    "env_django_media_root": os.environ.get("DJANGO_MEDIA_ROOT", ""),
+                    "media_root_writable": os.access(settings.MEDIA_ROOT, os.W_OK),
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
