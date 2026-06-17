@@ -21,6 +21,12 @@ urlpatterns = [
         include("platform_affiliates.urls"),
     ),
 
+    # Customer Health
+    path(
+        "api/v1/customer-health/",
+        include("customer_health.urls"),
+    ),
+
     # Main API
     path(
         "api/v1/",

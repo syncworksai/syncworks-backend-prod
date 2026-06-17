@@ -95,9 +95,8 @@ INSTALLED_APPS = [
     "pm",
     "billing",
     "platform_growth.apps.PlatformGrowthConfig",
-
-    # NEW
     "platform_affiliates.apps.PlatformAffiliatesConfig",
+    "customer_health.apps.CustomerHealthConfig",
 ]
 
 # -------------------------------------------------
