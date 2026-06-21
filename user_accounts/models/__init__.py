@@ -1,28 +1,53 @@
 """
 Central model exports.
+
 Import models like:
-    from user_accounts.models import Business, BusinessMember, InviteCode, ServiceCategory
+
+    from user_accounts.models import (
+        Business,
+        BusinessMember,
+        InviteCode,
+        ServiceCategory,
+    )
 """
 
 from __future__ import annotations
 
-from .user import User
-from .profiles import CustomerProfile, SmallBusinessOwnerProfile, SubcontractorProfile
+from .user import User, EmailVerificationChallenge
+from .profiles import (
+    CustomerProfile,
+    SmallBusinessOwnerProfile,
+    SubcontractorProfile,
+)
 
 from .audit import AuditLog
 from .notifications import Notification, PlatformNewsItem
 
 from .categories import ServiceCategory
-from .business import Business, BusinessMember, BusinessCategory, BusinessMemberRole
+from .business import (
+    Business,
+    BusinessMember,
+    BusinessCategory,
+    BusinessMemberRole,
+)
 from .service_catalog import ServiceCatalogItem
 
-from .service_requests import ServiceRequest, ServiceRequestPhoto
-from .tickets import Ticket, TicketMessage, TicketAttachment, TicketQuote, TicketViewEvent
+from .service_requests import (
+    ServiceRequest,
+    ServiceRequestPhoto,
+)
+from .tickets import (
+    Ticket,
+    TicketMessage,
+    TicketAttachment,
+    TicketQuote,
+    TicketViewEvent,
+)
 
-# ✅ Job invoices (ticket invoices)
+# Job invoices
 from .billing import Invoice, InvoiceLineItem
 
-# ✅ Cash fee invoices (monthly platform fee on cash GMV)
+# Monthly platform fee invoices for externally collected revenue
 from .cash_fee_invoice import CashFeeInvoice
 
 from .connections import Connection
@@ -30,50 +55,69 @@ from .invites import InviteCode
 
 from .templates import DocumentTemplate
 
-# ✅ Business-based platform billing
-from .platform_billing import PlatformBillingProfile, MonthlyPlatformBill
+# Business-level platform billing
+from .platform_billing import (
+    PlatformBillingProfile,
+    MonthlyPlatformBill,
+)
 
-# ✅ NEW: User billing (card on file before business exists)
+# User-level billing and subscription state
 from .user_billing import UserBillingProfile
 
 from .promo import PromoCode, PromoRedemption
-from .kpis import PlatformDailyKpi, BusinessDailyKpi, MarketplaceCellDailyKpi
+from .kpis import (
+    PlatformDailyKpi,
+    BusinessDailyKpi,
+    MarketplaceCellDailyKpi,
+)
 
 from .customer_settings import CustomerSettings
-from .calendar_sync import CalendarAccount, TicketCalendarEvent
+from .calendar_sync import (
+    CalendarAccount,
+    TicketCalendarEvent,
+)
 
 from .finance_ops import FinanceSnapshot, FinancePlan
 from .favorites import FavoriteBusiness
 from .stripe_connect import StripeConnectProfile
 
-# ✅ NEW: Support Requests (God Mode Inbox + unlock requests)
 from .support_requests import SupportRequest
-
-# ✅ NEW: Business access control (lock/unlock)
 from .business_access import BusinessAccessControl
 
-# ✅ PM MODELS
+# Property management
 from .pm_property import PMProperty
 from .pm_unit import PMUnit
 from .pm_tenant import PMTenant
 from .pm_invite import PMInvite
 from .pm_document import PMDocument
-
-# ✅ Section 8
 from .pm_section8 import PMSection8Case
 
-# ✅ PM Billing + Rent
+# Property management billing and rent
 from .pm_billing_settings import PMBillingSettings
-from .pm_rent import PMRentCharge, PMRentPayment, PMRentPaymentAllocation
+from .pm_rent import (
+    PMRentCharge,
+    PMRentPayment,
+    PMRentPaymentAllocation,
+)
 
-# ✅ PM Employees
-from .pm_employees import PMEmployee, PMEmployeeInvite
+# Property management employees
+from .pm_employees import (
+    PMEmployee,
+    PMEmployeeInvite,
+)
 
-# ✅ PM Investor / Inbox / PM Notifications
-from .pm_investor import PMInvestor, PMPropertyInvestor, PMInboxThread, PMInboxMessage, PMNotification
+# Property management investors, inbox, and notifications
+from .pm_investor import (
+    PMInvestor,
+    PMPropertyInvestor,
+    PMInboxThread,
+    PMInboxMessage,
+    PMNotification,
+)
 
-# ✅ Optional: investor connection model (supports either filename)
+# Optional investor connection model
 PMInvestorConnection = None
+
 try:
     from .pm_investor_connections import PMInvestorConnection  # type: ignore
 except Exception:
@@ -82,13 +126,11 @@ except Exception:
     except Exception:
         PMInvestorConnection = None
 
-# ✅ Work Orders
-from .workorders import PMWorkOrder  # noqa: F401
+# Work orders
+from .workorders import PMWorkOrder
 
-# ----------------------------
-# ✅ SALES OS — REQUIRED CORE EXPORTS (DO NOT SILENCE)
-# ----------------------------
-from .sales_os import (  # type: ignore
+# Sales core models
+from .sales_os import (
     SalesPipeline,
     SalesPipelineMember,
     ProspectStage,
@@ -96,9 +138,7 @@ from .sales_os import (  # type: ignore
     ProspectAttachment,
 )
 
-# ----------------------------
-# ✅ SALES OS — OPTIONAL/ADVANCED MODELS (SAFE OPTIONAL)
-# ----------------------------
+# Optional sales models
 ProspectActivity = None
 SalesMemberEmailSettings = None
 ProspectEmailLog = None
@@ -118,8 +158,9 @@ try:
 except Exception:
     ProspectEmailLog = None
 
-# ✅ SALES OS Calendar (optional)
+# Optional sales calendar
 SalesCalendarEvent = None
+
 try:
     from .sales_calendar import SalesCalendarEvent  # type: ignore
 except Exception:
@@ -128,6 +169,7 @@ except Exception:
 
 __all__ = [
     "User",
+    "EmailVerificationChallenge",
     "CustomerProfile",
     "SmallBusinessOwnerProfile",
     "SubcontractorProfile",
@@ -170,30 +212,26 @@ __all__ = [
     "StripeConnectProfile",
     "SupportRequest",
     "BusinessAccessControl",
-    # PM
+    # Property management
     "PMProperty",
     "PMUnit",
     "PMTenant",
     "PMInvite",
     "PMDocument",
     "PMSection8Case",
-    # PM Rent
     "PMBillingSettings",
     "PMRentCharge",
     "PMRentPayment",
     "PMRentPaymentAllocation",
-    # PM Employees
     "PMEmployee",
     "PMEmployeeInvite",
-    # PM Investor + Inbox + PMNotification
     "PMInvestor",
     "PMPropertyInvestor",
     "PMInboxThread",
     "PMInboxMessage",
     "PMNotification",
-    # Work Orders
     "PMWorkOrder",
-    # ✅ Sales OS (core)
+    # Sales
     "SalesPipeline",
     "SalesPipelineMember",
     "ProspectStage",
@@ -206,9 +244,12 @@ if PMInvestorConnection is not None:
 
 if ProspectActivity is not None:
     __all__.append("ProspectActivity")
+
 if SalesMemberEmailSettings is not None:
     __all__.append("SalesMemberEmailSettings")
+
 if ProspectEmailLog is not None:
     __all__.append("ProspectEmailLog")
+
 if SalesCalendarEvent is not None:
     __all__.append("SalesCalendarEvent")

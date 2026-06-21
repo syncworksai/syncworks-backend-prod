@@ -9,44 +9,45 @@ from django.views.static import serve
 urlpatterns = [
     path("admin/", admin.site.urls),
 
-    # Platform Growth
+    path(
+        "api/v1/auth/",
+        include("user_accounts.registration_urls"),
+    ),
+
     path(
         "api/v1/platform-growth/",
         include("platform_growth.urls"),
     ),
 
-    # Platform Affiliates
     path(
         "api/v1/platform-affiliates/",
         include("platform_affiliates.urls"),
     ),
 
-    # Customer Health
     path(
         "api/v1/customer-health/",
         include("customer_health.urls"),
     ),
 
-    # Main API
     path(
         "api/v1/",
         include("user_accounts.urls"),
     ),
 ]
 
-# Dev media/static
 if settings.DEBUG:
     urlpatterns += static(
         settings.MEDIA_URL,
         document_root=settings.MEDIA_ROOT,
     )
 
-# Temporary production media serving
 if not settings.DEBUG:
     urlpatterns += [
         re_path(
             r"^media/(?P<path>.*)$",
             serve,
-            {"document_root": settings.MEDIA_ROOT},
+            {
+                "document_root": settings.MEDIA_ROOT,
+            },
         ),
     ]
