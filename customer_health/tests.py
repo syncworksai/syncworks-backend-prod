@@ -1,32 +1,58 @@
 from __future__ import annotations
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
+
+from user_accounts.models.customer_settings import CustomerSettings
 
 from .models import CustomerHealthProfile
 
 
+@override_settings(
+    HEALTH_LIFETIME_ACCESS_CODE="SWFIT26"
+)
 class CustomerHealthProfileTests(TestCase):
     def setUp(self):
         User = get_user_model()
+
         self.user = User.objects.create_user(
             username="health-user",
             email="health-user@example.com",
             password="testpass123",
         )
-        self.token = Token.objects.create(user=self.user)
+
+        self.token = Token.objects.create(
+            user=self.user
+        )
+
         self.client = APIClient()
-        self.client.credentials(HTTP_AUTHORIZATION=f"Token {self.token.key}")
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=(
+                f"Token {self.token.key}"
+            )
+        )
 
     def test_get_me_creates_profile(self):
-        response = self.client.get("/api/v1/customer-health/me/")
+        response = self.client.get(
+            "/api/v1/customer-health/me/"
+        )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(CustomerHealthProfile.objects.count(), 1)
-        self.assertEqual(response.data["profile_json"], {})
-        self.assertEqual(response.data["workouts_json"], [])
+        self.assertEqual(
+            CustomerHealthProfile.objects.count(),
+            1,
+        )
+        self.assertEqual(
+            response.data["profile_json"],
+            {},
+        )
+        self.assertEqual(
+            response.data["workouts_json"],
+            [],
+        )
 
     def test_patch_me_updates_health_data(self):
         payload = {
@@ -71,11 +97,126 @@ class CustomerHealthProfileTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["profile_json"]["primary_goal"], "Strength")
-        self.assertEqual(response.data["snapshot_json"]["readiness"], "Ready")
-        self.assertEqual(response.data["workouts_json"][0]["name"], "Strength Day A")
+
+        self.assertEqual(
+            response.data["profile_json"][
+                "primary_goal"
+            ],
+            "Strength",
+        )
+
+        self.assertEqual(
+            response.data["snapshot_json"][
+                "readiness"
+            ],
+            "Ready",
+        )
+
+        self.assertEqual(
+            response.data["workouts_json"][0][
+                "name"
+            ],
+            "Strength Day A",
+        )
 
     def test_requires_authentication(self):
         anon = APIClient()
-        response = anon.get("/api/v1/customer-health/me/")
+
+        response = anon.get(
+            "/api/v1/customer-health/me/"
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_redeem_health_access_code(self):
+        response = self.client.post(
+            (
+                "/api/v1/customer-health/"
+                "redeem-access-code/"
+            ),
+            {
+                "code": "SWFIT26",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["valid"])
+        self.assertTrue(
+            response.data["health_access"]
+        )
+        self.assertTrue(
+            response.data["lifetime_access"]
+        )
+
+        customer_settings = (
+            CustomerSettings.objects.get(
+                user=self.user
+            )
+        )
+
+        self.assertTrue(
+            customer_settings.health_access
+        )
+        self.assertTrue(
+            customer_settings.health_fitness_enabled
+        )
+        self.assertIsNone(
+            customer_settings.health_until
+        )
+
+        entitlements = (
+            customer_settings.entitlements_payload()
+        )
+
+        self.assertTrue(
+            entitlements["health_access"]
+        )
+        self.assertIsNone(
+            entitlements["health_until"]
+        )
+        self.assertFalse(
+            entitlements["finance_access"]
+        )
+
+    def test_invalid_health_access_code(self):
+        response = self.client.post(
+            (
+                "/api/v1/customer-health/"
+                "redeem-access-code/"
+            ),
+            {
+                "code": "WRONG-CODE",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.data["valid"])
+
+        customer_settings = (
+            CustomerSettings.objects.filter(
+                user=self.user
+            ).first()
+        )
+
+        if customer_settings:
+            self.assertFalse(
+                customer_settings.health_access
+            )
+
+    def test_health_code_requires_authentication(self):
+        anon = APIClient()
+
+        response = anon.post(
+            (
+                "/api/v1/customer-health/"
+                "redeem-access-code/"
+            ),
+            {
+                "code": "SWFIT26",
+            },
+            format="json",
+        )
+
         self.assertEqual(response.status_code, 401)

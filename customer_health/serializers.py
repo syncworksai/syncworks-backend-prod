@@ -42,3 +42,21 @@ class CustomerHealthProfileSerializer(serializers.ModelSerializer):
 
     def validate_devices_json(self, value):
         return value if isinstance(value, list) else []
+
+
+class RedeemHealthAccessCodeSerializer(serializers.Serializer):
+    code = serializers.CharField(
+        max_length=64,
+        trim_whitespace=True,
+    )
+
+    def validate_code(self, value):
+        code = str(value or "").strip().upper()
+
+        if not code:
+            raise serializers.ValidationError(
+                "Enter a Health & Fitness access code."
+            )
+
+        return code
+
