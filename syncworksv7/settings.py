@@ -5,8 +5,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+
 # -------------------------------------------------
-# Base / .env
+# Base / environment
 # -------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -18,31 +19,66 @@ def env(key: str, default: str | None = None) -> str | None:
     return os.environ.get(key, default)
 
 
-def env_bool(key: str, default: bool = False) -> bool:
-    val = os.environ.get(key)
+def env_first(
+    *keys: str,
+    default: str | None = None,
+) -> str | None:
+    for key in keys:
+        value = os.environ.get(key)
 
-    if val is None:
+        if value is not None and str(value).strip() != "":
+            return value
+
+    return default
+
+
+def env_bool(key: str, default: bool = False) -> bool:
+    value = os.environ.get(key)
+
+    if value is None:
         return default
 
-    return val.strip().lower() in (
+    return value.strip().lower() in {
         "1",
         "true",
         "yes",
         "y",
         "on",
-    )
+    }
+
+
+def env_bool_first(
+    *keys: str,
+    default: bool = False,
+) -> bool:
+    for key in keys:
+        if key in os.environ:
+            return env_bool(key, default)
+
+    return default
 
 
 def env_int(key: str, default: int) -> int:
-    val = os.environ.get(key)
+    value = os.environ.get(key)
 
-    if val is None:
+    if value is None:
         return default
 
     try:
-        return int(str(val).strip())
-    except Exception:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
         return default
+
+
+def env_int_first(
+    *keys: str,
+    default: int,
+) -> int:
+    for key in keys:
+        if key in os.environ:
+            return env_int(key, default)
+
+    return default
 
 
 def env_csv(key: str, default: str = "") -> list[str]:
@@ -74,9 +110,19 @@ DEBUG = env_bool(
 ALLOWED_HOSTS_RAW = (
     env(
         "DJANGO_ALLOWED_HOSTS",
-        "localhost,127.0.0.1,syncworks-api.onrender.com",
+        (
+            "localhost,"
+            "127.0.0.1,"
+            "syncworks-api.onrender.com,"
+            "api.syncworksapp.com"
+        ),
     )
-    or "localhost,127.0.0.1,syncworks-api.onrender.com"
+    or (
+        "localhost,"
+        "127.0.0.1,"
+        "syncworks-api.onrender.com,"
+        "api.syncworksapp.com"
+    )
 )
 
 ALLOWED_HOSTS = [
@@ -88,7 +134,14 @@ ALLOWED_HOSTS = [
 CSRF_TRUSTED_ORIGINS_RAW = (
     env(
         "DJANGO_CSRF_TRUSTED_ORIGINS",
-        "",
+        (
+            "http://localhost:5174,"
+            "http://127.0.0.1:5174,"
+            "https://syncworksapp.com,"
+            "https://www.syncworksapp.com,"
+            "https://syncworks-frontend-prod.vercel.app,"
+            "https://api.syncworksapp.com"
+        ),
     )
     or ""
 )
@@ -106,9 +159,15 @@ CSRF_TRUSTED_ORIGINS = [
 CORS_ALLOWED_ORIGINS_RAW = (
     env(
         "DJANGO_CORS_ALLOWED_ORIGINS",
-        "http://localhost:5174,http://127.0.0.1:5174",
+        (
+            "http://localhost:5174,"
+            "http://127.0.0.1:5174,"
+            "https://syncworksapp.com,"
+            "https://www.syncworksapp.com,"
+            "https://syncworks-frontend-prod.vercel.app"
+        ),
     )
-    or "http://localhost:5174,http://127.0.0.1:5174"
+    or ""
 )
 
 CORS_ALLOWED_ORIGINS = [
@@ -127,7 +186,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 
 
 # -------------------------------------------------
-# Apps
+# Applications
 # -------------------------------------------------
 INSTALLED_APPS = [
     # Django
@@ -143,7 +202,7 @@ INSTALLED_APPS = [
     "rest_framework.authtoken",
     "corsheaders",
 
-    # Local apps
+    # Local
     "user_accounts.apps.UserAccountsConfig",
     "tickets",
     "pm",
@@ -216,9 +275,7 @@ DB_ENGINE = (
 if DB_ENGINE == "postgres":
     DATABASES = {
         "default": {
-            "ENGINE": (
-                "django.db.backends.postgresql"
-            ),
+            "ENGINE": "django.db.backends.postgresql",
             "NAME": env(
                 "POSTGRES_DB",
                 "syncworks",
@@ -244,9 +301,7 @@ if DB_ENGINE == "postgres":
 else:
     DATABASES = {
         "default": {
-            "ENGINE": (
-                "django.db.backends.sqlite3"
-            ),
+            "ENGINE": "django.db.backends.sqlite3",
             "NAME": BASE_DIR / "db.sqlite3",
         }
     }
@@ -314,17 +369,10 @@ MEDIA_ROOT = (
     or str(BASE_DIR / "media")
 )
 
-DEFAULT_AUTO_FIELD = (
-    "django.db.models.BigAutoField"
-)
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-FILE_UPLOAD_MAX_MEMORY_SIZE = (
-    10 * 1024 * 1024
-)
-
-DATA_UPLOAD_MAX_MEMORY_SIZE = (
-    15 * 1024 * 1024
-)
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
+DATA_UPLOAD_MAX_MEMORY_SIZE = 15 * 1024 * 1024
 
 
 # -------------------------------------------------
@@ -428,9 +476,9 @@ X_FRAME_OPTIONS = "DENY"
 FRONTEND_URL = (
     env(
         "FRONTEND_URL",
-        "http://localhost:5174",
+        "https://syncworksapp.com",
     )
-    or "http://localhost:5174"
+    or "https://syncworksapp.com"
 )
 
 PLATFORM_BASE_URL = (
@@ -445,15 +493,16 @@ PLATFORM_BASE_URL = (
 # -------------------------------------------------
 # Email delivery
 # -------------------------------------------------
-# Local default:
-# Verification emails print in the backend terminal.
+# Supports both:
+#   DJANGO_EMAIL_* variables
+#   EMAIL_* variables
 #
-# Production:
-# Configure SMTP environment variables in Render.
+# Render is currently configured with EMAIL_* variables.
 EMAIL_BACKEND = (
-    env(
+    env_first(
         "DJANGO_EMAIL_BACKEND",
-        (
+        "EMAIL_BACKEND",
+        default=(
             "django.core.mail.backends."
             "console.EmailBackend"
         ),
@@ -465,61 +514,73 @@ EMAIL_BACKEND = (
 )
 
 EMAIL_HOST = (
-    env(
+    env_first(
         "DJANGO_EMAIL_HOST",
-        "",
+        "EMAIL_HOST",
+        default="",
     )
     or ""
 )
 
-EMAIL_PORT = env_int(
+EMAIL_PORT = env_int_first(
     "DJANGO_EMAIL_PORT",
-    587,
+    "EMAIL_PORT",
+    default=587,
 )
 
 EMAIL_HOST_USER = (
-    env(
+    env_first(
         "DJANGO_EMAIL_HOST_USER",
-        "",
+        "EMAIL_HOST_USER",
+        default="",
     )
     or ""
 )
 
 EMAIL_HOST_PASSWORD = (
-    env(
+    env_first(
         "DJANGO_EMAIL_HOST_PASSWORD",
-        "",
+        "EMAIL_HOST_PASSWORD",
+        default="",
     )
     or ""
 )
 
-EMAIL_USE_TLS = env_bool(
+EMAIL_USE_TLS = env_bool_first(
     "DJANGO_EMAIL_USE_TLS",
-    True,
+    "EMAIL_USE_TLS",
+    default=True,
 )
 
-EMAIL_USE_SSL = env_bool(
+EMAIL_USE_SSL = env_bool_first(
     "DJANGO_EMAIL_USE_SSL",
-    False,
+    "EMAIL_USE_SSL",
+    default=False,
 )
 
-EMAIL_TIMEOUT = env_int(
+EMAIL_TIMEOUT = env_int_first(
     "DJANGO_EMAIL_TIMEOUT",
-    20,
+    "EMAIL_TIMEOUT",
+    default=20,
 )
 
 DEFAULT_FROM_EMAIL = (
-    env(
+    env_first(
         "DJANGO_DEFAULT_FROM_EMAIL",
-        "SyncWorks <no-reply@syncworks.ai>",
+        "DEFAULT_FROM_EMAIL",
+        default=(
+            "SyncWorks "
+            "<no-reply@syncworksapp.com>"
+        ),
     )
-    or "SyncWorks <no-reply@syncworks.ai>"
+    or "SyncWorks <no-reply@syncworksapp.com>"
 )
 
 SERVER_EMAIL = (
-    env(
+    env_first(
         "DJANGO_SERVER_EMAIL",
-        DEFAULT_FROM_EMAIL,
+        "SERVER_EMAIL",
+        default=DEFAULT_FROM_EMAIL,
     )
     or DEFAULT_FROM_EMAIL
 )
@@ -533,38 +594,31 @@ AUTH_EMAIL_VERIFICATION_REQUIRED = env_bool(
     True,
 )
 
-# Verification code lifetime.
 AUTH_EMAIL_CODE_EXPIRY_SECONDS = env_int(
     "AUTH_EMAIL_CODE_EXPIRY_SECONDS",
     600,
 )
 
-# Minimum wait before sending another code.
 AUTH_EMAIL_RESEND_COOLDOWN_SECONDS = env_int(
     "AUTH_EMAIL_RESEND_COOLDOWN_SECONDS",
     60,
 )
 
-# Incorrect-code attempts before the challenge is blocked.
 AUTH_EMAIL_MAX_VERIFY_ATTEMPTS = env_int(
     "AUTH_EMAIL_MAX_VERIFY_ATTEMPTS",
     6,
 )
 
-# Number of start-verification requests allowed per email/IP per hour.
 AUTH_EMAIL_START_LIMIT_PER_HOUR = env_int(
     "AUTH_EMAIL_START_LIMIT_PER_HOUR",
     8,
 )
 
-# Signed registration proof lifetime after successful verification.
 AUTH_REGISTRATION_PROOF_MAX_AGE_SECONDS = env_int(
     "AUTH_REGISTRATION_PROOF_MAX_AGE_SECONDS",
     1800,
 )
 
-# Approved testing emails that may bypass verification.
-# Keep this empty in production unless a specific test account requires it.
 AUTH_VERIFICATION_BYPASS_EMAILS_RAW = (
     env(
         "AUTH_VERIFICATION_BYPASS_EMAILS",
@@ -575,10 +629,7 @@ AUTH_VERIFICATION_BYPASS_EMAILS_RAW = (
 
 AUTH_VERIFICATION_BYPASS_EMAILS = [
     email.strip().lower()
-    for email in (
-        AUTH_VERIFICATION_BYPASS_EMAILS_RAW
-        .split(",")
-    )
+    for email in AUTH_VERIFICATION_BYPASS_EMAILS_RAW.split(",")
     if email.strip()
 ]
 
@@ -683,16 +734,14 @@ if _force is None or str(_force).strip() == "":
     STRIPE_FORCE_LIVE_MODE = None
 else:
     STRIPE_FORCE_LIVE_MODE = (
-        str(_force)
-        .strip()
-        .lower()
-        in (
+        str(_force).strip().lower()
+        in {
             "1",
             "true",
             "yes",
             "y",
             "on",
-        )
+        }
     )
 
 
@@ -703,10 +752,7 @@ def _infer_live_mode() -> bool:
     if STRIPE_FORCE_LIVE_MODE is False:
         return False
 
-    key = (
-        STRIPE_SECRET_KEY
-        or ""
-    ).strip()
+    key = (STRIPE_SECRET_KEY or "").strip()
 
     if key.startswith("sk_live_"):
         return True
@@ -771,3 +817,4 @@ LOGGING = {
         },
     },
 }
+
