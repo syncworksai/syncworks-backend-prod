@@ -4,6 +4,7 @@ from django.urls import path
 
 from .views import (
     CustomerHealthMeView,
+    NutritionAnalyzeView,
     RedeemHealthAccessCodeView,
 )
 
@@ -20,5 +21,9 @@ urlpatterns = [
         RedeemHealthAccessCodeView.as_view(),
         name="redeem-access-code",
     ),
+    path(
+        "nutrition/analyze/",
+        NutritionAnalyzeView.as_view(),
+        name="nutrition-analyze",
+    ),
 ]
-
