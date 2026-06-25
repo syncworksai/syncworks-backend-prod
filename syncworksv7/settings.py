@@ -723,6 +723,26 @@ META_WEBHOOK_VERIFY_TOKEN = (
 
 
 # -------------------------------------------------
+# OpenAI / Nutrition AI
+# -------------------------------------------------
+OPENAI_API_KEY = (
+    env(
+        "OPENAI_API_KEY",
+        "",
+    )
+    or ""
+).strip()
+
+OPENAI_NUTRITION_MODEL = (
+    env(
+        "OPENAI_NUTRITION_MODEL",
+        "gpt-4.1-mini",
+    )
+    or "gpt-4.1-mini"
+).strip()
+
+
+# -------------------------------------------------
 # Stripe live/test inference
 # -------------------------------------------------
 _force = env(
