@@ -79,6 +79,7 @@ class BusinessSerializer(serializers.ModelSerializer):
             "accepts_marketplace_tickets",
             "base_zip",
             "service_radius_miles",
+            "service_areas",
             "effective_service_radius_miles",
             "services_offered",
 
@@ -219,6 +220,64 @@ class BusinessSerializer(serializers.ModelSerializer):
             )
 
         return v
+
+    def validate_service_areas(self, value):
+        if value in (None, ""):
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError("service_areas must be a list.")
+        if len(value) > 100:
+            raise serializers.ValidationError("A business may store up to 100 service areas.")
+
+        allowed_types = {"ZIP", "CITY", "COUNTY", "STATE", "REGION", "NATIONWIDE"}
+        allowed_scopes = {"BOTH", "RESIDENTIAL", "COMMERCIAL"}
+        cleaned = []
+
+        for index, raw in enumerate(value):
+            if not isinstance(raw, dict):
+                raise serializers.ValidationError(f"service_areas[{index}] must be an object.")
+
+            area_type = str(raw.get("area_type") or "ZIP").strip().upper()
+            project_scope = str(raw.get("project_scope") or "BOTH").strip().upper()
+
+            if area_type not in allowed_types:
+                raise serializers.ValidationError(f"service_areas[{index}].area_type is invalid.")
+            if project_scope not in allowed_scopes:
+                raise serializers.ValidationError(f"service_areas[{index}].project_scope is invalid.")
+
+            values = raw.get("values") or []
+            if not isinstance(values, list):
+                raise serializers.ValidationError(f"service_areas[{index}].values must be a list.")
+
+            values = [str(item or "").strip()[:120] for item in values if str(item or "").strip()]
+            if area_type == "NATIONWIDE":
+                values = ["US"]
+            elif not values:
+                raise serializers.ValidationError(f"service_areas[{index}] requires at least one location.")
+
+            minimum = raw.get("minimum_project_amount", "")
+            if minimum not in (None, ""):
+                try:
+                    minimum = str(max(0, int(float(minimum))))
+                except Exception:
+                    raise serializers.ValidationError(
+                        f"service_areas[{index}].minimum_project_amount must be a number."
+                    )
+            else:
+                minimum = ""
+
+            cleaned.append({
+                "id": str(raw.get("id") or f"area-{index + 1}")[:100],
+                "name": str(raw.get("name") or "").strip()[:160],
+                "area_type": area_type,
+                "values": values[:500],
+                "project_scope": project_scope,
+                "minimum_project_amount": minimum,
+                "notes": str(raw.get("notes") or "").strip()[:500],
+                "active": raw.get("active") is not False,
+            })
+
+        return cleaned
 
     def validate_expected_gross_monthly(self, v):
         if v in (None, ""):

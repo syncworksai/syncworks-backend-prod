@@ -100,6 +100,12 @@ class Business(models.Model):
     base_zip = models.CharField(max_length=10, blank=True, default="")
     service_radius_miles = models.PositiveIntegerField(default=25)
 
+    service_areas = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Structured expanded coverage rules. Live matching continues using base ZIP and radius until Build 3B.",
+    )
+
     # Canonical service tag list for marketplace matching
     services_offered = models.ManyToManyField(
         "user_accounts.ServiceCategory",
