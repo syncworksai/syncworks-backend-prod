@@ -107,6 +107,152 @@ def _business_radius(business: Business) -> int:
     return r
 
 
+def _norm_geo_text(value) -> str:
+    return " ".join(str(value or "").strip().upper().replace(".", "").split())
+
+
+def _ticket_intake(ticket: Ticket) -> dict:
+    try:
+        payload = getattr(ticket.service_request, "intake_payload", None)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _ticket_project_scope(ticket: Ticket) -> str:
+    payload = _ticket_intake(ticket)
+    raw = (
+        payload.get("project_scope")
+        or payload.get("property_type")
+        or payload.get("customer_type")
+        or payload.get("job_type")
+        or ""
+    )
+    text = _norm_geo_text(raw)
+    if "COMMERCIAL" in text or "BUSINESS" in text:
+        return "COMMERCIAL"
+    if "RESIDENTIAL" in text or "HOME" in text:
+        return "RESIDENTIAL"
+    return ""
+
+
+def _coerce_project_amount(value) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        cleaned = str(value).replace("$", "").replace(",", "").strip()
+        return float(cleaned)
+    except Exception:
+        return None
+
+
+def _ticket_project_amount(ticket: Ticket) -> float | None:
+    payload = _ticket_intake(ticket)
+    for key in (
+        "estimated_budget",
+        "budget",
+        "project_value",
+        "estimated_value",
+        "estimated_cost",
+        "amount",
+    ):
+        amount = _coerce_project_amount(payload.get(key))
+        if amount is not None:
+            return amount
+
+    cents = getattr(ticket, "total_amount_cents", 0) or 0
+    try:
+        if int(cents) > 0:
+            return int(cents) / 100.0
+    except Exception:
+        pass
+    return None
+
+
+def _zip_geo_parts(zip_code: str) -> dict[str, str]:
+    z = (zip_code or "").strip()
+    if not z:
+        return {}
+
+    try:
+        import pgeocode  # type: ignore
+        row = pgeocode.Nominatim("us").query_postal_code(z)
+    except Exception:
+        return {}
+
+    def read(*names):
+        for name in names:
+            value = getattr(row, name, None)
+            if value is not None and str(value).lower() != "nan":
+                return _norm_geo_text(value)
+        return ""
+
+    return {
+        "zip": _norm_geo_text(z[:5]),
+        "city": read("place_name"),
+        "county": read("county_name"),
+        "state": read("state_code", "state_name"),
+    }
+
+
+def _service_area_rule_matches(ticket: Ticket, rule: dict, geo: dict[str, str]) -> bool:
+    if not isinstance(rule, dict) or rule.get("active") is False:
+        return False
+
+    area_type = _norm_geo_text(rule.get("area_type") or "ZIP")
+    values = {
+        _norm_geo_text(value)
+        for value in (rule.get("values") or [])
+        if _norm_geo_text(value)
+    }
+
+    project_scope = _norm_geo_text(rule.get("project_scope") or "BOTH")
+    if project_scope not in {"", "BOTH"}:
+        ticket_scope = _ticket_project_scope(ticket)
+        if not ticket_scope or ticket_scope != project_scope:
+            return False
+
+    minimum = _coerce_project_amount(rule.get("minimum_project_amount"))
+    if minimum and minimum > 0:
+        amount = _ticket_project_amount(ticket)
+        if amount is None or amount < minimum:
+            return False
+
+    if area_type == "NATIONWIDE":
+        return True
+    if not values:
+        return False
+    if area_type == "ZIP":
+        return geo.get("zip", "") in values
+    if area_type == "CITY":
+        return geo.get("city", "") in values
+    if area_type == "COUNTY":
+        return geo.get("county", "") in values
+    if area_type == "STATE":
+        return geo.get("state", "") in values
+    if area_type == "REGION":
+        return bool(
+            {geo.get("state", ""), geo.get("city", ""), geo.get("county", "")}
+            & values
+        )
+    return False
+
+
+def _expanded_service_area_match(ticket: Ticket, business: Business) -> bool:
+    rules = getattr(business, "service_areas", None)
+    if not isinstance(rules, list) or not rules:
+        return False
+
+    tzip = _ticket_zip(ticket)
+    if not tzip:
+        return False
+
+    geo = _zip_geo_parts(tzip)
+    if not geo:
+        geo = {"zip": _norm_geo_text(tzip[:5]), "city": "", "county": "", "state": ""}
+
+    return any(_service_area_rule_matches(ticket, rule, geo) for rule in rules)
+
 def _category_ancestor_ids(category: ServiceCategory | None) -> set[int]:
     ids: set[int] = set()
     cur = category
@@ -221,14 +367,18 @@ def is_ticket_eligible_for_business(ticket: Ticket, business: Business) -> bool:
 
     base_zip = (getattr(business, "base_zip", "") or "").strip()
     tzip = _ticket_zip(ticket)
-    if not base_zip or not tzip:
+    if not tzip:
         return False
 
-    if base_zip.lower() == tzip.lower():
-        return True
+    if base_zip:
+        if base_zip.lower() == tzip.lower():
+            return True
 
-    radius = _business_radius(business)
-    return _zip_within_radius(base_zip, tzip, radius)
+        radius = _business_radius(business)
+        if _zip_within_radius(base_zip, tzip, radius):
+            return True
+
+    return _expanded_service_area_match(ticket, business)
 
 
 def marketplace_tickets_for_business(business: Business):
@@ -265,13 +415,31 @@ def marketplace_tickets_for_business(business: Business):
     )
 
     base_zip = (getattr(business, "base_zip", "") or "").strip()
-    if not base_zip:
+    has_expanded_areas = bool(
+        isinstance(getattr(business, "service_areas", None), list)
+        and any(
+            isinstance(rule, dict) and rule.get("active") is not False
+            for rule in business.service_areas
+        )
+    )
+    if not base_zip and not has_expanded_areas:
         return qs.none()
 
-    exact_zip = qs.filter(Q(service_zip__iexact=base_zip) | Q(service_request__zip_code__iexact=base_zip))
-    exact_zip = [t for t in exact_zip if is_ticket_eligible_for_business(t, business)]
-
-    candidates = qs.exclude(Q(service_zip__iexact=base_zip) | Q(service_request__zip_code__iexact=base_zip))
+    if base_zip:
+        exact_zip = qs.filter(
+            Q(service_zip__iexact=base_zip)
+            | Q(service_request__zip_code__iexact=base_zip)
+        )
+        exact_zip = [
+            t for t in exact_zip if is_ticket_eligible_for_business(t, business)
+        ]
+        candidates = qs.exclude(
+            Q(service_zip__iexact=base_zip)
+            | Q(service_request__zip_code__iexact=base_zip)
+        )
+    else:
+        exact_zip = []
+        candidates = qs
 
     matched_ids: list[int] = []
     for t in candidates.only(
@@ -307,7 +475,7 @@ def ticket_eligible_businesses(ticket: Ticket):
 
     matched_ids: list[int] = []
 
-    for b in qs.only("id", "name", "base_zip", "service_radius_miles", "accepts_marketplace_tickets", "is_active"):
+    for b in qs.only("id", "name", "base_zip", "service_radius_miles", "service_areas", "accepts_marketplace_tickets", "is_active"):
         if is_ticket_eligible_for_business(ticket, b):
             matched_ids.append(b.id)
 
