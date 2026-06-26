@@ -17,6 +17,7 @@ from user_accounts.models import (
     InvoiceLineItem,
 )
 from user_accounts.models.billing import Invoice
+from user_accounts.services.ticket_workflow import build_ticket_workflow
 
 MIN_TICKET_RADIUS_MILES = 1
 MAX_TICKET_RADIUS_MILES = 200
@@ -45,7 +46,7 @@ def _category_path(cat: ServiceCategory | None) -> str:
         cur = cur.parent
         guard += 1
     chain.reverse()
-    return " → ".join(chain)
+    return " Ã¢â€ â€™ ".join(chain)
 
 
 def _category_root(cat: ServiceCategory | None) -> ServiceCategory | None:
@@ -534,6 +535,7 @@ class TicketSerializer(serializers.ModelSerializer):
     assigned_business_card = serializers.SerializerMethodField()
 
     is_archived = serializers.SerializerMethodField()
+    workflow = serializers.SerializerMethodField()
 
     class Meta:
         model = Ticket
@@ -581,6 +583,7 @@ class TicketSerializer(serializers.ModelSerializer):
             "cancelled_at",
             "latest_quote",
             "latest_invoice",
+            "workflow",
         ]
         read_only_fields = [
             "id",
@@ -613,6 +616,7 @@ class TicketSerializer(serializers.ModelSerializer):
             "assigned_member_name",
             "assigned_business_name",
             "assigned_business_card",
+            "workflow",
         ]
 
     def _is_customer_request(self) -> bool:
@@ -660,7 +664,7 @@ class TicketSerializer(serializers.ModelSerializer):
                 "type": "Marketplace" if bool(obj.is_marketplace) else "Direct",
                 "status": obj.status,
                 "assigned": bool(obj.assigned_business_id),
-                "payment": getattr(obj, "payment_method", "—"),
+                "payment": getattr(obj, "payment_method", "Ã¢â‚¬â€"),
             }
         except Exception:
             return {}
@@ -745,6 +749,11 @@ class TicketSerializer(serializers.ModelSerializer):
             pass
         return None
 
+    def get_workflow(self, obj):
+        try:
+            return build_ticket_workflow(obj, request=self.context.get("request"))
+        except Exception:
+            return None
     def get_is_archived(self, obj) -> bool:
         try:
             return bool(obj.archived_at)
