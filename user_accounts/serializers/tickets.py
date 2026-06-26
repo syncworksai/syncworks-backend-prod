@@ -18,6 +18,7 @@ from user_accounts.models import (
 )
 from user_accounts.models.billing import Invoice
 from user_accounts.services.ticket_workflow import build_ticket_workflow
+from user_accounts.services.tickets import build_marketplace_match_explanation
 
 MIN_TICKET_RADIUS_MILES = 1
 MAX_TICKET_RADIUS_MILES = 200
@@ -536,6 +537,7 @@ class TicketSerializer(serializers.ModelSerializer):
 
     is_archived = serializers.SerializerMethodField()
     workflow = serializers.SerializerMethodField()
+    marketplace_match = serializers.SerializerMethodField()
 
     class Meta:
         model = Ticket
@@ -584,6 +586,7 @@ class TicketSerializer(serializers.ModelSerializer):
             "latest_quote",
             "latest_invoice",
             "workflow",
+            "marketplace_match",
         ]
         read_only_fields = [
             "id",
@@ -617,6 +620,7 @@ class TicketSerializer(serializers.ModelSerializer):
             "assigned_business_name",
             "assigned_business_card",
             "workflow",
+            "marketplace_match",
         ]
 
     def _is_customer_request(self) -> bool:
@@ -754,6 +758,16 @@ class TicketSerializer(serializers.ModelSerializer):
             return build_ticket_workflow(obj, request=self.context.get("request"))
         except Exception:
             return None
+    def get_marketplace_match(self, obj):
+        business = self.context.get("match_business")
+        if not business or not bool(getattr(obj, "is_marketplace", False)):
+            return None
+        try:
+            result = build_marketplace_match_explanation(obj, business)
+            return result if result.get("matched") else None
+        except Exception:
+            return None
+
     def get_is_archived(self, obj) -> bool:
         try:
             return bool(obj.archived_at)

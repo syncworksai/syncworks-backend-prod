@@ -253,6 +253,135 @@ def _expanded_service_area_match(ticket: Ticket, business: Business) -> bool:
 
     return any(_service_area_rule_matches(ticket, rule, geo) for rule in rules)
 
+def build_marketplace_match_explanation(ticket: Ticket, business: Business) -> dict:
+    if not ticket or not business:
+        return {}
+
+    category_label = ""
+    try:
+        category_label = getattr(ticket.category, "name", "") or ""
+    except Exception:
+        category_label = ""
+
+    base = {
+        "matched": False,
+        "match_type": "",
+        "match_label": "",
+        "coverage_name": "",
+        "summary": "",
+        "details": [],
+        "category_label": category_label,
+        "ticket_zip": _ticket_zip(ticket),
+    }
+
+    if not _business_can_take_category(business, ticket):
+        return base
+
+    if category_label:
+        base["details"].append(f"Service category: {category_label}")
+
+    tzip = _ticket_zip(ticket)
+    if not tzip:
+        return base
+
+    base_zip = (getattr(business, "base_zip", "") or "").strip()
+    if base_zip:
+        if base_zip.lower() == tzip.lower():
+            base.update(
+                {
+                    "matched": True,
+                    "match_type": "PRIMARY_ZIP",
+                    "match_label": "Primary ZIP",
+                    "coverage_name": f"Primary ZIP {base_zip}",
+                    "summary": f"Matched your primary ZIP {base_zip}.",
+                }
+            )
+            return base
+
+        radius = _business_radius(business)
+        if _zip_within_radius(base_zip, tzip, radius):
+            base.update(
+                {
+                    "matched": True,
+                    "match_type": "LOCAL_RADIUS",
+                    "match_label": "Local radius",
+                    "coverage_name": f"{radius}-mile local coverage",
+                    "summary": f"Within your {radius}-mile service radius from {base_zip}.",
+                }
+            )
+            base["details"].append(f"Business coverage: {radius} miles from {base_zip}")
+            return base
+
+    rules = getattr(business, "service_areas", None)
+    if not isinstance(rules, list) or not rules:
+        return base
+
+    geo = _zip_geo_parts(tzip)
+    if not geo:
+        geo = {
+            "zip": _norm_geo_text(tzip[:5]),
+            "city": "",
+            "county": "",
+            "state": "",
+        }
+
+    for rule in rules:
+        if not _service_area_rule_matches(ticket, rule, geo):
+            continue
+
+        area_type = _norm_geo_text(rule.get("area_type") or "ZIP")
+        coverage_name = str(rule.get("name") or "").strip()
+        if not coverage_name:
+            coverage_name = {
+                "ZIP": "Specific ZIP coverage",
+                "CITY": "City coverage",
+                "COUNTY": "County coverage",
+                "STATE": "Statewide coverage",
+                "REGION": "Regional coverage",
+                "NATIONWIDE": "Nationwide projects",
+            }.get(area_type, "Expanded coverage")
+
+        project_scope = _norm_geo_text(rule.get("project_scope") or "BOTH")
+        minimum = _coerce_project_amount(rule.get("minimum_project_amount"))
+        values = [
+            str(value or "").strip()
+            for value in (rule.get("values") or [])
+            if str(value or "").strip()
+        ]
+
+        label = {
+            "ZIP": "Expanded ZIP",
+            "CITY": "City coverage",
+            "COUNTY": "County coverage",
+            "STATE": "Statewide coverage",
+            "REGION": "Regional coverage",
+            "NATIONWIDE": "Nationwide coverage",
+        }.get(area_type, "Expanded coverage")
+
+        details = list(base["details"])
+        if values and area_type != "NATIONWIDE":
+            details.append(f"Coverage area: {', '.join(values[:6])}")
+        if project_scope == "COMMERCIAL":
+            details.append("Commercial project rule matched")
+        elif project_scope == "RESIDENTIAL":
+            details.append("Residential project rule matched")
+        if minimum and minimum > 0:
+            details.append(f"Minimum project value met: ${minimum:,.0f}")
+
+        base.update(
+            {
+                "matched": True,
+                "match_type": area_type,
+                "match_label": label,
+                "coverage_name": coverage_name,
+                "summary": f"Matched by {coverage_name}.",
+                "details": details,
+            }
+        )
+        return base
+
+    return base
+
 def _category_ancestor_ids(category: ServiceCategory | None) -> set[int]:
     ids: set[int] = set()
     cur = category

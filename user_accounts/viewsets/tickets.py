@@ -544,7 +544,11 @@ class TicketViewSet(viewsets.ModelViewSet):
             return locked_resp
 
         qs = marketplace_tickets_for_business(active_biz)
-        return Response(TicketSerializer(qs, many=True, context=self.get_serializer_context()).data)
+        serializer_context = self.get_serializer_context()
+        serializer_context["match_business"] = active_biz
+        return Response(
+            TicketSerializer(qs, many=True, context=serializer_context).data
+        )
 
     @action(detail=True, methods=["post"], url_path="archive")
     def archive(self, request, pk=None):

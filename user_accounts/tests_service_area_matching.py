@@ -126,3 +126,40 @@ class ExpandedServiceAreaMatchingTests(TestCase):
             intake={"project_scope": "commercial", "estimated_budget": 30000},
         )
         self.assertTrue(is_ticket_eligible_for_business(qualifying, self.business))
+
+    @patch(
+        "user_accounts.services.tickets._zip_geo_parts",
+        return_value={"zip": "33101", "city": "MIAMI", "county": "MIAMI-DADE", "state": "FL"},
+    )
+    def test_match_explanation_identifies_state_rule(self, _geo):
+        from user_accounts.services.tickets import build_marketplace_match_explanation
+
+        self.business.service_areas = [
+            {
+                "id": "fl-state",
+                "name": "Florida statewide coverage",
+                "area_type": "STATE",
+                "values": ["FL"],
+                "project_scope": "BOTH",
+                "active": True,
+            }
+        ]
+        self.business.save(update_fields=["service_areas"])
+        ticket = self.make_ticket(zip_code="33101")
+
+        result = build_marketplace_match_explanation(ticket, self.business)
+
+        self.assertTrue(result["matched"])
+        self.assertEqual(result["match_type"], "STATE")
+        self.assertEqual(result["coverage_name"], "Florida statewide coverage")
+        self.assertIn("Service category: Coverage Test Service", result["details"])
+
+    def test_match_explanation_identifies_primary_zip(self):
+        from user_accounts.services.tickets import build_marketplace_match_explanation
+
+        ticket = self.make_ticket(zip_code="36104")
+        result = build_marketplace_match_explanation(ticket, self.business)
+
+        self.assertTrue(result["matched"])
+        self.assertEqual(result["match_type"], "PRIMARY_ZIP")
+        self.assertEqual(result["match_label"], "Primary ZIP")
