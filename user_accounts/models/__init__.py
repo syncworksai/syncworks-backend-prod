@@ -73,6 +73,7 @@ from .kpis import (
 
 from .customer_settings import CustomerSettings
 from .communication_preferences import CommunicationPreference
+from .ticket_conversation_read_state import TicketConversationReadState
 from .calendar_sync import (
     CalendarAccount,
     TicketCalendarEvent,
@@ -206,6 +207,7 @@ __all__ = [
     "MarketplaceCellDailyKpi",
     "CustomerSettings",
     "CommunicationPreference",
+    "TicketConversationReadState",
     "CalendarAccount",
     "TicketCalendarEvent",
     "FinanceSnapshot",

@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 from django.db.models import Q
+from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from user_accounts.models import Business, BusinessMember, Ticket, TicketMessage
+from user_accounts.models import (
+    Business,
+    BusinessMember,
+    Ticket,
+    TicketConversationReadState,
+    TicketMessage,
+)
 from user_accounts.serializers.tickets import TicketMessageSerializer
 
 
@@ -103,7 +110,44 @@ def _display_name(user):
     return full or getattr(user, "email", "") or getattr(user, "username", "") or f"User #{user.id}"
 
 
-def _thread_payload(ticket, scope):
+def _read_state_for(user, ticket, scope):
+    return TicketConversationReadState.objects.filter(
+        user=user,
+        ticket=ticket,
+        scope=scope,
+    ).first()
+
+
+def _unread_count(user, ticket, scope):
+    state = _read_state_for(user, ticket, scope)
+    qs = ticket.messages.exclude(sender=user)
+    if state and state.last_read_message_id:
+        qs = qs.filter(id__gt=state.last_read_message_id)
+    return qs.count()
+
+
+def _mark_read(user, ticket, scope):
+    latest = ticket.messages.order_by("-created_at", "-id").first()
+    state, _ = TicketConversationReadState.objects.get_or_create(
+        user=user,
+        ticket=ticket,
+        scope=scope,
+    )
+    state.last_read_message = latest
+    state.last_read_at = timezone.now()
+    state.needs_attention = False
+    state.attention_reason = ""
+    state.save(update_fields=[
+        "last_read_message",
+        "last_read_at",
+        "needs_attention",
+        "attention_reason",
+        "updated_at",
+    ])
+    return state
+
+
+def _thread_payload(ticket, scope, user=None):
     latest = ticket.messages.order_by("-created_at", "-id").first()
     category_name = ""
     category_path = ""
@@ -119,6 +163,9 @@ def _thread_payload(ticket, scope):
             guard += 1
         if names:
             category_path = " → ".join(reversed(names))
+
+    unread_count = _unread_count(user, ticket, scope) if user else 0
+    state = _read_state_for(user, ticket, scope) if user else None
 
     return {
         "id": ticket.id,
@@ -152,6 +199,12 @@ def _thread_payload(ticket, scope):
             "created_at": latest.created_at.isoformat() if latest.created_at else None,
         } if latest else None,
         "message_count": ticket.messages.count(),
+        "unread_count": unread_count,
+        "is_unread": unread_count > 0,
+        "pinned": bool(getattr(state, "pinned", False)),
+        "muted": bool(getattr(state, "muted", False)),
+        "needs_attention": bool(getattr(state, "needs_attention", False)),
+        "attention_reason": getattr(state, "attention_reason", "") if state else "",
         "created_at": ticket.created_at.isoformat() if ticket.created_at else None,
         "updated_at": (
             latest.created_at.isoformat()
@@ -195,10 +248,13 @@ class TicketConversationListAPIView(APIView):
                 | Q(messages__body__icontains=query)
             ).distinct()
 
-        rows = [_thread_payload(ticket, scope) for ticket in qs[:200]]
+        rows = [_thread_payload(ticket, scope, request.user) for ticket in qs[:200]]
+        rows.sort(key=lambda row: (not row["pinned"], not row["is_unread"], row["updated_at"] or ""))
+        unread_total = sum(int(row["unread_count"] or 0) for row in rows)
         return Response({
             "scope": scope,
             "count": qs.count(),
+            "unread_total": unread_total,
             "results": rows,
             "inbox_rules": {
                 "personal_isolated_from_business": True,
@@ -220,8 +276,9 @@ class TicketConversationMessagesAPIView(APIView):
     def get(self, request, ticket_id):
         scope, ticket = self._ticket(request, ticket_id)
         messages = ticket.messages.select_related("sender").order_by("created_at", "id")
+        _mark_read(request.user, ticket, scope)
         return Response({
-            "thread": _thread_payload(ticket, scope),
+            "thread": _thread_payload(ticket, scope, request.user),
             "count": messages.count(),
             "results": TicketMessageSerializer(messages, many=True).data,
         })
@@ -241,7 +298,7 @@ class TicketConversationMessagesAPIView(APIView):
 
         return Response(
             {
-                "thread": _thread_payload(ticket, scope),
+                "thread": _thread_payload(ticket, scope, request.user),
                 "message": TicketMessageSerializer(message).data,
                 "delivery": {
                     "internal_inbox": "DELIVERED",
