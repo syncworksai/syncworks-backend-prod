@@ -82,6 +82,7 @@ class BusinessSerializer(serializers.ModelSerializer):
             "service_areas",
             "effective_service_radius_miles",
             "services_offered",
+            "detailed_services_enabled",
 
             "expected_gross_monthly",
             "is_licensed",

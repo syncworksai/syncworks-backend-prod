@@ -457,6 +457,15 @@ def _business_can_take_category(business: Business, ticket: Ticket) -> bool:
     if not ticket.category_id:
         return False
 
+    if bool(getattr(business, "detailed_services_enabled", False)):
+        try:
+            offered_ids = set(
+                int(x) for x in business.services_offered.values_list("id", flat=True)
+            )
+        except Exception:
+            offered_ids = set()
+        return int(ticket.category_id) in offered_ids
+
     try:
         scoped_leaf_ids = _business_service_scope_ids(business)
         if int(ticket.category_id) in scoped_leaf_ids:

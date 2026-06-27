@@ -113,6 +113,14 @@ class Business(models.Model):
         related_name="businesses",
     )
 
+    detailed_services_enabled = models.BooleanField(
+        default=False,
+        help_text=(
+            "When enabled, marketplace routing only matches exact selected leaf "
+            "services. When disabled, legacy broad categories include descendants."
+        ),
+    )
+
     # ---- Stripe Connect ----
     stripe_connect_account_id = models.CharField(
         max_length=255,
