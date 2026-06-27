@@ -50,6 +50,16 @@ def _category_path(cat: ServiceCategory | None) -> str:
     return " Ã¢â€ â€™ ".join(chain)
 
 
+def _category_has_active_children(category_id: int) -> bool:
+    try:
+        return ServiceCategory.objects.filter(
+            parent_id=category_id,
+            is_active=True,
+        ).exists()
+    except Exception:
+        return False
+
+
 def _category_root(cat: ServiceCategory | None) -> ServiceCategory | None:
     if not cat:
         return None
@@ -123,6 +133,11 @@ class ServiceRequestCreateSerializer(serializers.Serializer):
 
         is_marketplace = bool(attrs.get("is_marketplace", False))
         if is_marketplace:
+            category_id = attrs.get("category")
+            if category_id and _category_has_active_children(int(category_id)):
+                raise serializers.ValidationError({
+                    "category": "Marketplace tickets require a specific leaf service, not a broad category."
+                })
             z = _norm_zip(attrs.get("service_zip", "") or "")
             if not z:
                 raise serializers.ValidationError({"service_zip": "ZIP is required for marketplace tickets."})
