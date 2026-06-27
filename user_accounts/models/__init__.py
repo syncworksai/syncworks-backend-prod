@@ -75,6 +75,7 @@ from .customer_settings import CustomerSettings
 from .communication_preferences import CommunicationPreference
 from .ticket_conversation_read_state import TicketConversationReadState
 from .assets import AssetIdentifier, TicketAssetLink, TrackableAsset
+from .resources import BusinessResource, ResourceAssignment, ResourceMovement
 from .calendar_sync import (
     CalendarAccount,
     TicketCalendarEvent,
@@ -212,6 +213,9 @@ __all__ = [
     "TicketAssetLink",
     "AssetIdentifier",
     "TrackableAsset",
+    "ResourceMovement",
+    "ResourceAssignment",
+    "BusinessResource",
     "CalendarAccount",
     "TicketCalendarEvent",
     "FinanceSnapshot",

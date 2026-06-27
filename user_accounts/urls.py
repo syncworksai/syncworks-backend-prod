@@ -77,6 +77,13 @@ from user_accounts.viewsets.me_businesses import MeBusinessesViewSet
 from user_accounts.viewsets.promo import PromoCodeViewSet, PromoRedemptionViewSet
 from user_accounts.viewsets.customer_settings import CustomerSettingsViewSet
 from user_accounts.viewsets.communication_preferences import CurrentCommunicationPreferenceAPIView
+from user_accounts.viewsets.resources import (
+    ResourceAssignmentDetailAPIView,
+    ResourceDetailAPIView,
+    ResourceListCreateAPIView,
+    ResourceMovementAPIView,
+    TicketResourceAssignmentAPIView,
+)
 from user_accounts.viewsets.assets import (
     AssetDetailAPIView,
     AssetIdentifierCreateAPIView,
@@ -278,6 +285,11 @@ salesos_pipeline_detail = SalesPipelineViewSet.as_view({"get": "retrieve", "patc
 
 
 urlpatterns = [
+    path("resources/", ResourceListCreateAPIView.as_view(), name="resource-list-create"),
+    path("resources/<int:resource_id>/", ResourceDetailAPIView.as_view(), name="resource-detail"),
+    path("resources/<int:resource_id>/movements/", ResourceMovementAPIView.as_view(), name="resource-movements"),
+    path("tickets/<int:ticket_id>/resources/", TicketResourceAssignmentAPIView.as_view(), name="ticket-resource-assignments"),
+    path("resource-assignments/<int:assignment_id>/", ResourceAssignmentDetailAPIView.as_view(), name="resource-assignment-detail"),
     path("assets/", AssetListCreateAPIView.as_view(), name="asset-list-create"),
     path("assets/scan/resolve/", AssetScanResolveAPIView.as_view(), name="asset-scan-resolve"),
     path("assets/<int:asset_id>/", AssetDetailAPIView.as_view(), name="asset-detail"),
