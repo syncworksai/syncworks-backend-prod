@@ -72,6 +72,7 @@ from .kpis import (
 )
 
 from .customer_settings import CustomerSettings
+from .communication_preferences import CommunicationPreference
 from .calendar_sync import (
     CalendarAccount,
     TicketCalendarEvent,
@@ -204,6 +205,7 @@ __all__ = [
     "BusinessDailyKpi",
     "MarketplaceCellDailyKpi",
     "CustomerSettings",
+    "CommunicationPreference",
     "CalendarAccount",
     "TicketCalendarEvent",
     "FinanceSnapshot",
