@@ -78,6 +78,7 @@ from user_accounts.viewsets.promo import PromoCodeViewSet, PromoRedemptionViewSe
 from user_accounts.viewsets.customer_settings import CustomerSettingsViewSet
 from user_accounts.viewsets.communication_preferences import CurrentCommunicationPreferenceAPIView
 from user_accounts.viewsets.ticket_conversations import (
+    TicketConversationControlsAPIView,
     TicketConversationListAPIView,
     TicketConversationMessagesAPIView,
 )
@@ -272,6 +273,7 @@ salesos_pipeline_detail = SalesPipelineViewSet.as_view({"get": "retrieve", "patc
 urlpatterns = [
     path("ticket-conversations/", TicketConversationListAPIView.as_view(), name="ticket-conversation-list"),
     path("ticket-conversations/<int:ticket_id>/messages/", TicketConversationMessagesAPIView.as_view(), name="ticket-conversation-messages"),
+    path("ticket-conversations/<int:ticket_id>/controls/", TicketConversationControlsAPIView.as_view(), name="ticket-conversation-controls"),
     path("communication-preferences/current/", CurrentCommunicationPreferenceAPIView.as_view(), name="communication-preferences-current"),
     # ----------------------------
     # SBO / Business Team Routes

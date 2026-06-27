@@ -11,6 +11,7 @@ from user_accounts.models import (
     TicketMessage,
 )
 from user_accounts.viewsets.ticket_conversations import (
+    TicketConversationControlsAPIView,
     TicketConversationListAPIView,
     TicketConversationMessagesAPIView,
 )
@@ -95,3 +96,66 @@ class TicketConversationReadStateTests(TestCase):
         force_authenticate(request, user=self.tech)
         response = TicketConversationListAPIView.as_view()(request)
         self.assertEqual(response.data["results"][0]["unread_count"], 1)
+
+    def test_user_can_pin_and_mute_visible_thread(self):
+        request = self.factory.patch(
+            f"/api/v1/ticket-conversations/{self.ticket.id}/controls/?scope=BUSINESS",
+            {"pinned": True, "muted": True},
+            format="json",
+            HTTP_X_BUSINESS_ID=str(self.business.id),
+        )
+        force_authenticate(request, user=self.tech)
+        response = TicketConversationControlsAPIView.as_view()(
+            request,
+            ticket_id=self.ticket.id,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["controls"]["pinned"])
+        self.assertTrue(response.data["controls"]["muted"])
+
+    def test_attention_reason_is_user_specific(self):
+        request = self.factory.patch(
+            f"/api/v1/ticket-conversations/{self.ticket.id}/controls/?scope=BUSINESS",
+            {
+                "needs_attention": True,
+                "attention_reason": "Customer needs a callback",
+            },
+            format="json",
+            HTTP_X_BUSINESS_ID=str(self.business.id),
+        )
+        force_authenticate(request, user=self.tech)
+        response = TicketConversationControlsAPIView.as_view()(
+            request,
+            ticket_id=self.ticket.id,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["controls"]["needs_attention"])
+        self.assertEqual(
+            response.data["controls"]["attention_reason"],
+            "Customer needs a callback",
+        )
+        self.assertFalse(
+            TicketConversationReadState.objects.filter(
+                user=self.owner,
+                ticket=self.ticket,
+                scope="BUSINESS",
+            ).exists()
+        )
+
+    def test_controls_reject_ticket_outside_user_scope(self):
+        other = get_user_model().objects.create_user(
+            username="other-user",
+            email="other-user@example.com",
+            password="test-pass-123",
+        )
+        request = self.factory.patch(
+            f"/api/v1/ticket-conversations/{self.ticket.id}/controls/?scope=PERSONAL",
+            {"pinned": True},
+            format="json",
+        )
+        force_authenticate(request, user=other)
+        response = TicketConversationControlsAPIView.as_view()(
+            request,
+            ticket_id=self.ticket.id,
+        )
+        self.assertEqual(response.status_code, 404)

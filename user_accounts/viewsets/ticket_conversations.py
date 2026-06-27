@@ -308,3 +308,61 @@ class TicketConversationMessagesAPIView(APIView):
             },
             status=201,
         )
+
+class TicketConversationControlsAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _ticket(self, request, ticket_id):
+        scope = _scope(request)
+        ticket = get_object_or_404(_visible_tickets(request, scope), id=ticket_id)
+        return scope, ticket
+
+    def patch(self, request, ticket_id):
+        scope, ticket = self._ticket(request, ticket_id)
+        state, _ = TicketConversationReadState.objects.get_or_create(
+            user=request.user,
+            ticket=ticket,
+            scope=scope,
+        )
+
+        data = request.data or {}
+        update_fields = []
+
+        if "pinned" in data:
+            state.pinned = bool(data.get("pinned"))
+            update_fields.append("pinned")
+
+        if "muted" in data:
+            state.muted = bool(data.get("muted"))
+            update_fields.append("muted")
+
+        if "needs_attention" in data:
+            state.needs_attention = bool(data.get("needs_attention"))
+            update_fields.append("needs_attention")
+            if state.needs_attention:
+                reason = str(data.get("attention_reason") or "").strip()
+                state.attention_reason = reason[:255] or "Marked for follow-up"
+            else:
+                state.attention_reason = ""
+            update_fields.append("attention_reason")
+        elif "attention_reason" in data:
+            state.attention_reason = str(data.get("attention_reason") or "").strip()[:255]
+            update_fields.append("attention_reason")
+
+        if not update_fields:
+            raise ValidationError({
+                "detail": "Provide pinned, muted, needs_attention, or attention_reason."
+            })
+
+        update_fields.append("updated_at")
+        state.save(update_fields=list(dict.fromkeys(update_fields)))
+
+        return Response({
+            "thread": _thread_payload(ticket, scope, request.user),
+            "controls": {
+                "pinned": state.pinned,
+                "muted": state.muted,
+                "needs_attention": state.needs_attention,
+                "attention_reason": state.attention_reason,
+            },
+        })
