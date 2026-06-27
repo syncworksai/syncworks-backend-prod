@@ -74,6 +74,7 @@ from .kpis import (
 from .customer_settings import CustomerSettings
 from .communication_preferences import CommunicationPreference
 from .ticket_conversation_read_state import TicketConversationReadState
+from .assets import AssetIdentifier, TicketAssetLink, TrackableAsset
 from .calendar_sync import (
     CalendarAccount,
     TicketCalendarEvent,
@@ -208,6 +209,9 @@ __all__ = [
     "CustomerSettings",
     "CommunicationPreference",
     "TicketConversationReadState",
+    "TicketAssetLink",
+    "AssetIdentifier",
+    "TrackableAsset",
     "CalendarAccount",
     "TicketCalendarEvent",
     "FinanceSnapshot",

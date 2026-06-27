@@ -77,6 +77,13 @@ from user_accounts.viewsets.me_businesses import MeBusinessesViewSet
 from user_accounts.viewsets.promo import PromoCodeViewSet, PromoRedemptionViewSet
 from user_accounts.viewsets.customer_settings import CustomerSettingsViewSet
 from user_accounts.viewsets.communication_preferences import CurrentCommunicationPreferenceAPIView
+from user_accounts.viewsets.assets import (
+    AssetDetailAPIView,
+    AssetIdentifierCreateAPIView,
+    AssetListCreateAPIView,
+    AssetScanResolveAPIView,
+    TicketAssetLinkAPIView,
+)
 from user_accounts.viewsets.ticket_conversations import (
     TicketConversationControlsAPIView,
     TicketConversationListAPIView,
@@ -271,6 +278,11 @@ salesos_pipeline_detail = SalesPipelineViewSet.as_view({"get": "retrieve", "patc
 
 
 urlpatterns = [
+    path("assets/", AssetListCreateAPIView.as_view(), name="asset-list-create"),
+    path("assets/scan/resolve/", AssetScanResolveAPIView.as_view(), name="asset-scan-resolve"),
+    path("assets/<int:asset_id>/", AssetDetailAPIView.as_view(), name="asset-detail"),
+    path("assets/<int:asset_id>/identifiers/", AssetIdentifierCreateAPIView.as_view(), name="asset-identifier-create"),
+    path("tickets/<int:ticket_id>/assets/", TicketAssetLinkAPIView.as_view(), name="ticket-asset-links"),
     path("ticket-conversations/", TicketConversationListAPIView.as_view(), name="ticket-conversation-list"),
     path("ticket-conversations/<int:ticket_id>/messages/", TicketConversationMessagesAPIView.as_view(), name="ticket-conversation-messages"),
     path("ticket-conversations/<int:ticket_id>/controls/", TicketConversationControlsAPIView.as_view(), name="ticket-conversation-controls"),
