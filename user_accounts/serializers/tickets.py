@@ -60,6 +60,34 @@ def _category_has_active_children(category_id: int) -> bool:
         return False
 
 
+def _coerce_opportunity_value(value) -> int:
+    try:
+        if value in (None, ""):
+            return 0
+        cleaned = "".join(
+            ch for ch in str(value) if ch.isdigit() or ch == "."
+        )
+        numeric = float(cleaned or 0)
+        return max(0, int(round(numeric)))
+    except Exception:
+        return 0
+
+
+def _opportunity_text_value(text: str) -> int:
+    import re
+    blob = str(text or "")
+    patterns = [
+        r"estimated (?:project )?(?:value|budget):\s*\$?([\d,]+(?:\.\d+)?)",
+        r"budget:\s*\$?([\d,]+(?:\.\d+)?)",
+        r"project value:\s*\$?([\d,]+(?:\.\d+)?)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, blob, flags=re.IGNORECASE)
+        if match:
+            return _coerce_opportunity_value(match.group(1))
+    return 0
+
+
 def _category_root(cat: ServiceCategory | None) -> ServiceCategory | None:
     if not cat:
         return None
@@ -553,6 +581,7 @@ class TicketSerializer(serializers.ModelSerializer):
     is_archived = serializers.SerializerMethodField()
     workflow = serializers.SerializerMethodField()
     marketplace_match = serializers.SerializerMethodField()
+    opportunity_profile = serializers.SerializerMethodField()
 
     class Meta:
         model = Ticket
@@ -602,6 +631,7 @@ class TicketSerializer(serializers.ModelSerializer):
             "latest_invoice",
             "workflow",
             "marketplace_match",
+            "opportunity_profile",
         ]
         read_only_fields = [
             "id",
@@ -636,6 +666,7 @@ class TicketSerializer(serializers.ModelSerializer):
             "assigned_business_card",
             "workflow",
             "marketplace_match",
+            "opportunity_profile",
         ]
 
     def _is_customer_request(self) -> bool:
@@ -782,6 +813,72 @@ class TicketSerializer(serializers.ModelSerializer):
             return result if result.get("matched") else None
         except Exception:
             return None
+
+    def get_opportunity_profile(self, obj):
+        sr = getattr(obj, "service_request", None)
+        payload = getattr(sr, "intake_payload", None) if sr else None
+        if not isinstance(payload, dict):
+            payload = {}
+        dynamic = payload.get("dynamic_intake")
+        if not isinstance(dynamic, dict):
+            dynamic = {}
+
+        description = str(getattr(sr, "description", "") or "")
+        scope_blob = " ".join([
+            str(payload.get("project_scope") or ""),
+            str(dynamic.get("project_scope") or ""),
+            description,
+        ]).upper()
+        if "COMMERCIAL" in scope_blob:
+            project_scope = "COMMERCIAL"
+        elif "RESIDENTIAL" in scope_blob:
+            project_scope = "RESIDENTIAL"
+        else:
+            project_scope = "UNSPECIFIED"
+
+        value_candidates = [
+            payload.get("estimated_value"),
+            payload.get("estimated_budget"),
+            payload.get("project_value"),
+            dynamic.get("estimated_value"),
+            dynamic.get("estimated_budget"),
+            dynamic.get("project_value"),
+            getattr(sr, "estimated_value", None) if sr else None,
+            getattr(sr, "project_value", None) if sr else None,
+        ]
+        estimated_value = 0
+        for candidate in value_candidates:
+            estimated_value = _coerce_opportunity_value(candidate)
+            if estimated_value:
+                break
+        if not estimated_value:
+            estimated_value = _opportunity_text_value(description)
+
+        priority = str(
+            getattr(sr, "priority", "")
+            or payload.get("priority")
+            or "P3"
+        ).upper()
+        needed_by = getattr(sr, "needed_by_date", None) if sr else None
+        time_window = str(
+            getattr(sr, "preferred_time_window", "")
+            or payload.get("preferred_time_window")
+            or ""
+        )
+
+        category = getattr(obj, "category", None)
+        return {
+            "category_id": getattr(obj, "category_id", None),
+            "category_key": getattr(category, "key", "") if category else "",
+            "category_name": getattr(category, "name", "") if category else "",
+            "category_path": _category_path(category) if category else "",
+            "priority": priority,
+            "project_scope": project_scope,
+            "estimated_value": estimated_value,
+            "has_known_value": bool(estimated_value),
+            "needed_by_date": str(needed_by or ""),
+            "preferred_time_window": time_window,
+        }
 
     def get_is_archived(self, obj) -> bool:
         try:
