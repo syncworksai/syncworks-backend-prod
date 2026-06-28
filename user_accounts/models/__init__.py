@@ -77,6 +77,16 @@ from .ticket_conversation_read_state import TicketConversationReadState
 from .assets import AssetIdentifier, TicketAssetLink, TrackableAsset
 from .resources import BusinessResource, ResourceAssignment, ResourceMovement
 from .workflow import TicketDependency, TicketRequirement
+from .inventory import (
+    InventoryItem,
+    InventoryLocation,
+    InventoryStock,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    PurchaseReceipt,
+    StockMovement,
+    Vendor,
+)
 from .calendar_sync import (
     CalendarAccount,
     TicketCalendarEvent,
@@ -219,6 +229,14 @@ __all__ = [
     "BusinessResource",
     "TicketDependency",
     "TicketRequirement",
+    "Vendor",
+    "StockMovement",
+    "PurchaseReceipt",
+    "PurchaseOrderLine",
+    "PurchaseOrder",
+    "InventoryStock",
+    "InventoryLocation",
+    "InventoryItem",
     "CalendarAccount",
     "TicketCalendarEvent",
     "FinanceSnapshot",

@@ -77,6 +77,16 @@ from user_accounts.viewsets.me_businesses import MeBusinessesViewSet
 from user_accounts.viewsets.promo import PromoCodeViewSet, PromoRedemptionViewSet
 from user_accounts.viewsets.customer_settings import CustomerSettingsViewSet
 from user_accounts.viewsets.communication_preferences import CurrentCommunicationPreferenceAPIView
+from user_accounts.viewsets.inventory import (
+    InventoryItemListCreateAPIView,
+    InventoryLocationListCreateAPIView,
+    InventoryStockListAPIView,
+    PurchaseOrderLineCreateAPIView,
+    PurchaseOrderListCreateAPIView,
+    PurchaseReceiptCreateAPIView,
+    StockMovementCreateAPIView,
+    VendorListCreateAPIView,
+)
 from user_accounts.viewsets.workflow import (
     BusinessPriorityQueueAPIView,
     TicketDependencyListCreateAPIView,
@@ -292,6 +302,14 @@ salesos_pipeline_detail = SalesPipelineViewSet.as_view({"get": "retrieve", "patc
 
 
 urlpatterns = [
+    path("inventory/locations/", InventoryLocationListCreateAPIView.as_view(), name="inventory-locations"),
+    path("inventory/vendors/", VendorListCreateAPIView.as_view(), name="inventory-vendors"),
+    path("inventory/items/", InventoryItemListCreateAPIView.as_view(), name="inventory-items"),
+    path("inventory/stock/", InventoryStockListAPIView.as_view(), name="inventory-stock"),
+    path("inventory/movements/", StockMovementCreateAPIView.as_view(), name="inventory-movements"),
+    path("purchase-orders/", PurchaseOrderListCreateAPIView.as_view(), name="purchase-orders"),
+    path("purchase-orders/<int:po_id>/lines/", PurchaseOrderLineCreateAPIView.as_view(), name="purchase-order-lines"),
+    path("purchase-orders/<int:po_id>/receipts/", PurchaseReceiptCreateAPIView.as_view(), name="purchase-order-receipts"),
     path("workflow/priority-queue/", BusinessPriorityQueueAPIView.as_view(), name="workflow-priority-queue"),
     path("tickets/<int:ticket_id>/requirements/", TicketRequirementListCreateAPIView.as_view(), name="ticket-requirements"),
     path("requirements/<int:requirement_id>/", TicketRequirementDetailAPIView.as_view(), name="ticket-requirement-detail"),
