@@ -77,6 +77,13 @@ from user_accounts.viewsets.me_businesses import MeBusinessesViewSet
 from user_accounts.viewsets.promo import PromoCodeViewSet, PromoRedemptionViewSet
 from user_accounts.viewsets.customer_settings import CustomerSettingsViewSet
 from user_accounts.viewsets.communication_preferences import CurrentCommunicationPreferenceAPIView
+from user_accounts.viewsets.workflow import (
+    BusinessPriorityQueueAPIView,
+    TicketDependencyListCreateAPIView,
+    TicketNextActionAPIView,
+    TicketRequirementDetailAPIView,
+    TicketRequirementListCreateAPIView,
+)
 from user_accounts.viewsets.resources import (
     ResourceAssignmentDetailAPIView,
     ResourceDetailAPIView,
@@ -285,6 +292,11 @@ salesos_pipeline_detail = SalesPipelineViewSet.as_view({"get": "retrieve", "patc
 
 
 urlpatterns = [
+    path("workflow/priority-queue/", BusinessPriorityQueueAPIView.as_view(), name="workflow-priority-queue"),
+    path("tickets/<int:ticket_id>/requirements/", TicketRequirementListCreateAPIView.as_view(), name="ticket-requirements"),
+    path("requirements/<int:requirement_id>/", TicketRequirementDetailAPIView.as_view(), name="ticket-requirement-detail"),
+    path("tickets/<int:ticket_id>/dependencies/", TicketDependencyListCreateAPIView.as_view(), name="ticket-dependencies"),
+    path("tickets/<int:ticket_id>/next-action/", TicketNextActionAPIView.as_view(), name="ticket-next-action"),
     path("resources/", ResourceListCreateAPIView.as_view(), name="resource-list-create"),
     path("resources/<int:resource_id>/", ResourceDetailAPIView.as_view(), name="resource-detail"),
     path("resources/<int:resource_id>/movements/", ResourceMovementAPIView.as_view(), name="resource-movements"),
