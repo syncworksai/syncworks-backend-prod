@@ -77,6 +77,7 @@ from .ticket_conversation_read_state import TicketConversationReadState
 from .assets import AssetIdentifier, TicketAssetLink, TrackableAsset
 from .resources import BusinessResource, ResourceAssignment, ResourceMovement
 from .workflow import TicketDependency, TicketRequirement
+from .operations import OperationalAlert, OperationalEvent, TicketETA
 from .inventory import (
     InventoryItem,
     InventoryLocation,
@@ -229,6 +230,9 @@ __all__ = [
     "BusinessResource",
     "TicketDependency",
     "TicketRequirement",
+    "TicketETA",
+    "OperationalEvent",
+    "OperationalAlert",
     "Vendor",
     "StockMovement",
     "PurchaseReceipt",

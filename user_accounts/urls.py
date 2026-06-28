@@ -77,6 +77,13 @@ from user_accounts.viewsets.me_businesses import MeBusinessesViewSet
 from user_accounts.viewsets.promo import PromoCodeViewSet, PromoRedemptionViewSet
 from user_accounts.viewsets.customer_settings import CustomerSettingsViewSet
 from user_accounts.viewsets.communication_preferences import CurrentCommunicationPreferenceAPIView
+from user_accounts.viewsets.operations import (
+    EventAlertCreateAPIView,
+    OperationalAlertDetailAPIView,
+    OperationalAlertListAPIView,
+    TicketETAAPIView,
+    TicketEventListCreateAPIView,
+)
 from user_accounts.viewsets.inventory import (
     InventoryItemListCreateAPIView,
     InventoryLocationListCreateAPIView,
@@ -302,6 +309,11 @@ salesos_pipeline_detail = SalesPipelineViewSet.as_view({"get": "retrieve", "patc
 
 
 urlpatterns = [
+    path("tickets/<int:ticket_id>/eta/", TicketETAAPIView.as_view(), name="ticket-eta"),
+    path("tickets/<int:ticket_id>/operational-events/", TicketEventListCreateAPIView.as_view(), name="ticket-operational-events"),
+    path("operations/events/<int:event_id>/alerts/", EventAlertCreateAPIView.as_view(), name="operational-event-alerts"),
+    path("operations/alerts/", OperationalAlertListAPIView.as_view(), name="operational-alerts"),
+    path("operations/alerts/<int:alert_id>/", OperationalAlertDetailAPIView.as_view(), name="operational-alert-detail"),
     path("inventory/locations/", InventoryLocationListCreateAPIView.as_view(), name="inventory-locations"),
     path("inventory/vendors/", VendorListCreateAPIView.as_view(), name="inventory-vendors"),
     path("inventory/items/", InventoryItemListCreateAPIView.as_view(), name="inventory-items"),
