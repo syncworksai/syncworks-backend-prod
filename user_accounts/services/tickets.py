@@ -663,6 +663,15 @@ def _member_can_complete(member: BusinessMember | None, ticket: Ticket) -> bool:
     return bool(_member_is_assigned_tech(member, ticket) or getattr(member, "can_close_tickets", False))
 
 
+def _dispatch_status_automation(ticket: Ticket, actor_user, previous_status: str) -> None:
+    from user_accounts.viewsets.automation import dispatch_ticket_status_rules
+
+    dispatch_ticket_status_rules(
+        ticket,
+        actor=actor_user,
+        previous_status=previous_status,
+    )
+
 def _transition_system_message(ticket: Ticket, actor_user, body: str) -> None:
     TicketMessage.objects.create(
         ticket=ticket,
@@ -927,9 +936,11 @@ def provider_accept(ticket: Ticket, actor_user):
     if ticket.status not in (Ticket.Status.NEW, Ticket.Status.ASSIGNED):
         raise ValueError("Ticket cannot be accepted in current status.")
 
+    previous_status = ticket.status
     ticket.status = Ticket.Status.ACCEPTED
     ticket.accepted_at = timezone.now()
     ticket.save(update_fields=["status", "accepted_at"])
+    _dispatch_status_automation(ticket, actor_user, previous_status)
 
     notify(
         ticket.customer,
@@ -950,9 +961,11 @@ def provider_schedule(ticket: Ticket, actor_user, member: BusinessMember | None)
     if not _member_can_manage_schedule(member):
         raise PermissionDenied("You do not have permission to schedule this ticket.")
 
+    previous_status = ticket.status
     ticket.status = Ticket.Status.SCHEDULED
     ticket.scheduled_at = timezone.now()
     ticket.save(update_fields=["status", "scheduled_at"])
+    _dispatch_status_automation(ticket, actor_user, previous_status)
 
     notify(
         ticket.customer,
@@ -973,9 +986,11 @@ def provider_mark_en_route(ticket: Ticket, actor_user, member: BusinessMember | 
     if not _member_is_assigned_tech(member, ticket):
         raise PermissionDenied("Only the assigned technician can mark En Route.")
 
+    previous_status = ticket.status
     ticket.status = Ticket.Status.EN_ROUTE
     ticket.en_route_at = timezone.now()
     ticket.save(update_fields=["status", "en_route_at"])
+    _dispatch_status_automation(ticket, actor_user, previous_status)
 
     notify(
         ticket.customer,
@@ -996,9 +1011,11 @@ def provider_mark_on_site(ticket: Ticket, actor_user, member: BusinessMember | N
     if not _member_is_assigned_tech(member, ticket):
         raise PermissionDenied("Only the assigned technician can mark On Site.")
 
+    previous_status = ticket.status
     ticket.status = Ticket.Status.ON_SITE
     ticket.on_site_at = timezone.now()
     ticket.save(update_fields=["status", "on_site_at"])
+    _dispatch_status_automation(ticket, actor_user, previous_status)
 
     notify(
         ticket.customer,
@@ -1017,8 +1034,10 @@ def provider_set_needs_quote(ticket: Ticket, actor_user):
     if ticket.status in (Ticket.Status.CANCELLED, Ticket.Status.CLOSED, Ticket.Status.PAID):
         raise ValueError("Ticket cannot request a quote in this status.")
 
+    previous_status = ticket.status
     ticket.status = Ticket.Status.NEEDS_QUOTE
     ticket.save(update_fields=["status"])
+    _dispatch_status_automation(ticket, actor_user, previous_status)
 
     _transition_system_message(ticket, actor_user, "Provider requested an estimate (Needs Quote).")
 
@@ -1048,8 +1067,10 @@ def provider_send_quote(ticket: Ticket, quote: TicketQuote, actor_user):
     quote.rejected_at = None
     quote.save()
 
+    previous_status = ticket.status
     ticket.status = Ticket.Status.QUOTED
     ticket.save(update_fields=["status"])
+    _dispatch_status_automation(ticket, actor_user, previous_status)
 
     _transition_system_message(ticket, actor_user, f"Estimate sent (${quote.amount}).")
 
@@ -1075,9 +1096,11 @@ def customer_approve_quote(ticket: Ticket, quote: TicketQuote, actor_user):
     quote.approved_at = timezone.now()
     quote.save()
 
+    previous_status = ticket.status
     ticket.status = Ticket.Status.APPROVED
     ticket.awaiting_approval_at = None
     ticket.save(update_fields=["status", "awaiting_approval_at"])
+    _dispatch_status_automation(ticket, actor_user, previous_status)
 
     _transition_system_message(ticket, actor_user, "Customer approved the estimate.")
 
@@ -1103,9 +1126,11 @@ def customer_reject_quote(ticket: Ticket, quote: TicketQuote, actor_user, reason
     quote.rejected_at = timezone.now()
     quote.save()
 
+    previous_status = ticket.status
     ticket.status = Ticket.Status.QUOTE_REJECTED
     ticket.awaiting_approval_at = timezone.now()
     ticket.save(update_fields=["status", "awaiting_approval_at"])
+    _dispatch_status_automation(ticket, actor_user, previous_status)
 
     msg = "Customer rejected the estimate."
     if (reason or "").strip():
@@ -1136,9 +1161,11 @@ def provider_start(ticket: Ticket, actor_user, member: BusinessMember | None = N
     if member is not None and not _member_is_assigned_tech(member, ticket):
         raise PermissionDenied("Only the assigned technician can start work.")
 
+    previous_status = ticket.status
     ticket.status = Ticket.Status.IN_PROGRESS
     ticket.started_at = timezone.now()
     ticket.save(update_fields=["status", "started_at"])
+    _dispatch_status_automation(ticket, actor_user, previous_status)
 
     notify(
         ticket.customer,
@@ -1166,9 +1193,11 @@ def provider_complete(ticket: Ticket, actor_user, member: BusinessMember | None 
     if member is not None and not _member_can_complete(member, ticket):
         raise PermissionDenied("You do not have permission to complete this ticket.")
 
+    previous_status = ticket.status
     ticket.status = Ticket.Status.COMPLETED
     ticket.completed_at = timezone.now()
     ticket.save(update_fields=["status", "completed_at"])
+    _dispatch_status_automation(ticket, actor_user, previous_status)
 
     try:
         if ticket.customer_id and ticket.assigned_business_id:

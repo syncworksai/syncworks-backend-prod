@@ -843,6 +843,7 @@ class TicketViewSet(viewsets.ModelViewSet):
 
         now = timezone.now()
         update_fields = ["status"]
+        previous_status = ticket.status
 
         ticket.status = new_status
 
@@ -907,6 +908,8 @@ class TicketViewSet(viewsets.ModelViewSet):
                 update_fields.append("closed_at")
 
         ticket.save(update_fields=update_fields)
+        from user_accounts.viewsets.automation import dispatch_ticket_status_rules
+        dispatch_ticket_status_rules(ticket, actor=u, previous_status=previous_status)
         _system_msg(ticket, u, f"Manual status override: {new_status}.")
         ticket.refresh_from_db()
         return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)

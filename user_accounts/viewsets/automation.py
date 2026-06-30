@@ -111,6 +111,40 @@ def _run_action(rule, execution, ticket=None, event=None, actor=None):
     return {"custom": config}
 
 
+def dispatch_ticket_status_rules(ticket, *, actor=None, previous_status=""):
+    rules = AutomationRule.objects.filter(
+        business_id=ticket.assigned_business_id,
+        is_active=True,
+        trigger_type=AutomationRule.TriggerType.TICKET_STATUS,
+    ).order_by("priority", "id")
+
+    results = []
+    current_status = str(ticket.status or "").upper()
+    previous_status = str(previous_status or "").upper()
+
+    for rule in rules:
+        execution, created = execute_rule(
+            rule,
+            ticket=ticket,
+            actor=actor,
+            dedupe_key=(
+                f"ticket:{ticket.id}:status:{current_status}:"
+                f"previous:{previous_status}:rule:{rule.id}"
+            ),
+        )
+        results.append({
+            "rule_id": rule.id,
+            "execution_id": execution.id,
+            "status": execution.status,
+            "created": created,
+        })
+        if (
+            rule.stop_processing
+            and execution.status == AutomationExecution.Status.SUCCEEDED
+        ):
+            break
+    return results
+
 def dispatch_event_rules(event, *, actor=None):
     rules = AutomationRule.objects.filter(
         business=event.business,
