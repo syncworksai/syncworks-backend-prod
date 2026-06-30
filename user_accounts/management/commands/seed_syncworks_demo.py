@@ -1,4 +1,4 @@
-﻿from datetime import timedelta
+from datetime import timedelta
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db import transaction
@@ -48,7 +48,7 @@ class Command(BaseCommand):
         return out
     def make_business(self,users):
         biz,_=Business.objects.get_or_create(name=BUSINESS_NAME,defaults={"owner":users["owner"]})
-        apply(biz,owner=users["owner"],is_active=True,base_zip="36104",accepts_marketplace_tickets=True,business_email=EMAILS["owner"],city="Montgomery",state="AL")
+        apply(biz,owner=users["owner"],is_active=True,is_demo=True,exclude_from_kpis=True,billing_exempt=True,billing_exempt_reason="SyncWorks live demo sandbox",subscriptions_exempt=True,subscriptions_exempt_reason="SyncWorks live demo sandbox",base_zip="36104",accepts_marketplace_tickets=True,business_email=EMAILS["owner"],city="Montgomery",state="AL")
         specs=[("owner","OWNER",1,1,1),("dispatch","DISPATCH",1,1,0),("tech1","TECHNICIAN",0,0,1),("tech2","TECHNICIAN",0,0,1)]
         allowed=fields(BusinessMember)
         for key,role,schedule,assign,close in specs:

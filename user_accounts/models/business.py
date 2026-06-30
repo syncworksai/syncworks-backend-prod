@@ -47,6 +47,18 @@ class Business(models.Model):
 
     is_active = models.BooleanField(default=True)
 
+    # ---- Demo / sandbox classification ----
+    is_demo = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Marks an isolated demonstration or training workspace.",
+    )
+    exclude_from_kpis = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Exclude this business and its operational records from production KPI totals.",
+    )
+
     # ---- Business contact/profile ----
     business_email = models.EmailField(blank=True, default="")
     owner_name = models.CharField(max_length=180, blank=True, default="")
