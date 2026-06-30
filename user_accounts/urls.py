@@ -77,6 +77,12 @@ from user_accounts.viewsets.me_businesses import MeBusinessesViewSet
 from user_accounts.viewsets.promo import PromoCodeViewSet, PromoRedemptionViewSet
 from user_accounts.viewsets.customer_settings import CustomerSettingsViewSet
 from user_accounts.viewsets.communication_preferences import CurrentCommunicationPreferenceAPIView
+from user_accounts.viewsets.automation import (
+    AutomationExecuteAPIView,
+    AutomationExecutionListAPIView,
+    AutomationRuleDetailAPIView,
+    AutomationRuleListCreateAPIView,
+)
 from user_accounts.viewsets.operations import (
     EventAlertCreateAPIView,
     OperationalAlertDetailAPIView,
@@ -309,6 +315,10 @@ salesos_pipeline_detail = SalesPipelineViewSet.as_view({"get": "retrieve", "patc
 
 
 urlpatterns = [
+    path("automation/rules/", AutomationRuleListCreateAPIView.as_view(), name="automation-rules"),
+    path("automation/rules/<int:rule_id>/", AutomationRuleDetailAPIView.as_view(), name="automation-rule-detail"),
+    path("automation/rules/<int:rule_id>/execute/", AutomationExecuteAPIView.as_view(), name="automation-rule-execute"),
+    path("automation/executions/", AutomationExecutionListAPIView.as_view(), name="automation-executions"),
     path("tickets/<int:ticket_id>/eta/", TicketETAAPIView.as_view(), name="ticket-eta"),
     path("tickets/<int:ticket_id>/operational-events/", TicketEventListCreateAPIView.as_view(), name="ticket-operational-events"),
     path("operations/events/<int:event_id>/alerts/", EventAlertCreateAPIView.as_view(), name="operational-event-alerts"),

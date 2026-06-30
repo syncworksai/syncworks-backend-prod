@@ -78,6 +78,7 @@ from .assets import AssetIdentifier, TicketAssetLink, TrackableAsset
 from .resources import BusinessResource, ResourceAssignment, ResourceMovement
 from .workflow import TicketDependency, TicketRequirement
 from .operations import OperationalAlert, OperationalEvent, TicketETA
+from .automation import AutomationExecution, AutomationRule
 from .inventory import (
     InventoryItem,
     InventoryLocation,
@@ -233,6 +234,8 @@ __all__ = [
     "TicketETA",
     "OperationalEvent",
     "OperationalAlert",
+    "AutomationRule",
+    "AutomationExecution",
     "Vendor",
     "StockMovement",
     "PurchaseReceipt",
