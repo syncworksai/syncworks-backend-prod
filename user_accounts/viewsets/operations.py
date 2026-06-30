@@ -159,6 +159,8 @@ class TicketETAAPIView(APIView):
                 channel=OperationalAlert.Channel.IN_APP,
                 dedupe_suffix=str(eta.updated_at.timestamp()),
             )
+            from user_accounts.viewsets.automation import dispatch_event_rules
+            dispatch_event_rules(event, actor=request.user)
 
         return Response(TicketETASerializer(eta).data)
 
@@ -184,6 +186,8 @@ class TicketEventListCreateAPIView(APIView):
             ticket=ticket,
             created_by=request.user,
         )
+        from user_accounts.viewsets.automation import dispatch_event_rules
+        dispatch_event_rules(event, actor=request.user)
         return Response(OperationalEventSerializer(event).data, status=201)
 
 

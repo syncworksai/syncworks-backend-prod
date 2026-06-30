@@ -111,6 +111,38 @@ def _run_action(rule, execution, ticket=None, event=None, actor=None):
     return {"custom": config}
 
 
+def dispatch_event_rules(event, *, actor=None):
+    rules = AutomationRule.objects.filter(
+        business=event.business,
+        is_active=True,
+        trigger_type__in=[
+            AutomationRule.TriggerType.OPERATIONAL_EVENT,
+            AutomationRule.TriggerType.ETA_DELAYED,
+        ],
+    ).order_by("priority", "id")
+
+    results = []
+    for rule in rules:
+        execution, created = execute_rule(
+            rule,
+            ticket=event.ticket,
+            event=event,
+            actor=actor,
+            dedupe_key=f"event:{event.id}:rule:{rule.id}",
+        )
+        results.append({
+            "rule_id": rule.id,
+            "execution_id": execution.id,
+            "status": execution.status,
+            "created": created,
+        })
+        if (
+            rule.stop_processing
+            and execution.status == AutomationExecution.Status.SUCCEEDED
+        ):
+            break
+    return results
+
 def execute_rule(rule, *, ticket=None, event=None, actor=None, dedupe_key=None):
     dedupe_key = dedupe_key or (
         f"rule:{rule.id}:ticket:{getattr(ticket, 'id', 0)}:"
