@@ -78,6 +78,10 @@ from user_accounts.viewsets.data_imports import BusinessDataImportViewSet
 from user_accounts.viewsets.business_kpis import BusinessKpiViewSet
 from user_accounts.viewsets.business_exports import BusinessExportViewSet
 from user_accounts.viewsets.projects import BusinessProjectViewSet
+from user_accounts.viewsets.partner_network import (
+    BusinessPartnerInvitationViewSet,
+    BusinessPartnerRelationshipViewSet,
+)
 
 from user_accounts.viewsets.promo import PromoCodeViewSet, PromoRedemptionViewSet
 from user_accounts.viewsets.customer_settings import CustomerSettingsViewSet
@@ -237,6 +241,8 @@ router.register(r"business-data-imports", BusinessDataImportViewSet, basename="b
 router.register(r"business-kpis", BusinessKpiViewSet, basename="business-kpis")
 router.register(r"business-exports", BusinessExportViewSet, basename="business-exports")
 router.register(r"business-projects", BusinessProjectViewSet, basename="business-projects")
+router.register(r"business-partner-invitations", BusinessPartnerInvitationViewSet, basename="business-partner-invitations")
+router.register(r"business-partners", BusinessPartnerRelationshipViewSet, basename="business-partners")
 router.register(r"me/businesses", MeBusinessesViewSet, basename="me-businesses")
 
 # ----------------------------
