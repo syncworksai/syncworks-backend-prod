@@ -32,6 +32,7 @@ from .business import (
 )
 from .service_catalog import ServiceCatalogItem
 from .business_customers import BusinessCustomer
+from .data_imports import BusinessDataImport
 
 from .service_requests import (
     ServiceRequest,
@@ -201,6 +202,7 @@ __all__ = [
     "BusinessMemberRole",
     "ServiceCatalogItem",
     "BusinessCustomer",
+    "BusinessDataImport",
     "ServiceRequest",
     "ServiceRequestPhoto",
     "Ticket",

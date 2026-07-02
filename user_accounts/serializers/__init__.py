@@ -5,6 +5,7 @@ from .users import UserMeSerializer
 from .categories import ServiceCategorySerializer
 from .business import BusinessSerializer
 from .business_customers import BusinessCustomerSerializer
+from .data_imports import BusinessDataImportSerializer
 from .connections import ConnectionSerializer
 
 from .tickets import (
@@ -47,6 +48,7 @@ __all__ = [
 
     "BusinessSerializer",
     "BusinessCustomerSerializer",
+    "BusinessDataImportSerializer",
     "BusinessMemberSerializer",
 
     "ConnectionSerializer",
