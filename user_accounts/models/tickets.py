@@ -59,6 +59,30 @@ class Ticket(models.Model):
         blank=True,
     )
 
+    project = models.ForeignKey(
+        "user_accounts.BusinessProject",
+        on_delete=models.SET_NULL,
+        related_name="tickets",
+        null=True,
+        blank=True,
+    )
+    parent_ticket = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        related_name="child_tickets",
+        null=True,
+        blank=True,
+    )
+    work_title = models.CharField(max_length=200, blank=True, default="")
+    work_scope = models.TextField(blank=True, default="")
+    progress_weight = models.PositiveIntegerField(default=1)
+    customer_visible = models.BooleanField(default=True)
+    customer_status_label = models.CharField(max_length=160, blank=True, default="")
+    projected_customer_amount_cents = models.PositiveBigIntegerField(default=0)
+    projected_cost_cents = models.PositiveBigIntegerField(default=0)
+    actual_customer_amount_cents = models.PositiveBigIntegerField(default=0)
+    actual_cost_cents = models.PositiveBigIntegerField(default=0)
+
     payer_business = models.ForeignKey(
         Business,
         on_delete=models.SET_NULL,
@@ -193,6 +217,14 @@ class Ticket(models.Model):
                     "external_ticket_id",
                 ],
                 name="ua_ticket_external_idx",
+            ),
+            models.Index(
+                fields=["project", "status", "created_at"],
+                name="ua_ticket_project_status_idx",
+            ),
+            models.Index(
+                fields=["parent_ticket", "created_at"],
+                name="ua_ticket_parent_idx",
             ),
         ]
 
