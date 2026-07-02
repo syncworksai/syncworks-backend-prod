@@ -43,6 +43,11 @@ from .partner_financials import (
     PartnerWorkChangeOrder,
     PartnerWorkEstimate,
 )
+from .partner_billing import (
+    PartnerInvoice,
+    PartnerPayment,
+    PartnerPaymentAllocation,
+)
 
 from .service_requests import (
     ServiceRequest,
@@ -217,6 +222,9 @@ __all__ = [
     "BusinessPartnerRelationship",
     "PartnerWorkTicket",
     "PartnerWorkChangeOrder",
+    "PartnerPaymentAllocation",
+    "PartnerPayment",
+    "PartnerInvoice",
     "PartnerWorkEstimate",
     "BusinessPartnerInvitation",
     "ServiceRequest",
