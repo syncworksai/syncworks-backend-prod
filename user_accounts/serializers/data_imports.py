@@ -19,6 +19,8 @@ class BusinessDataImportSerializer(serializers.ModelSerializer):
             "sample_rows",
             "total_rows",
             "valid_rows",
+            "imported_rows",
+            "matched_rows",
             "skipped_rows",
             "error_count",
             "errors",

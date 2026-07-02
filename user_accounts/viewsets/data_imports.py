@@ -4,8 +4,10 @@ import csv
 import io
 import json
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
+from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import status, viewsets
@@ -15,7 +17,13 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from user_accounts.models import BusinessDataImport
+from user_accounts.models import (
+    BusinessCustomer,
+    BusinessDataImport,
+    ServiceCategory,
+    Ticket,
+)
+from user_accounts.models.business_customers import normalize_phone
 from user_accounts.serializers.data_imports import BusinessDataImportSerializer
 from user_accounts.viewsets.ticket_conversations import _business_context
 
@@ -55,6 +63,7 @@ ALIASES = {
     "scheduled_at": {"scheduled_at", "scheduled_date", "appointment_date"},
     "completed_at": {"completed_at", "completed_date", "closed_date"},
     "cancelled_at": {"cancelled_at", "cancelled_date"},
+    "paid_at": {"paid_at", "paid_date", "payment_date"},
     "total_amount": {
         "total_amount", "amount", "invoice_amount", "job_total", "total"
     },
@@ -78,7 +87,7 @@ def _decode_csv(file_obj):
     name = str(getattr(file_obj, "name", "") or "")
     if not name.lower().endswith(".csv"):
         raise ValidationError(
-            {"file": "Backend 4N currently supports CSV files only."}
+            {"file": "Historical imports currently support CSV files only."}
         )
 
     raw = file_obj.read()
@@ -96,27 +105,26 @@ def _decode_csv(file_obj):
 def _read_rows(file_obj):
     text = _decode_csv(file_obj)
     reader = csv.DictReader(io.StringIO(text))
-    original_headers = reader.fieldnames or []
-    headers = [_clean_header(value) for value in original_headers]
+    headers = [_clean_header(value) for value in (reader.fieldnames or [])]
 
     if not headers:
         raise ValidationError({"file": "CSV has no header row."})
     if len(headers) != len(set(headers)):
         raise ValidationError(
-            {"file": "CSV contains duplicate column names after normalization."}
+            {"file": "CSV contains duplicate normalized column names."}
         )
 
     rows = []
     for row_number, source in enumerate(reader, start=2):
         if len(rows) >= MAX_IMPORT_ROWS:
             raise ValidationError(
-                {"file": f"CSV exceeds the {MAX_IMPORT_ROWS}-row import limit."}
+                {"file": f"CSV exceeds the {MAX_IMPORT_ROWS}-row limit."}
             )
 
-        normalized = {}
-        for key, value in source.items():
-            normalized[_clean_header(key)] = str(value or "").strip()
-
+        normalized = {
+            _clean_header(key): str(value or "").strip()
+            for key, value in source.items()
+        }
         if any(normalized.values()):
             rows.append((row_number, normalized))
 
@@ -198,15 +206,22 @@ def _parse_datetime_value(value):
     return None
 
 
-def _money_is_valid(value):
+def _money_cents(value):
     raw = str(value or "").replace("$", "").replace(",", "").strip()
     if not raw:
-        return True
+        return 0
     try:
-        Decimal(raw)
-        return True
+        amount = Decimal(raw)
+        if amount < 0:
+            return None
+        return int(
+            (amount * Decimal("100")).quantize(
+                Decimal("1"),
+                rounding=ROUND_HALF_UP,
+            )
+        )
     except (InvalidOperation, ValueError):
-        return False
+        return None
 
 
 def _validate_row(row_number, row, mapping, import_type):
@@ -227,7 +242,6 @@ def _validate_row(row_number, row, mapping, import_type):
             "external_customer_id",
         )
     )
-
     if not has_customer_identity:
         errors.append(
             "Provide name, company name, email, phone, or external customer ID."
@@ -237,14 +251,15 @@ def _validate_row(row_number, row, mapping, import_type):
         if not values.get("external_ticket_id"):
             errors.append("External ticket ID is required for ticket imports.")
 
-        if not _money_is_valid(values.get("total_amount")):
-            errors.append("Total amount is not a valid number.")
+        if _money_cents(values.get("total_amount")) is None:
+            errors.append("Total amount is not a valid non-negative number.")
 
         for field in (
             "created_at",
             "scheduled_at",
             "completed_at",
             "cancelled_at",
+            "paid_at",
         ):
             raw = values.get(field)
             if raw and not _parse_datetime_value(raw):
@@ -256,6 +271,188 @@ def _validate_row(row_number, row, mapping, import_type):
         "errors": errors,
         "values": values,
     }
+
+
+def _customer_payload(values, source_system, batch_id):
+    tags = [
+        item.strip()
+        for item in str(values.get("tags") or "").replace(";", ",").split(",")
+        if item.strip()
+    ]
+    return {
+        "name": str(values.get("name") or "").strip(),
+        "company_name": str(values.get("company_name") or "").strip(),
+        "email": str(values.get("email") or "").strip().lower(),
+        "phone": str(values.get("phone") or "").strip(),
+        "billing_address": str(values.get("billing_address") or "").strip(),
+        "service_address": str(values.get("service_address") or "").strip(),
+        "unit": str(values.get("unit") or "").strip(),
+        "city": str(values.get("city") or "").strip(),
+        "state": str(values.get("state") or "").strip(),
+        "service_zip": str(values.get("service_zip") or "").strip(),
+        "access_notes": str(values.get("access_notes") or "").strip(),
+        "contact_preference": (
+            str(values.get("contact_preference") or "").strip() or "either"
+        ),
+        "payment_preference": (
+            str(values.get("payment_preference") or "").strip()
+            or "quote_first"
+        ),
+        "notes": str(values.get("notes") or "").strip(),
+        "tags": tags,
+        "record_source": BusinessCustomer.RecordSource.IMPORTED,
+        "source_system": source_system,
+        "external_customer_id": str(
+            values.get("external_customer_id") or ""
+        ).strip(),
+        "is_imported": True,
+        "import_batch_id": str(batch_id),
+        "exclude_from_kpis": True,
+    }
+
+
+def _find_customer(business, payload):
+    source_system = payload.get("source_system") or ""
+    external_id = payload.get("external_customer_id") or ""
+    email = payload.get("email") or ""
+    phone = normalize_phone(payload.get("phone"))
+    name = payload.get("name") or ""
+    address = payload.get("service_address") or ""
+
+    if source_system and external_id:
+        customer = BusinessCustomer.objects.filter(
+            business=business,
+            source_system__iexact=source_system,
+            external_customer_id=external_id,
+        ).first()
+        if customer:
+            return customer, "external_customer_id"
+
+    if email:
+        customer = BusinessCustomer.objects.filter(
+            business=business,
+            email__iexact=email,
+        ).first()
+        if customer:
+            return customer, "email"
+
+    if phone:
+        customer = BusinessCustomer.objects.filter(
+            business=business,
+            normalized_phone=phone,
+        ).first()
+        if customer:
+            return customer, "phone"
+
+    if name and address:
+        customer = BusinessCustomer.objects.filter(
+            business=business,
+            name__iexact=name,
+            service_address__iexact=address,
+        ).first()
+        if customer:
+            return customer, "name_and_address"
+
+    return None, "new"
+
+
+def _upsert_customer(business, actor, values, source_system, batch_id):
+    payload = _customer_payload(values, source_system, batch_id)
+    customer, matched_by = _find_customer(business, payload)
+
+    if customer:
+        for field, value in payload.items():
+            if value not in ("", None, []):
+                setattr(customer, field, value)
+        customer.updated_by = actor
+        customer.save()
+        return customer, True, matched_by
+
+    customer = BusinessCustomer.objects.create(
+        business=business,
+        created_by=actor,
+        updated_by=actor,
+        **payload,
+    )
+    return customer, False, "new"
+
+
+def _ticket_status(value):
+    raw = str(value or "").strip().upper().replace(" ", "_").replace("-", "_")
+    aliases = {
+        "OPEN": Ticket.Status.NEW,
+        "NEW": Ticket.Status.NEW,
+        "ASSIGNED": Ticket.Status.ASSIGNED,
+        "ACCEPTED": Ticket.Status.ACCEPTED,
+        "SCHEDULED": Ticket.Status.SCHEDULED,
+        "IN_PROGRESS": Ticket.Status.IN_PROGRESS,
+        "COMPLETE": Ticket.Status.COMPLETED,
+        "COMPLETED": Ticket.Status.COMPLETED,
+        "CLOSED": Ticket.Status.CLOSED,
+        "INVOICED": Ticket.Status.INVOICED,
+        "PAID": Ticket.Status.PAID,
+        "CANCELLED": Ticket.Status.CANCELLED,
+        "CANCELED": Ticket.Status.CANCELLED,
+    }
+    return aliases.get(raw, Ticket.Status.NEW)
+
+
+def _payment_method(value):
+    raw = str(value or "").strip().upper()
+    aliases = {
+        "CARD": Ticket.PaymentMethod.CARD,
+        "CREDIT_CARD": Ticket.PaymentMethod.CARD,
+        "DEBIT_CARD": Ticket.PaymentMethod.CARD,
+        "CASH": Ticket.PaymentMethod.CASH,
+        "CHECK": Ticket.PaymentMethod.OTHER,
+        "ACH": Ticket.PaymentMethod.OTHER,
+        "BANK": Ticket.PaymentMethod.OTHER,
+        "OTHER": Ticket.PaymentMethod.OTHER,
+    }
+    return aliases.get(raw, Ticket.PaymentMethod.OTHER)
+
+
+def _category(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    return ServiceCategory.objects.filter(
+        Q(key__iexact=raw) | Q(name__iexact=raw),
+        is_active=True,
+    ).order_by("-parent_id", "id").first()
+
+
+def _update_customer_history(customer, ticket):
+    service_date = (
+        ticket.completed_at
+        or ticket.scheduled_at
+        or ticket.original_created_at
+        or ticket.created_at
+    )
+    if not customer.first_service_at or (
+        service_date and service_date < customer.first_service_at
+    ):
+        customer.first_service_at = service_date
+    if not customer.last_service_at or (
+        service_date and service_date > customer.last_service_at
+    ):
+        customer.last_service_at = service_date
+        customer.last_ticket = ticket
+
+    customer.ticket_count += 1
+    customer.lifetime_revenue_cents += int(ticket.total_amount_cents or 0)
+
+    if ticket.status in {
+        Ticket.Status.COMPLETED,
+        Ticket.Status.CLOSED,
+        Ticket.Status.INVOICED,
+        Ticket.Status.PAID,
+    }:
+        customer.completed_ticket_count += 1
+    if ticket.status == Ticket.Status.CANCELLED:
+        customer.cancelled_ticket_count += 1
+
+    customer.save()
 
 
 class BusinessDataImportViewSet(viewsets.ReadOnlyModelViewSet):
@@ -294,10 +491,7 @@ class BusinessDataImportViewSet(viewsets.ReadOnlyModelViewSet):
             for row_number, row in rows
         ]
         errors = [
-            {
-                "row": result["row"],
-                "errors": result["errors"],
-            }
+            {"row": result["row"], "errors": result["errors"]}
             for result in results
             if result["errors"]
         ]
@@ -322,6 +516,7 @@ class BusinessDataImportViewSet(viewsets.ReadOnlyModelViewSet):
             column_mapping=mapping,
             headers=headers,
             sample_rows=results[:MAX_SAMPLE_ROWS],
+            payload_rows=results if ready else [],
             total_rows=len(results),
             valid_rows=valid_rows,
             skipped_rows=len(errors),
@@ -335,7 +530,7 @@ class BusinessDataImportViewSet(viewsets.ReadOnlyModelViewSet):
                     1 for value in mapping.values() if value
                 ),
                 "required_next_step": (
-                    "Review and execute this validated batch."
+                    "Execute this validated batch with confirm=true."
                     if ready
                     else "Correct the reported rows or column mapping."
                 ),
@@ -360,3 +555,181 @@ class BusinessDataImportViewSet(viewsets.ReadOnlyModelViewSet):
                 "status": batch.status,
             }
         )
+
+    @action(detail=True, methods=["post"], url_path="execute")
+    def execute(self, request, pk=None):
+        batch = self.get_object()
+        business, _, _ = _business_context(request)
+
+        confirm = str(request.data.get("confirm") or "").strip().lower()
+        if confirm not in {"1", "true", "yes"}:
+            raise ValidationError(
+                {"confirm": "Set confirm=true to execute this import."}
+            )
+
+        if batch.business_id != business.id:
+            return Response(
+                {"detail": "Import batch belongs to another business."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if batch.status != BusinessDataImport.Status.READY:
+            raise ValidationError(
+                {
+                    "status": (
+                        "Only READY import batches can be executed. "
+                        f"Current status: {batch.status}."
+                    )
+                }
+            )
+
+        rows = list(batch.payload_rows or [])
+        if not rows or len(rows) != batch.valid_rows:
+            batch.status = BusinessDataImport.Status.FAILED
+            batch.errors = [
+                {
+                    "row": None,
+                    "errors": [
+                        "Validated payload is missing. Create a new preview batch."
+                    ],
+                }
+            ]
+            batch.error_count = 1
+            batch.completed_at = timezone.now()
+            batch.save(
+                update_fields=[
+                    "status",
+                    "errors",
+                    "error_count",
+                    "completed_at",
+                ]
+            )
+            return Response(
+                self.get_serializer(batch).data,
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        batch.status = BusinessDataImport.Status.PROCESSING
+        batch.save(update_fields=["status"])
+
+        imported = 0
+        matched = 0
+        skipped = 0
+        runtime_errors = []
+        duplicate_ticket_ids = 0
+
+        for item in rows:
+            row_number = item.get("row")
+            values = item.get("values") or {}
+
+            try:
+                with transaction.atomic():
+                    customer, was_matched, _ = _upsert_customer(
+                        business,
+                        request.user,
+                        values,
+                        batch.source_system,
+                        batch.id,
+                    )
+                    if was_matched:
+                        matched += 1
+
+                    if batch.import_type == BusinessDataImport.ImportType.CUSTOMERS:
+                        imported += 1
+                        continue
+
+                    external_ticket_id = str(
+                        values.get("external_ticket_id") or ""
+                    ).strip()
+                    duplicate = Ticket.objects.filter(
+                        assigned_business=business,
+                        source_system__iexact=batch.source_system,
+                        external_ticket_id=external_ticket_id,
+                    ).exists()
+                    if duplicate:
+                        skipped += 1
+                        duplicate_ticket_ids += 1
+                        continue
+
+                    created_at = (
+                        _parse_datetime_value(values.get("created_at"))
+                        or timezone.now()
+                    )
+                    scheduled_at = _parse_datetime_value(
+                        values.get("scheduled_at")
+                    )
+                    completed_at = _parse_datetime_value(
+                        values.get("completed_at")
+                    )
+                    cancelled_at = _parse_datetime_value(
+                        values.get("cancelled_at")
+                    )
+                    paid_at = _parse_datetime_value(values.get("paid_at"))
+                    ticket_status = _ticket_status(values.get("status"))
+                    amount_cents = _money_cents(values.get("total_amount")) or 0
+
+                    ticket = Ticket.objects.create(
+                        customer=request.user,
+                        business_customer=customer,
+                        assigned_business=business,
+                        category=_category(values.get("category")),
+                        is_marketplace=False,
+                        service_address=customer.service_address,
+                        service_zip=customer.service_zip[:10],
+                        status=ticket_status,
+                        payment_method=_payment_method(
+                            values.get("payment_method")
+                        ),
+                        total_amount_cents=amount_cents,
+                        created_at=created_at,
+                        scheduled_at=scheduled_at,
+                        completed_at=completed_at,
+                        cancelled_at=cancelled_at,
+                        paid_at=paid_at,
+                        is_imported=True,
+                        source_system=batch.source_system,
+                        external_ticket_id=external_ticket_id,
+                        import_batch_id=str(batch.id),
+                        original_created_at=created_at,
+                        exclude_from_operational_kpis=True,
+                    )
+
+                    _update_customer_history(customer, ticket)
+                    imported += 1
+
+            except Exception as exc:
+                skipped += 1
+                runtime_errors.append(
+                    {
+                        "row": row_number,
+                        "errors": [str(exc)],
+                    }
+                )
+
+        batch.imported_rows = imported
+        batch.matched_rows = matched
+        batch.skipped_rows = skipped
+        batch.error_count = len(runtime_errors)
+        batch.errors = runtime_errors[:MAX_REPORTED_ERRORS]
+        batch.status = (
+            BusinessDataImport.Status.COMPLETED_WITH_ERRORS
+            if runtime_errors
+            else BusinessDataImport.Status.COMPLETED
+        )
+        batch.completed_at = timezone.now()
+        batch.payload_rows = []
+        batch.summary = {
+            **(batch.summary or {}),
+            "ready_to_import": False,
+            "executed": True,
+            "imported_rows": imported,
+            "matched_customers": matched,
+            "skipped_rows": skipped,
+            "duplicate_ticket_ids": duplicate_ticket_ids,
+            "operational_kpis_excluded": (
+                batch.import_type == BusinessDataImport.ImportType.TICKETS
+            ),
+        }
+        batch.save()
+
+        return Response(self.get_serializer(batch).data)

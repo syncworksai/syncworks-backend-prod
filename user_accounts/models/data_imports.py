@@ -17,8 +17,12 @@ class BusinessDataImport(models.Model):
     class Status(models.TextChoices):
         PREVIEWED = "PREVIEWED", "Previewed"
         READY = "READY", "Ready"
+        PROCESSING = "PROCESSING", "Processing"
         COMPLETED = "COMPLETED", "Completed"
-        COMPLETED_WITH_ERRORS = "COMPLETED_WITH_ERRORS", "Completed with errors"
+        COMPLETED_WITH_ERRORS = (
+            "COMPLETED_WITH_ERRORS",
+            "Completed with errors",
+        )
         FAILED = "FAILED", "Failed"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -40,9 +44,12 @@ class BusinessDataImport(models.Model):
     column_mapping = models.JSONField(default=dict, blank=True)
     headers = models.JSONField(default=list, blank=True)
     sample_rows = models.JSONField(default=list, blank=True)
+    payload_rows = models.JSONField(default=list, blank=True)
 
     total_rows = models.PositiveIntegerField(default=0)
     valid_rows = models.PositiveIntegerField(default=0)
+    imported_rows = models.PositiveIntegerField(default=0)
+    matched_rows = models.PositiveIntegerField(default=0)
     skipped_rows = models.PositiveIntegerField(default=0)
     error_count = models.PositiveIntegerField(default=0)
     errors = models.JSONField(default=list, blank=True)

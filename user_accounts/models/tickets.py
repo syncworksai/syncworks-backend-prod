@@ -51,6 +51,14 @@ class Ticket(models.Model):
         related_name="tickets_as_customer",
     )
 
+    business_customer = models.ForeignKey(
+        "user_accounts.BusinessCustomer",
+        on_delete=models.SET_NULL,
+        related_name="tickets",
+        null=True,
+        blank=True,
+    )
+
     payer_business = models.ForeignKey(
         Business,
         on_delete=models.SET_NULL,
@@ -84,6 +92,31 @@ class Ticket(models.Model):
     )
 
     is_marketplace = models.BooleanField(default=False)
+
+    is_imported = models.BooleanField(default=False, db_index=True)
+    source_system = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    external_ticket_id = models.CharField(
+        max_length=160,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    import_batch_id = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    original_created_at = models.DateTimeField(null=True, blank=True)
+    exclude_from_operational_kpis = models.BooleanField(
+        default=False,
+        db_index=True,
+    )
 
     service_zip = models.CharField(max_length=10, blank=True, default="")
     service_radius_miles = models.PositiveIntegerField(default=25)
@@ -149,6 +182,18 @@ class Ticket(models.Model):
             models.Index(fields=["assigned_business", "archived_at"]),
             models.Index(fields=["is_marketplace", "created_at"]),
             models.Index(fields=["is_marketplace", "status"]),
+            models.Index(
+                fields=["assigned_business", "is_imported", "created_at"],
+                name="ua_ticket_imported_idx",
+            ),
+            models.Index(
+                fields=[
+                    "assigned_business",
+                    "source_system",
+                    "external_ticket_id",
+                ],
+                name="ua_ticket_external_idx",
+            ),
         ]
 
     def __str__(self) -> str:
