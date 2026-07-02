@@ -83,6 +83,10 @@ from user_accounts.viewsets.partner_network import (
     BusinessPartnerRelationshipViewSet,
 )
 from user_accounts.viewsets.partner_work_tickets import PartnerWorkTicketViewSet
+from user_accounts.viewsets.partner_financials import (
+    PartnerWorkChangeOrderViewSet,
+    PartnerWorkEstimateViewSet,
+)
 
 from user_accounts.viewsets.promo import PromoCodeViewSet, PromoRedemptionViewSet
 from user_accounts.viewsets.customer_settings import CustomerSettingsViewSet
@@ -245,6 +249,8 @@ router.register(r"business-projects", BusinessProjectViewSet, basename="business
 router.register(r"business-partner-invitations", BusinessPartnerInvitationViewSet, basename="business-partner-invitations")
 router.register(r"business-partners", BusinessPartnerRelationshipViewSet, basename="business-partners")
 router.register(r"partner-work-tickets", PartnerWorkTicketViewSet, basename="partner-work-tickets")
+router.register(r"partner-work-estimates", PartnerWorkEstimateViewSet, basename="partner-work-estimates")
+router.register(r"partner-change-orders", PartnerWorkChangeOrderViewSet, basename="partner-change-orders")
 router.register(r"me/businesses", MeBusinessesViewSet, basename="me-businesses")
 
 # ----------------------------

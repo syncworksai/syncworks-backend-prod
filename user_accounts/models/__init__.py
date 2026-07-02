@@ -39,6 +39,10 @@ from .partner_network import (
     BusinessPartnerRelationship,
 )
 from .partner_work_tickets import PartnerWorkTicket
+from .partner_financials import (
+    PartnerWorkChangeOrder,
+    PartnerWorkEstimate,
+)
 
 from .service_requests import (
     ServiceRequest,
@@ -212,6 +216,8 @@ __all__ = [
     "BusinessProject",
     "BusinessPartnerRelationship",
     "PartnerWorkTicket",
+    "PartnerWorkChangeOrder",
+    "PartnerWorkEstimate",
     "BusinessPartnerInvitation",
     "ServiceRequest",
     "ServiceRequestPhoto",
