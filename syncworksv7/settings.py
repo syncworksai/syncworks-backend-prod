@@ -743,6 +743,65 @@ OPENAI_NUTRITION_MODEL = (
 
 
 # -------------------------------------------------
+# ElevenLabs / Health voice
+# -------------------------------------------------
+ELEVENLABS_API_KEY = (
+    env(
+        "ELEVENLABS_API_KEY",
+        "",
+    )
+    or ""
+).strip()
+
+ELEVENLABS_HEALTH_VOICE_ID = (
+    env(
+        "ELEVENLABS_HEALTH_VOICE_ID",
+        "4RkE9xiCb4LF4Wd7R4Sp",
+    )
+    or "4RkE9xiCb4LF4Wd7R4Sp"
+).strip()
+
+ELEVENLABS_HEALTH_VOICE_NAME = (
+    env(
+        "ELEVENLABS_HEALTH_VOICE_NAME",
+        "SYNC Fitness Coach",
+    )
+    or "SYNC Fitness Coach"
+).strip()
+
+ELEVENLABS_MODEL_ID = (
+    env(
+        "ELEVENLABS_MODEL_ID",
+        "eleven_multilingual_v2",
+    )
+    or "eleven_multilingual_v2"
+).strip()
+
+ELEVENLABS_OUTPUT_FORMAT = (
+    env(
+        "ELEVENLABS_OUTPUT_FORMAT",
+        "mp3_44100_128",
+    )
+    or "mp3_44100_128"
+).strip()
+
+ELEVENLABS_TIMEOUT_SECONDS = env_int(
+    "ELEVENLABS_TIMEOUT_SECONDS",
+    20,
+)
+
+ELEVENLABS_HEALTH_MAX_CHARACTERS = env_int(
+    "ELEVENLABS_HEALTH_MAX_CHARACTERS",
+    600,
+)
+
+ELEVENLABS_HEALTH_REQUESTS_PER_MINUTE = env_int(
+    "ELEVENLABS_HEALTH_REQUESTS_PER_MINUTE",
+    20,
+)
+
+
+# -------------------------------------------------
 # Stripe live/test inference
 # -------------------------------------------------
 _force = env(

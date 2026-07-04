@@ -7,6 +7,10 @@ from .views import (
     NutritionAnalyzeView,
     RedeemHealthAccessCodeView,
 )
+from .voice_views import (
+    HealthVoiceOptionsView,
+    HealthVoiceSpeakView,
+)
 
 app_name = "customer_health"
 
@@ -25,5 +29,15 @@ urlpatterns = [
         "nutrition/analyze/",
         NutritionAnalyzeView.as_view(),
         name="nutrition-analyze",
+    ),
+    path(
+        "voice/options/",
+        HealthVoiceOptionsView.as_view(),
+        name="voice-options",
+    ),
+    path(
+        "voice/speak/",
+        HealthVoiceSpeakView.as_view(),
+        name="voice-speak",
     ),
 ]
