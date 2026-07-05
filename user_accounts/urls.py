@@ -43,6 +43,8 @@ from user_accounts.viewsets.platform_broadcasts import (
 from user_accounts.viewsets.platform_console import (
     PlatformBillingSummaryViewSet,
     PlatformBusinessesViewSet,
+    PlatformDeveloperAgentRunAPIView,
+    PlatformDeveloperAgentStatusAPIView,
     PlatformKpiTimeseriesViewSet,
     PlatformUsersViewSet,
 )
@@ -561,6 +563,16 @@ urlpatterns = [
     path("platform/metrics/summary/", PlatformMetricsSummaryAPIView.as_view(), name="platform-metrics-summary"),
     path("platform/metrics/alerts/", PlatformMetricsAlertsAPIView.as_view(), name="platform-metrics-alerts"),
     path("platform/broadcasts/", PlatformBroadcastAPIView.as_view(), name="platform-broadcasts"),
+    path(
+        "platform/developer-agent/run/",
+        PlatformDeveloperAgentRunAPIView.as_view(),
+        name="platform-developer-agent-run",
+    ),
+    path(
+        "platform/developer-agent/status/",
+        PlatformDeveloperAgentStatusAPIView.as_view(),
+        name="platform-developer-agent-status",
+    ),
 
     # ----------------------------
     # Stripe Connect Express
