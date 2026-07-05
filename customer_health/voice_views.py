@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
 from typing import Any
 
 import requests
@@ -75,6 +77,13 @@ ENERGY_SETTINGS: dict[str, dict[str, Any]] = {
 
 def _setting(name: str, default: str = "") -> str:
     return str(getattr(settings, name, default) or default).strip()
+
+
+def _secret_fingerprint(value: str) -> str:
+    clean = str(value or "")
+    return hashlib.sha256(
+        clean.encode("utf-8")
+    ).hexdigest()[:12]
 
 
 def _voice_registry() -> dict[str, dict[str, str]]:
@@ -280,9 +289,38 @@ class HealthVoiceSpeakView(APIView):
             )
 
         if not upstream.ok:
+            upstream_body = upstream.text[:1200]
+            request_id = (
+                upstream.headers.get("request-id")
+                or upstream.headers.get("x-request-id")
+                or ""
+            )
+            env_key = str(
+                os.environ.get("ELEVENLABS_API_KEY", "")
+                or ""
+            ).strip()
+
             logger.warning(
-                "ElevenLabs returned status %s for Health voice.",
+                (
+                    "ElevenLabs Health voice failed. "
+                    "status=%s request_id=%s "
+                    "voice_id=%s model_id=%s "
+                    "settings_key_length=%s "
+                    "settings_key_fingerprint=%s "
+                    "env_key_length=%s "
+                    "env_key_fingerprint=%s "
+                    "same_key=%s response=%s"
+                ),
                 upstream.status_code,
+                request_id or "none",
+                voice["id"],
+                _model_id(),
+                len(api_key),
+                _secret_fingerprint(api_key),
+                len(env_key),
+                _secret_fingerprint(env_key),
+                api_key == env_key,
+                upstream_body,
             )
             return Response(
                 {
