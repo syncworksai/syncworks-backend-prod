@@ -1,5 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any
@@ -7,6 +8,7 @@ from typing import Any
 import requests
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -23,6 +25,68 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+
+SYNCWORKS_AI_OWNER_EMAILS = {
+    "jacoblord7@outlook.com",
+    "syncworks.ai@gmail.com",
+}
+
+
+def _health_ai_promo_code() -> str:
+    return str(
+        getattr(settings, "HEALTH_AI_PROMO_CODE", "AIFIT26")
+        or "AIFIT26"
+    ).strip().upper()
+
+
+def _normalized_user_email(user) -> str:
+    return str(getattr(user, "email", "") or "").strip().lower()
+
+
+def _is_health_ai_owner(user) -> bool:
+    return _normalized_user_email(user) in SYNCWORKS_AI_OWNER_EMAILS
+
+
+def _health_ai_access(profile: CustomerHealthProfile) -> dict[str, Any]:
+    data = dict(profile.profile_json or {})
+    owner_access = _is_health_ai_owner(profile.user)
+    paid_access = bool(data.get("health_ai_subscription_active"))
+    complimentary_access = bool(data.get("health_ai_complimentary_access"))
+    promo_access = bool(data.get("health_ai_promo_redeemed"))
+
+    return {
+        "has_ai_access": bool(
+            owner_access
+            or paid_access
+            or complimentary_access
+            or promo_access
+        ),
+        "access_source": (
+            "owner"
+            if owner_access
+            else "subscription"
+            if paid_access
+            else "complimentary"
+            if complimentary_access
+            else "promo"
+            if promo_access
+            else "none"
+        ),
+        "owner_access": owner_access,
+        "subscription_active": paid_access,
+        "promo_redeemed": promo_access,
+        "plan_name": "Fitness + Nutrition AI",
+        "monthly_price": "9.99",
+        "manual_logging_free": True,
+    }
+
+
+def _safe_key_fingerprint(api_key: str) -> str:
+    if not api_key:
+        return ""
+
+    digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+    return f"sha256:{digest[:10]}"
 
 NUTRITION_RESPONSE_SCHEMA = {
     "type": "object",
@@ -604,4 +668,65 @@ class RedeemHealthAccessCodeView(APIView):
                 "lifetime_access": True,
             },
             status=status.HTTP_200_OK,
+        )
+
+
+class HealthAIStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile, _created = CustomerHealthProfile.objects.get_or_create(
+            user=request.user
+        )
+        api_key = _openai_api_key()
+        access = _health_ai_access(profile)
+
+        return Response(
+            {
+                **access,
+                "openai_configured": bool(api_key),
+                "nutrition_model": _nutrition_model(),
+                "key_fingerprint": _safe_key_fingerprint(api_key),
+                "nutrition_ai_available": bool(
+                    api_key and access["has_ai_access"]
+                ),
+                "fitness_ai_available": False,
+                "fitness_ai_status": "gateway_not_connected",
+                "photo_analysis_available": False,
+                "photo_analysis_status": "planned",
+            }
+        )
+
+
+class RedeemHealthAIPromoView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        supplied = str(request.data.get("code") or "").strip().upper()
+
+        if not supplied or supplied != _health_ai_promo_code():
+            return Response(
+                {"detail": "That promotional code is not valid."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        profile, _created = CustomerHealthProfile.objects.get_or_create(
+            user=request.user
+        )
+        data = dict(profile.profile_json or {})
+        data["health_ai_promo_redeemed"] = True
+        data["health_ai_promo_code"] = supplied
+        data["health_ai_promo_redeemed_at"] = timezone.now().isoformat()
+        data["health_ai_intro_price"] = "0.99"
+        data["health_ai_standard_price"] = "9.99"
+        profile.profile_json = data
+        profile.save(update_fields=["profile_json", "updated_at"])
+
+        return Response(
+            {
+                **_health_ai_access(profile),
+                "intro_price": "0.99",
+                "standard_price": "9.99",
+                "message": "Promotional AI access has been applied.",
+            }
         )

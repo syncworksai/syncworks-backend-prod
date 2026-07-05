@@ -4,7 +4,9 @@ from django.urls import path
 
 from .views import (
     CustomerHealthMeView,
+    HealthAIStatusView,
     NutritionAnalyzeView,
+    RedeemHealthAIPromoView,
     RedeemHealthAccessCodeView,
 )
 from .voice_views import (
@@ -15,6 +17,16 @@ from .voice_views import (
 app_name = "customer_health"
 
 urlpatterns = [
+    path(
+        "ai/status/",
+        HealthAIStatusView.as_view(),
+        name="ai-status",
+    ),
+    path(
+        "ai/redeem-promo/",
+        RedeemHealthAIPromoView.as_view(),
+        name="ai-redeem-promo",
+    ),
     path(
         "me/",
         CustomerHealthMeView.as_view(),
