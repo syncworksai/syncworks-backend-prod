@@ -5,6 +5,7 @@ from django.urls import path
 from .views import (
     CustomerHealthMeView,
     HealthAIStatusView,
+    HealthCoachChatView,
     NutritionAnalyzeView,
     RedeemHealthAIPromoView,
     RedeemHealthAccessCodeView,
@@ -21,6 +22,11 @@ urlpatterns = [
         "ai/status/",
         HealthAIStatusView.as_view(),
         name="ai-status",
+    ),
+    path(
+        "coach/chat/",
+        HealthCoachChatView.as_view(),
+        name="coach-chat",
     ),
     path(
         "ai/redeem-promo/",

@@ -730,3 +730,203 @@ class RedeemHealthAIPromoView(APIView):
                 "message": "Promotional AI access has been applied.",
             }
         )
+
+
+class HealthCoachChatView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        profile, _created = CustomerHealthProfile.objects.get_or_create(
+            user=request.user
+        )
+        access = _health_ai_access(profile)
+
+        if not access["has_ai_access"]:
+            return Response(
+                {
+                    "detail": (
+                        "OpenAI Fitness Coach is part of Fitness + "
+                        "Nutrition AI. Manual workout planning remains free."
+                    ),
+                    "code": "health_ai_upgrade_required",
+                    "upgrade_required": True,
+                    "plan_name": "Fitness + Nutrition AI",
+                    "monthly_price": "9.99",
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+
+        api_key = _openai_api_key()
+
+        if not api_key:
+            return Response(
+                {
+                    "detail": (
+                        "OpenAI Fitness Coach is not configured on the "
+                        "backend."
+                    ),
+                    "code": "health_ai_not_configured",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        user_text = str(
+            request.data.get("user_text") or ""
+        ).strip()
+
+        if not user_text:
+            return Response(
+                {"detail": "Enter a message for the coach."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(user_text) > 1500:
+            return Response(
+                {
+                    "detail": (
+                        "Coach messages must be 1,500 characters or fewer."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        supplied_profile = request.data.get("profile")
+        supplied_snapshot = request.data.get("snapshot")
+        supplied_history = request.data.get("history")
+
+        safe_profile = (
+            supplied_profile
+            if isinstance(supplied_profile, dict)
+            else {}
+        )
+        safe_snapshot = (
+            supplied_snapshot
+            if isinstance(supplied_snapshot, dict)
+            else {}
+        )
+        safe_history = (
+            supplied_history[-12:]
+            if isinstance(supplied_history, list)
+            else []
+        )
+
+        context = {
+            "profile": safe_profile,
+            "snapshot": safe_snapshot,
+            "recent_history": safe_history,
+            "message": user_text,
+        }
+
+        system_prompt = (
+            "You are SYNC, the SyncWorks AI Fitness Coach. Be concise, "
+            "encouraging, practical, and personalized. Use the supplied "
+            "fitness profile, goals, recent workouts, readiness, pain "
+            "limits, sleep, nutrition, available equipment, and schedule. "
+            "Never diagnose disease or override a clinician. For chest "
+            "pain, severe shortness of breath, fainting, neurological "
+            "symptoms, or a serious new injury, tell the user to stop and "
+            "seek appropriate medical care. Never encourage training "
+            "through sharp or worsening pain. Do not invent completed "
+            "workouts or measurements. You may recommend adjustments, but "
+            "SyncWorks deterministic workout logic will validate any plan "
+            "before it is saved. Answer the user's current question first. "
+            "Use short paragraphs and actionable guidance."
+        )
+
+        request_payload = {
+            "model": str(
+                getattr(
+                    settings,
+                    "OPENAI_HEALTH_COACH_MODEL",
+                    "gpt-4.1-mini",
+                )
+                or "gpt-4.1-mini"
+            ).strip(),
+            "input": [
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": system_prompt,
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": json.dumps(
+                                context,
+                                separators=(",", ":"),
+                                default=str,
+                            )[:12000],
+                        }
+                    ],
+                },
+            ],
+            "max_output_tokens": 700,
+        }
+
+        try:
+            upstream = requests.post(
+                OPENAI_RESPONSES_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=request_payload,
+                timeout=35,
+            )
+        except requests.RequestException:
+            logger.exception("OpenAI Health Coach request failed")
+            return Response(
+                {
+                    "detail": (
+                        "OpenAI Fitness Coach is temporarily unavailable."
+                    ),
+                    "code": "health_ai_unavailable",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        if upstream.status_code >= 400:
+            logger.warning(
+                "OpenAI Health Coach returned status %s: %s",
+                upstream.status_code,
+                upstream.text[:500],
+            )
+            return Response(
+                {
+                    "detail": (
+                        "OpenAI Fitness Coach could not complete this "
+                        "request."
+                    ),
+                    "code": "health_ai_provider_error",
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        payload = upstream.json()
+        reply = _extract_response_text(payload)
+
+        if not reply:
+            return Response(
+                {
+                    "detail": (
+                        "OpenAI Fitness Coach returned an empty response."
+                    ),
+                    "code": "health_ai_empty_response",
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response(
+            {
+                "reply": reply,
+                "provider": "openai",
+                "model": request_payload["model"],
+                "validated_by": "syncworks_local_engine",
+            }
+        )
