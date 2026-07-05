@@ -18,7 +18,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from user_accounts.models import Business, PlatformBillingProfile, Notification
-from user_accounts.permissions import IsGodMode  # âœ… import from module (NOT package)
+from user_accounts.permissions import IsGodMode  # ✅ import from module (NOT package)
 
 from user_accounts.serializers.platform_console import (
     PlatformUserSerializer,
@@ -76,7 +76,7 @@ class PlatformBusinessesViewSet(viewsets.ReadOnlyModelViewSet):
 
         profile, _ = PlatformBillingProfile.objects.get_or_create(business=biz)
 
-        # âœ… Support both implementations: profile.lock() helper OR direct fields
+        # ✅ Support both implementations: profile.lock() helper OR direct fields
         if hasattr(profile, "lock") and callable(getattr(profile, "lock")):
             profile.lock(reason=reason)
         else:
@@ -97,7 +97,7 @@ class PlatformBusinessesViewSet(viewsets.ReadOnlyModelViewSet):
 
         profile, _ = PlatformBillingProfile.objects.get_or_create(business=biz)
 
-        # âœ… Support both implementations: profile.unlock() helper OR direct fields
+        # ✅ Support both implementations: profile.unlock() helper OR direct fields
         if hasattr(profile, "unlock") and callable(getattr(profile, "unlock")):
             profile.unlock()
         else:
