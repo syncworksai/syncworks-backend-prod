@@ -37,6 +37,7 @@ DEVELOPER_AGENT_ALLOWLIST = {
     "business-setup-ui-001": "tasks/approved/business-setup-ui-001.json",
     "developer-agent-smoke-test-001": "tasks/approved/developer-agent-smoke-test-001.json",
     "agent-control-center-foundation-001": "tasks/approved/agent-control-center-foundation-001.json",
+    "agent-control-center-foundation-002": "tasks/approved/agent-control-center-foundation-002.json",
 }
 
 
