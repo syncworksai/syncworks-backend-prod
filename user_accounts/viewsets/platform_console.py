@@ -36,6 +36,7 @@ DEVELOPER_AGENT_ALLOWLIST = {
     "god-mode-developer-agent-panel-001": "tasks/approved/god-mode-developer-agent-panel-001.json",
     "business-setup-ui-001": "tasks/approved/business-setup-ui-001.json",
     "developer-agent-smoke-test-001": "tasks/approved/developer-agent-smoke-test-001.json",
+    "agent-control-center-foundation-001": "tasks/approved/agent-control-center-foundation-001.json",
 }
 
 
