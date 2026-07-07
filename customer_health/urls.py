@@ -4,6 +4,8 @@ from django.urls import path
 
 from .views import (
     CustomerHealthMeView,
+    HealthBetaFeedbackView,
+    HealthGodModeFeedbackListView,
     HealthAIStatusView,
     HealthCoachChatView,
     NutritionAnalyzeView,
@@ -19,6 +21,15 @@ app_name = "customer_health"
 
 urlpatterns = [
     path(
+        "beta-feedback/",
+        HealthBetaFeedbackView.as_view(),
+        name="beta-feedback",
+    ),
+    path(
+        "god-mode/beta-feedback/",
+        HealthGodModeFeedbackListView.as_view(),
+        name="god-mode-beta-feedback",
+    ),    path(
         "ai/status/",
         HealthAIStatusView.as_view(),
         name="ai-status",

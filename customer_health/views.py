@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hashlib
 import json
@@ -16,8 +16,9 @@ from rest_framework.views import APIView
 
 from user_accounts.models.customer_settings import CustomerSettings
 
-from .models import CustomerHealthProfile
+from .models import CustomerHealthFeedback, CustomerHealthProfile
 from .serializers import (
+    CustomerHealthFeedbackSerializer,
     CustomerHealthProfileSerializer,
     RedeemHealthAccessCodeSerializer,
 )
@@ -373,6 +374,56 @@ def _normalize_analysis(
         ],
     }
 
+
+
+class HealthBetaFeedbackView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        payload = dict(request.data or {})
+        payload["runtime_json"] = (
+            payload.get("runtime_json")
+            if isinstance(payload.get("runtime_json"), dict)
+            else payload.get("runtime")
+            if isinstance(payload.get("runtime"), dict)
+            else {}
+        )
+        payload["extra_json"] = (
+            payload.get("extra_json")
+            if isinstance(payload.get("extra_json"), dict)
+            else {}
+        )
+
+        serializer = CustomerHealthFeedbackSerializer(data=payload)
+        serializer.is_valid(raise_exception=True)
+        feedback = serializer.save(user=request.user)
+
+        return Response(
+            CustomerHealthFeedbackSerializer(feedback).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class HealthGodModeFeedbackListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not _is_health_ai_owner(request.user):
+            return Response(
+                {"detail": "God Mode access required."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        queryset = CustomerHealthFeedback.objects.select_related("user").all()[:100]
+        serializer = CustomerHealthFeedbackSerializer(queryset, many=True)
+
+        return Response(
+            {
+                "count": len(serializer.data),
+                "results": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 class CustomerHealthMeView(APIView):
     permission_classes = [IsAuthenticated]
