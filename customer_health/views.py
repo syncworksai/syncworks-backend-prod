@@ -425,6 +425,52 @@ class HealthGodModeFeedbackListView(APIView):
             status=status.HTTP_200_OK,
         )
 
+
+class HealthGodModeFeedbackDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, feedback_id: int):
+        if not _is_health_ai_owner(request.user):
+            return Response(
+                {"detail": "God Mode access required."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            feedback = CustomerHealthFeedback.objects.select_related("user").get(
+                id=feedback_id
+            )
+        except CustomerHealthFeedback.DoesNotExist:
+            return Response(
+                {"detail": "Health feedback report was not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        next_status = str(request.data.get("status") or "").strip().upper()
+        allowed_statuses = {
+            CustomerHealthFeedback.STATUS_OPEN,
+            CustomerHealthFeedback.STATUS_REVIEWED,
+            CustomerHealthFeedback.STATUS_CLOSED,
+        }
+
+        if next_status not in allowed_statuses:
+            return Response(
+                {
+                    "detail": (
+                        "Status must be OPEN, REVIEWED, or CLOSED."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        feedback.status = next_status
+        feedback.save(update_fields=["status", "updated_at"])
+
+        return Response(
+            CustomerHealthFeedbackSerializer(feedback).data,
+            status=status.HTTP_200_OK,
+        )
+
 class CustomerHealthMeView(APIView):
     permission_classes = [IsAuthenticated]
 

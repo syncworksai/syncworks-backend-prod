@@ -6,6 +6,7 @@ from .views import (
     CustomerHealthMeView,
     HealthBetaFeedbackView,
     HealthGodModeFeedbackListView,
+    HealthGodModeFeedbackDetailView,
     HealthAIStatusView,
     HealthCoachChatView,
     NutritionAnalyzeView,
@@ -29,7 +30,13 @@ urlpatterns = [
         "god-mode/beta-feedback/",
         HealthGodModeFeedbackListView.as_view(),
         name="god-mode-beta-feedback",
-    ),    path(
+    ),
+    path(
+        "god-mode/beta-feedback/<int:feedback_id>/",
+        HealthGodModeFeedbackDetailView.as_view(),
+        name="god-mode-beta-feedback-detail",
+    ),
+    path(
         "ai/status/",
         HealthAIStatusView.as_view(),
         name="ai-status",
