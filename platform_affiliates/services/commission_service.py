@@ -36,6 +36,17 @@ def _calculate_commission(
     )
 
 
+def _existing_commission(
+    *,
+    revenue_source: str,
+    source_reference: str,
+) -> AffiliateCommissionLedger | None:
+    return AffiliateCommissionLedger.objects.filter(
+        revenue_source=revenue_source,
+        source_reference=source_reference,
+    ).first()
+
+
 @transaction.atomic
 def record_syncworks_revenue_commission(
     *,
@@ -52,10 +63,10 @@ def record_syncworks_revenue_commission(
     if not source_reference:
         raise ValueError("source_reference is required.")
 
-    existing = AffiliateCommissionLedger.objects.filter(
+    existing = _existing_commission(
         revenue_source=revenue_source,
         source_reference=source_reference,
-    ).first()
+    )
 
     if existing:
         return existing
@@ -73,7 +84,6 @@ def record_syncworks_revenue_commission(
     affiliate = attribution.affiliate
 
     net_amount = _money(net_syncworks_revenue_amount)
-
     gross_amount = _money(gross_revenue_amount)
 
     commission_amount = _calculate_commission(
@@ -93,4 +103,70 @@ def record_syncworks_revenue_commission(
         source_reference=source_reference,
         source_date=source_date or timezone.localdate(),
         memo=memo or "",
+    )
+
+
+@transaction.atomic
+def record_user_health_subscription_commission(
+    *,
+    user,
+    net_syncworks_revenue_amount,
+    source_reference: str,
+    source_date=None,
+    gross_revenue_amount="0.00",
+    memo: str = "",
+    health_ai: bool = False,
+) -> AffiliateCommissionLedger | None:
+    """
+    Records commission for a referred Personal/Health user.
+
+    This is intentionally user-based instead of business-based because Health is
+    the consumer adoption product. It uses User.referred_by_affiliate, which is
+    already populated during registration when an active affiliate code is used.
+    """
+
+    source_reference = str(source_reference or "").strip()
+
+    if not source_reference:
+        raise ValueError("source_reference is required.")
+
+    revenue_source = (
+        RevenueSource.HEALTH_AI_SUBSCRIPTION
+        if health_ai
+        else RevenueSource.HEALTH_SUBSCRIPTION
+    )
+
+    existing = _existing_commission(
+        revenue_source=revenue_source,
+        source_reference=source_reference,
+    )
+
+    if existing:
+        return existing
+
+    affiliate = getattr(user, "referred_by_affiliate", None)
+
+    if not affiliate:
+        return None
+
+    net_amount = _money(net_syncworks_revenue_amount)
+    gross_amount = _money(gross_revenue_amount)
+
+    commission_amount = _calculate_commission(
+        net_amount,
+        affiliate.commission_rate_bps,
+    )
+
+    return AffiliateCommissionLedger.objects.create(
+        affiliate=affiliate,
+        business=None,
+        attribution=None,
+        revenue_source=revenue_source,
+        gross_revenue_amount=gross_amount,
+        net_syncworks_revenue_amount=net_amount,
+        commission_rate_bps=affiliate.commission_rate_bps,
+        commission_amount=commission_amount,
+        source_reference=source_reference,
+        source_date=source_date or timezone.localdate(),
+        memo=memo or f"Health subscription commission for user {getattr(user, 'id', '')}",
     )

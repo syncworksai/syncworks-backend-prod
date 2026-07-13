@@ -20,6 +20,8 @@ class RevenueSource(models.TextChoices):
     PLATFORM_FEE = "PLATFORM_FEE", "Platform Fee"
     SBO_SUBSCRIPTION = "SBO_SUBSCRIPTION", "SBO Subscription"
     GROWTH_OS_SUBSCRIPTION = "GROWTH_OS_SUBSCRIPTION", "Growth OS Subscription"
+    HEALTH_SUBSCRIPTION = "HEALTH_SUBSCRIPTION", "Health Subscription"
+    HEALTH_AI_SUBSCRIPTION = "HEALTH_AI_SUBSCRIPTION", "Health AI Subscription"
     OTHER_SYNCWORKS_REVENUE = "OTHER_SYNCWORKS_REVENUE", "Other SyncWorks Revenue"
 
 
