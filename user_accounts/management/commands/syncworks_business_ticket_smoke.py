@@ -210,6 +210,7 @@ class Command(BaseCommand):
                 headers["HTTP_X_BUSINESS_ID"] = business_id
 
             try:
+                headers["HTTP_HOST"] = "localhost"
                 response = client.get(check.path, **headers)
                 status_code = response.status_code
 
