@@ -7,6 +7,7 @@ from django.urls import include, path, re_path
 from django.views.static import serve
 
 urlpatterns = [
+    path("api/v1/health/", include("health_profiles.urls")),
     path("admin/", admin.site.urls),
 
     path(

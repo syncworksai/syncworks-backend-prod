@@ -189,6 +189,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 # Applications
 # -------------------------------------------------
 INSTALLED_APPS = [
+    "health_profiles",
     # Django
     "django.contrib.admin",
     "django.contrib.auth",
@@ -896,4 +897,3 @@ LOGGING = {
         },
     },
 }
-
