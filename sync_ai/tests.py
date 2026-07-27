@@ -19,6 +19,7 @@ from rest_framework.test import APITestCase
 class SyncAITests(APITestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
+            username="sync-test-user",
             email="sync-test@example.com",
             password="test-password-123",
         )
