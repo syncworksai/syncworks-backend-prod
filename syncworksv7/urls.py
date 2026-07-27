@@ -8,6 +8,7 @@ from django.views.static import serve
 
 urlpatterns = [
     path("api/v1/health/", include("health_profiles.urls")),
+    path("api/v1/sync-ai/", include("sync_ai.urls")),
     path("admin/", admin.site.urls),
 
     path(
