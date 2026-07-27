@@ -15,7 +15,10 @@ class WorkspaceContext:
 
 
 def _customer_profile(user) -> dict[str, Any]:
-    profile = getattr(user, "customer_profile", None)
+    try:
+        profile = user.customer_profile
+    except Exception:
+        profile = None
     settings_obj = CustomerSettings.objects.filter(user=user).first()
     return {
         "first_name": getattr(profile, "first_name", "") or getattr(user, "first_name", ""),
