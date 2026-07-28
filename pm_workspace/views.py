@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.db import transaction
@@ -173,7 +175,7 @@ class PMProjectViewSet(viewsets.ModelViewSet):
             "overdue": active.filter(target_date__lt=today).count(),
             "blocked": active.exclude(blocker="").count(),
             "awaiting_approval": active.filter(status=PMProject.Status.APPROVAL).count(),
-            "due_soon": active.filter(target_date__gte=today, target_date__lte=today + timezone.timedelta(days=14)).count(),
+            "due_soon": active.filter(target_date__gte=today, target_date__lte=today + timedelta(days=14)).count(),
             "completed": qs.filter(status=PMProject.Status.COMPLETED).count(),
             "budget_total": str(budget),
             "actual_total": str(actual),
