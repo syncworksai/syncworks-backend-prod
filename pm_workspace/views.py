@@ -6,7 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -33,6 +33,22 @@ def _requested_workspace(request):
     return workspace
 
 
+def _user_defaults(user):
+    full_name = str(getattr(user, "get_full_name", lambda: "")() or "").strip()
+    if not full_name:
+        full_name = " ".join(filter(None, [getattr(user, "first_name", ""), getattr(user, "last_name", "")])).strip()
+    email = str(getattr(user, "email", "") or "").strip()
+    phone = str(getattr(user, "phone", "") or getattr(user, "phone_number", "") or "").strip()
+    return {
+        "manager_name": full_name,
+        "sender_name": full_name,
+        "office_email": email,
+        "tenant_email": email,
+        "reply_to_email": email,
+        "phone": phone,
+    }
+
+
 class PMWorkspaceViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = PMWorkspaceSerializer
@@ -41,7 +57,23 @@ class PMWorkspaceViewSet(viewsets.ModelViewSet):
         return PMWorkspace.objects.filter(owner=self.request.user).order_by("name", "id")
 
     def perform_create(self, serializer):
+        existing = PMWorkspace.objects.filter(owner=self.request.user, is_active=True).count()
+        if existing >= 1 and not (self.request.user.is_staff or self.request.user.is_superuser):
+            raise ValidationError({
+                "detail": "Your first portfolio is free. Additional portfolios require the $9.99 monthly plan.",
+                "code": "PM_ADDITIONAL_PORTFOLIO_PAYMENT_REQUIRED",
+                "monthly_price": "9.99",
+            })
         serializer.save(owner=self.request.user)
+
+    @action(detail=False, methods=["get"], url_path="defaults")
+    def defaults(self, request):
+        return Response({
+            **_user_defaults(request.user),
+            "portfolio_count": PMWorkspace.objects.filter(owner=request.user, is_active=True).count(),
+            "free_portfolios": 1,
+            "additional_portfolio_price": "9.99",
+        })
 
     @action(detail=False, methods=["get", "patch"], url_path="current")
     def current(self, request):
@@ -49,12 +81,18 @@ class PMWorkspaceViewSet(viewsets.ModelViewSet):
         workspace = _workspace_for_user(request.user, workspace_id)
         if request.method == "GET":
             if not workspace:
-                return Response({"detail": "No PM workspace exists yet."}, status=status.HTTP_404_NOT_FOUND)
+                return Response({"detail": "No PM workspace exists yet.", "defaults": _user_defaults(request.user)}, status=status.HTTP_404_NOT_FOUND)
             return Response(self.get_serializer(workspace).data)
 
         if workspace:
             serializer = self.get_serializer(workspace, data=request.data, partial=True)
         else:
+            if PMWorkspace.objects.filter(owner=request.user, is_active=True).exists() and not (request.user.is_staff or request.user.is_superuser):
+                return Response({
+                    "detail": "Your first portfolio is free. Additional portfolios require the $9.99 monthly plan.",
+                    "code": "PM_ADDITIONAL_PORTFOLIO_PAYMENT_REQUIRED",
+                    "monthly_price": "9.99",
+                }, status=status.HTTP_402_PAYMENT_REQUIRED)
             serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(owner=request.user)
