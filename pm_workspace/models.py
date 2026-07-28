@@ -52,19 +52,91 @@ class PMProperty(models.Model):
     zip = models.CharField(max_length=12)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.HEALTHY)
     notes = models.TextField(blank=True)
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="created_pm_properties",
-    )
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_pm_properties")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["name", "id"]
         indexes = [models.Index(fields=["workspace", "status"])]
+
+
+class PMProject(models.Model):
+    class Status(models.TextChoices):
+        REQUESTED = "REQUESTED", "Requested"
+        PLANNING = "PLANNING", "Planning"
+        APPROVAL = "APPROVAL", "Quotes and approvals"
+        SCHEDULED = "SCHEDULED", "Scheduled"
+        IN_PROGRESS = "IN_PROGRESS", "In progress"
+        REVIEW = "REVIEW", "Inspection or review"
+        COMPLETED = "COMPLETED", "Completed"
+        ARCHIVED = "ARCHIVED", "Archived"
+
+    class Priority(models.TextChoices):
+        LOW = "LOW", "Low"
+        NORMAL = "NORMAL", "Normal"
+        HIGH = "HIGH", "High"
+        URGENT = "URGENT", "Urgent"
+
+    class AssignmentType(models.TextChoices):
+        INTERNAL = "INTERNAL", "Internal"
+        EXTERNAL = "EXTERNAL", "External"
+        UNASSIGNED = "UNASSIGNED", "Unassigned"
+
+    workspace = models.ForeignKey(PMWorkspace, on_delete=models.CASCADE, related_name="projects")
+    property = models.ForeignKey(PMProperty, null=True, blank=True, on_delete=models.SET_NULL, related_name="projects")
+    unit_label = models.CharField(max_length=80, blank=True)
+    title = models.CharField(max_length=180)
+    description = models.TextField(blank=True)
+    category = models.CharField(max_length=100, blank=True)
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.REQUESTED)
+    priority = models.CharField(max_length=16, choices=Priority.choices, default=Priority.NORMAL)
+    progress_percent = models.PositiveSmallIntegerField(default=0)
+    start_date = models.DateField(null=True, blank=True)
+    target_date = models.DateField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    assignment_type = models.CharField(max_length=16, choices=AssignmentType.choices, default=AssignmentType.UNASSIGNED)
+    internal_assignee_name = models.CharField(max_length=180, blank=True)
+    internal_assignee_email = models.EmailField(blank=True)
+    external_assignee_name = models.CharField(max_length=180, blank=True)
+    external_assignee_email = models.EmailField(blank=True)
+    vendor_title = models.CharField(max_length=180, blank=True)
+    vendor_contact_name = models.CharField(max_length=180, blank=True)
+    vendor_email = models.EmailField(blank=True)
+    contract_reference = models.CharField(max_length=180, blank=True)
+    budget_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    actual_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    blocker = models.TextField(blank=True)
+    next_action = models.TextField(blank=True)
+    next_action_due = models.DateField(null=True, blank=True)
+    update_recipient_emails = models.TextField(blank=True)
+    custom_data = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_pm_projects")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+        indexes = [
+            models.Index(fields=["workspace", "status"]),
+            models.Index(fields=["workspace", "target_date"]),
+        ]
+
+
+class PMProjectUpdate(models.Model):
+    project = models.ForeignKey(PMProject, on_delete=models.CASCADE, related_name="updates")
+    note = models.TextField()
+    status = models.CharField(max_length=24, choices=PMProject.Status.choices, blank=True)
+    progress_percent = models.PositiveSmallIntegerField(null=True, blank=True)
+    blocker = models.TextField(blank=True)
+    next_action = models.TextField(blank=True)
+    next_action_due = models.DateField(null=True, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="pm_project_updates")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
 
 
 class PMTenant(models.Model):
