@@ -3,6 +3,7 @@ from __future__ import annotations
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.db import transaction
+from django.db.models import Q, Sum
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -10,8 +11,15 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import PMProperty, PMTenant, PMTenantInvitation, PMWorkspace
-from .serializers import PMPropertySerializer, PMTenantInvitationSerializer, PMTenantSerializer, PMWorkspaceSerializer
+from .models import PMProject, PMProjectUpdate, PMProperty, PMTenant, PMTenantInvitation, PMWorkspace
+from .serializers import (
+    PMProjectSerializer,
+    PMProjectUpdateSerializer,
+    PMPropertySerializer,
+    PMTenantInvitationSerializer,
+    PMTenantSerializer,
+    PMWorkspaceSerializer,
+)
 
 
 def _workspace_for_user(user, workspace_id=None):
@@ -111,6 +119,134 @@ class PMPropertyViewSet(viewsets.ModelViewSet):
         serializer.save(workspace=_requested_workspace(self.request), created_by=self.request.user)
 
 
+class PMProjectViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = PMProjectSerializer
+
+    def get_queryset(self):
+        workspace = _requested_workspace(self.request)
+        qs = PMProject.objects.filter(workspace=workspace).select_related("property", "created_by").prefetch_related("updates__created_by")
+        archived = str(self.request.query_params.get("archived", "false")).lower() == "true"
+        qs = qs.filter(status=PMProject.Status.ARCHIVED) if archived else qs.exclude(status=PMProject.Status.ARCHIVED)
+        search = str(self.request.query_params.get("search") or "").strip()
+        if search:
+            qs = qs.filter(Q(title__icontains=search) | Q(description__icontains=search) | Q(vendor_title__icontains=search) | Q(property__name__icontains=search))
+        status_filter = str(self.request.query_params.get("status") or "").strip().upper()
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return qs.order_by("-updated_at", "-id")
+
+    def perform_create(self, serializer):
+        workspace = _requested_workspace(self.request)
+        project = serializer.save(workspace=workspace, created_by=self.request.user)
+        PMProjectUpdate.objects.create(
+            project=project,
+            note="Project created.",
+            status=project.status,
+            progress_percent=project.progress_percent,
+            next_action=project.next_action,
+            next_action_due=project.next_action_due,
+            created_by=self.request.user,
+        )
+
+    def perform_update(self, serializer):
+        project = serializer.save()
+        if project.status == PMProject.Status.COMPLETED and not project.completed_at:
+            project.completed_at = timezone.now()
+            project.progress_percent = 100
+            project.save(update_fields=["completed_at", "progress_percent", "updated_at"])
+        elif project.status != PMProject.Status.COMPLETED and project.completed_at:
+            project.completed_at = None
+            project.save(update_fields=["completed_at", "updated_at"])
+
+    @action(detail=False, methods=["get"], url_path="metrics")
+    def metrics(self, request):
+        workspace = _requested_workspace(request)
+        qs = PMProject.objects.filter(workspace=workspace).exclude(status=PMProject.Status.ARCHIVED)
+        today = timezone.localdate()
+        active = qs.exclude(status=PMProject.Status.COMPLETED)
+        budget = qs.aggregate(total=Sum("budget_amount"))["total"] or 0
+        actual = qs.aggregate(total=Sum("actual_amount"))["total"] or 0
+        return Response({
+            "total": qs.count(),
+            "active": active.count(),
+            "overdue": active.filter(target_date__lt=today).count(),
+            "blocked": active.exclude(blocker="").count(),
+            "awaiting_approval": active.filter(status=PMProject.Status.APPROVAL).count(),
+            "due_soon": active.filter(target_date__gte=today, target_date__lte=today + timezone.timedelta(days=14)).count(),
+            "completed": qs.filter(status=PMProject.Status.COMPLETED).count(),
+            "budget_total": str(budget),
+            "actual_total": str(actual),
+        })
+
+    @action(detail=True, methods=["post"], url_path="add-update")
+    @transaction.atomic
+    def add_update(self, request, pk=None):
+        project = self.get_object()
+        serializer = PMProjectUpdateSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        update = serializer.save(project=project, created_by=request.user)
+        changed = []
+        for field in ("status", "progress_percent", "blocker", "next_action", "next_action_due"):
+            value = getattr(update, field)
+            if value not in (None, ""):
+                setattr(project, field, value)
+                changed.append(field)
+        if project.status == PMProject.Status.COMPLETED:
+            project.progress_percent = 100
+            project.completed_at = project.completed_at or timezone.now()
+            changed.extend(["progress_percent", "completed_at"])
+        if changed:
+            project.save(update_fields=list(dict.fromkeys(changed + ["updated_at"])))
+        return Response(PMProjectUpdateSerializer(update).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="archive")
+    def archive(self, request, pk=None):
+        project = self.get_object()
+        project.status = PMProject.Status.ARCHIVED
+        project.archived_at = timezone.now()
+        project.save(update_fields=["status", "archived_at", "updated_at"])
+        PMProjectUpdate.objects.create(project=project, note="Project archived.", status=project.status, progress_percent=project.progress_percent, created_by=request.user)
+        return Response(self.get_serializer(project).data)
+
+    @action(detail=True, methods=["post"], url_path="email-status")
+    def email_status(self, request, pk=None):
+        project = self.get_object()
+        workspace = project.workspace
+        raw = request.data.get("emails") or project.update_recipient_emails or ""
+        if isinstance(raw, list):
+            recipients = [str(item).strip() for item in raw if str(item).strip()]
+        else:
+            recipients = [item.strip() for item in str(raw).replace(";", ",").split(",") if item.strip()]
+        if not recipients:
+            return Response({"detail": "Add at least one status update email recipient."}, status=status.HTTP_400_BAD_REQUEST)
+        latest = project.updates.order_by("-created_at").first()
+        subject = f"{workspace.name}: {project.title} status update"
+        body = (
+            f"Project: {project.title}\n"
+            f"Portfolio: {workspace.name}\n"
+            f"Property: {project.property.name if project.property else 'Portfolio-wide'}\n"
+            f"Status: {project.get_status_display()}\n"
+            f"Progress: {project.progress_percent}%\n"
+            f"Target date: {project.target_date or 'Not set'}\n"
+            f"Next action: {project.next_action or 'Not set'}\n"
+            f"Blocker: {project.blocker or 'None'}\n\n"
+            f"Latest update: {latest.note if latest else 'No update note yet.'}\n"
+        )
+        email = EmailMultiAlternatives(
+            subject=subject,
+            body=body,
+            from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "notifications@syncworksapp.com"),
+            to=recipients,
+            reply_to=[workspace.reply_to_email or workspace.office_email] if (workspace.reply_to_email or workspace.office_email) else None,
+        )
+        try:
+            email.send(fail_silently=False)
+        except Exception:
+            return Response({"detail": "Status email could not be delivered. Check email configuration."}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response({"detail": "Project status email sent.", "recipients": recipients})
+
+
 class PMTenantViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = PMTenantSerializer
@@ -131,10 +267,7 @@ class PMTenantViewSet(viewsets.ModelViewSet):
         response = super().update(request, *args, **kwargs)
         tenant.refresh_from_db()
         if tenant.email.lower() != old_email:
-            tenant.invitations.filter(status=PMTenantInvitation.Status.PENDING).update(
-                status=PMTenantInvitation.Status.REVOKED,
-                revoked_at=timezone.now(),
-            )
+            tenant.invitations.filter(status=PMTenantInvitation.Status.PENDING).update(status=PMTenantInvitation.Status.REVOKED, revoked_at=timezone.now())
             tenant.status = PMTenant.Status.DRAFT
             tenant.save(update_fields=["status", "updated_at"])
             response.data["email_changed"] = True
@@ -150,11 +283,7 @@ class PMTenantViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Invalid invitation mode."}, status=status.HTTP_400_BAD_REQUEST)
         if not tenant.email:
             return Response({"detail": "Tenant email is required."}, status=status.HTTP_400_BAD_REQUEST)
-
-        tenant.invitations.filter(status=PMTenantInvitation.Status.PENDING).update(
-            status=PMTenantInvitation.Status.REVOKED,
-            revoked_at=timezone.now(),
-        )
+        tenant.invitations.filter(status=PMTenantInvitation.Status.PENDING).update(status=PMTenantInvitation.Status.REVOKED, revoked_at=timezone.now())
         invite = PMTenantInvitation.objects.create(
             tenant=tenant,
             mode=mode,
@@ -169,8 +298,7 @@ class PMTenantViewSet(viewsets.ModelViewSet):
             f"Hello {tenant.first_name},\n\n"
             f"{workspace.name} invited you to connect to your tenant portal for "
             f"{tenant.property_name or 'your property'}{(' - ' + tenant.unit_label) if tenant.unit_label else ''}.\n\n"
-            f"Invitation code: {invite.code}\n"
-            f"Open: {accept_url}\n\n"
+            f"Invitation code: {invite.code}\nOpen: {accept_url}\n\n"
             f"This invitation expires {invite.expires_at:%B %d, %Y}.\n\n"
             f"{workspace.email_signature or workspace.sender_name or workspace.name}"
         )
@@ -192,7 +320,6 @@ class PMTenantViewSet(viewsets.ModelViewSet):
             invite.revoked_at = timezone.now()
             invite.save(update_fields=["status", "revoked_at"])
             return Response({"detail": "The invitation was created but email delivery failed. Check email configuration."}, status=status.HTTP_502_BAD_GATEWAY)
-
         return Response(PMTenantInvitationSerializer(invite).data, status=status.HTTP_201_CREATED)
 
 
@@ -218,7 +345,6 @@ class PMTenantInvitationViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({"detail": "Invitation has expired."}, status=status.HTTP_410_GONE)
         if request.user.email.lower() != invite.sent_to_email.lower():
             return Response({"detail": "Sign in with the invited email address."}, status=status.HTTP_403_FORBIDDEN)
-
         tenant = invite.tenant
         if invite.mode == PMTenantInvitation.Mode.TENANT_ONBOARDING:
             for field in ("first_name", "last_name", "phone"):
