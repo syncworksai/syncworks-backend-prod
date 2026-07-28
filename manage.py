@@ -4,7 +4,7 @@ import sys
 
 
 def main() -> None:
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "syncworksv7.settings")
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "syncworksv7.settings_pm")
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:
