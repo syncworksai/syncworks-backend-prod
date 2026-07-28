@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import PMTenant, PMTenantInvitation, PMWorkspace
+from .models import PMProperty, PMTenant, PMTenantInvitation, PMWorkspace
 
 
 class PMWorkspaceSerializer(serializers.ModelSerializer):
@@ -8,6 +8,16 @@ class PMWorkspaceSerializer(serializers.ModelSerializer):
         model = PMWorkspace
         fields = "__all__"
         read_only_fields = ("id", "owner", "created_at", "updated_at")
+
+
+class PMPropertySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PMProperty
+        fields = "__all__"
+        read_only_fields = ("id", "workspace", "created_by", "created_at", "updated_at")
+
+    def validate_state(self, value):
+        return str(value or "").strip().upper()[:2]
 
 
 class PMTenantSerializer(serializers.ModelSerializer):

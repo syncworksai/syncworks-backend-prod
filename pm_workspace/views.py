@@ -6,11 +6,12 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import PMTenant, PMTenantInvitation, PMWorkspace
-from .serializers import PMTenantInvitationSerializer, PMTenantSerializer, PMWorkspaceSerializer
+from .models import PMProperty, PMTenant, PMTenantInvitation, PMWorkspace
+from .serializers import PMPropertySerializer, PMTenantInvitationSerializer, PMTenantSerializer, PMWorkspaceSerializer
 
 
 def _workspace_for_user(user, workspace_id=None):
@@ -18,6 +19,18 @@ def _workspace_for_user(user, workspace_id=None):
     if workspace_id:
         return qs.filter(pk=workspace_id).first()
     return qs.order_by("id").first()
+
+
+def _requested_workspace(request):
+    workspace_id = (
+        request.headers.get("X-PM-Workspace-ID")
+        or request.query_params.get("workspace_id")
+        or (request.data.get("workspace_id") if isinstance(request.data, dict) else None)
+    )
+    workspace = _workspace_for_user(request.user, workspace_id)
+    if not workspace:
+        raise PermissionDenied("Create or select a Property Management portfolio first.")
+    return workspace
 
 
 class PMWorkspaceViewSet(viewsets.ModelViewSet):
@@ -48,16 +61,24 @@ class PMWorkspaceViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK if workspace else status.HTTP_201_CREATED)
 
 
+class PMPropertyViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = PMPropertySerializer
+
+    def get_queryset(self):
+        workspace = _requested_workspace(self.request)
+        return PMProperty.objects.filter(workspace=workspace).order_by("name", "id")
+
+    def perform_create(self, serializer):
+        serializer.save(workspace=_requested_workspace(self.request), created_by=self.request.user)
+
+
 class PMTenantViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = PMTenantSerializer
 
     def _workspace(self):
-        workspace_id = self.request.headers.get("X-PM-Workspace-ID") or self.request.query_params.get("workspace_id") or self.request.data.get("workspace_id")
-        workspace = _workspace_for_user(self.request.user, workspace_id)
-        if not workspace:
-            raise PermissionError("Create or select a PM workspace first.")
-        return workspace
+        return _requested_workspace(self.request)
 
     def get_queryset(self):
         workspace = self._workspace()
