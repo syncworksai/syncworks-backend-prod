@@ -4,10 +4,27 @@ from .models import PMProperty, PMTenant, PMTenantInvitation, PMWorkspace
 
 
 class PMWorkspaceSerializer(serializers.ModelSerializer):
+    is_free_portfolio = serializers.SerializerMethodField()
+    additional_portfolio_price = serializers.SerializerMethodField()
+
     class Meta:
         model = PMWorkspace
         fields = "__all__"
-        read_only_fields = ("id", "owner", "created_at", "updated_at")
+        read_only_fields = (
+            "id",
+            "owner",
+            "created_at",
+            "updated_at",
+            "is_free_portfolio",
+            "additional_portfolio_price",
+        )
+
+    def get_is_free_portfolio(self, obj):
+        first_id = PMWorkspace.objects.filter(owner=obj.owner).order_by("id").values_list("id", flat=True).first()
+        return obj.id == first_id
+
+    def get_additional_portfolio_price(self, obj):
+        return "9.99"
 
 
 class PMPropertySerializer(serializers.ModelSerializer):
