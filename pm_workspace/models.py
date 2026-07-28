@@ -28,6 +28,45 @@ class PMWorkspace(models.Model):
         ordering = ["name", "id"]
 
 
+class PMProperty(models.Model):
+    class PropertyType(models.TextChoices):
+        HOME = "HOME", "Single-family home"
+        MULTIFAMILY = "MULTIFAMILY", "Multifamily"
+        APARTMENT = "APARTMENT", "Apartment building"
+        CONDO = "CONDO", "Condominium"
+        TOWNHOME = "TOWNHOME", "Townhome"
+        COMMERCIAL = "COMMERCIAL", "Commercial"
+        OTHER = "OTHER", "Other"
+
+    class Status(models.TextChoices):
+        HEALTHY = "HEALTHY", "Healthy"
+        WATCH = "WATCH", "Watch"
+        AT_RISK = "AT_RISK", "At risk"
+
+    workspace = models.ForeignKey(PMWorkspace, on_delete=models.CASCADE, related_name="properties")
+    name = models.CharField(max_length=180)
+    property_type = models.CharField(max_length=24, choices=PropertyType.choices, default=PropertyType.HOME)
+    address = models.CharField(max_length=255)
+    city = models.CharField(max_length=120)
+    state = models.CharField(max_length=2)
+    zip = models.CharField(max_length=12)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.HEALTHY)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_pm_properties",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name", "id"]
+        indexes = [models.Index(fields=["workspace", "status"])]
+
+
 class PMTenant(models.Model):
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
