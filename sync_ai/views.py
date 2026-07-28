@@ -13,6 +13,7 @@ from user_accounts.models import AuditLog
 
 from .action_drafts import build_draft_prompt, get_draft_definition
 from .context import build_instructions, resolve_workspace
+from .execution import execute_ticket_reply
 from .service import (
     SyncAIConfigurationError,
     SyncAIProviderError,
@@ -79,7 +80,13 @@ class SyncAIStatusView(APIView):
                         "lead_follow_up",
                         "schedule_proposal",
                     ],
-                    "execution": False,
+                    "execution": {
+                        "ticket_reply": True,
+                        "lead_follow_up": False,
+                        "schedule_change": False,
+                        "assignment": False,
+                        "payment": False,
+                    },
                 },
             }
         )
@@ -249,4 +256,65 @@ class SyncAIActionDraftView(APIView):
                     "total_tokens": result.total_tokens,
                 },
             }
+        )
+
+
+class SyncAITicketReplyExecuteView(APIView):
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [SyncAIThrottle]
+
+    def post(self, request):
+        body = str(request.data.get("body") or "").strip()
+        confirmed = request.data.get("confirmed") is True
+        raw_ticket_id = request.data.get("ticket_id")
+
+        if not confirmed:
+            return Response(
+                {"detail": "Final confirmation is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not body:
+            return Response(
+                {"detail": "Reply body is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(body) > 6000:
+            return Response(
+                {"detail": "Reply body is too long."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            ticket_id = int(raw_ticket_id)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "A valid ticket_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            context = _resolve_request_context(request)
+            message = execute_ticket_reply(
+                user=request.user,
+                context=context,
+                ticket_id=ticket_id,
+                body=body,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except LookupError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except PermissionError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
+
+        return Response(
+            {
+                "status": "executed",
+                "executed": True,
+                "workspace": context.workspace,
+                "ticket_id": message.ticket_id,
+                "ticket_message_id": message.id,
+                "body": message.body,
+                "created_at": message.created_at.isoformat(),
+            },
+            status=status.HTTP_201_CREATED,
         )
