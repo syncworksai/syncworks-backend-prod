@@ -37,7 +37,7 @@ class SyncAIStatusView(APIView):
                 "enabled": ai_enabled(),
                 "configured": bool((os.getenv("OPENAI_API_KEY") or "").strip()),
                 "model": configured_model(),
-                "workspaces": ["personal", "business"],
+                "workspaces": ["personal", "business", "property_management"],
             }
         )
 
@@ -50,6 +50,7 @@ class SyncAIChatView(APIView):
         message = str(request.data.get("message") or "").strip()
         workspace = str(request.data.get("workspace") or "personal").strip().lower()
         business_id = request.headers.get("X-Business-ID") or request.data.get("business_id")
+        workspace_context = request.data.get("context")
 
         if not message:
             return Response(
@@ -61,12 +62,18 @@ class SyncAIChatView(APIView):
                 {"detail": "message is too long"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if workspace_context is not None and not isinstance(workspace_context, dict):
+            return Response(
+                {"detail": "context must be an object"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             context = resolve_workspace(
                 user=request.user,
                 workspace=workspace,
                 business_id=str(business_id) if business_id else None,
+                workspace_context=workspace_context,
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
