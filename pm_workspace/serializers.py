@@ -1,6 +1,22 @@
+from datetime import date
+from decimal import Decimal
+
+from dateutil.relativedelta import relativedelta
 from rest_framework import serializers
 
-from .models import PMProject, PMProjectUpdate, PMProperty, PMTenant, PMTenantInvitation, PMWorkspace
+from .models import (
+    PMDocumentPacket,
+    PMLedgerEntry,
+    PMLease,
+    PMProject,
+    PMProjectUpdate,
+    PMProperty,
+    PMProspect,
+    PMTenant,
+    PMTenantInvitation,
+    PMUnit,
+    PMWorkspace,
+)
 
 
 class PMWorkspaceSerializer(serializers.ModelSerializer):
@@ -21,13 +37,22 @@ class PMWorkspaceSerializer(serializers.ModelSerializer):
 
 
 class PMPropertySerializer(serializers.ModelSerializer):
+    available_units = serializers.SerializerMethodField()
+    total_units = serializers.SerializerMethodField()
+
     class Meta:
         model = PMProperty
         fields = "__all__"
-        read_only_fields = ("id", "workspace", "created_by", "created_at", "updated_at")
+        read_only_fields = ("id", "workspace", "created_by", "created_at", "updated_at", "available_units", "total_units")
 
     def validate_state(self, value):
         return str(value or "").strip().upper()[:2]
+
+    def get_available_units(self, obj):
+        return obj.units.filter(availability=PMUnit.Availability.AVAILABLE).count()
+
+    def get_total_units(self, obj):
+        return obj.units.count()
 
 
 class PMProjectUpdateSerializer(serializers.ModelSerializer):
@@ -77,11 +102,13 @@ class PMProjectSerializer(serializers.ModelSerializer):
 class PMTenantSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     latest_invitation = serializers.SerializerMethodField()
+    balance = serializers.SerializerMethodField()
+    active_lease = serializers.SerializerMethodField()
 
     class Meta:
         model = PMTenant
         fields = "__all__"
-        read_only_fields = ("id", "workspace", "user", "status", "created_by", "created_at", "updated_at")
+        read_only_fields = ("id", "workspace", "user", "status", "created_by", "created_at", "updated_at", "balance", "active_lease")
 
     def to_internal_value(self, data):
         normalized = data.copy() if hasattr(data, "copy") else dict(data)
@@ -111,9 +138,121 @@ class PMTenantSerializer(serializers.ModelSerializer):
             return None
         return {"id": invite.id, "status": invite.status, "mode": invite.mode, "expires_at": invite.expires_at, "sent_at": invite.sent_at, "sent_to_email": invite.sent_to_email}
 
+    def get_balance(self, obj):
+        total = Decimal("0.00")
+        for entry in obj.ledger_entries.all():
+            if entry.entry_type in {PMLedgerEntry.EntryType.CHARGE, PMLedgerEntry.EntryType.ADJUSTMENT}:
+                total += entry.amount
+            else:
+                total -= entry.amount
+        return str(total.quantize(Decimal("0.01")))
+
+    def get_active_lease(self, obj):
+        lease = obj.leases.exclude(status="ENDED").order_by("-start_date").first()
+        return PMLeaseSerializer(lease).data if lease else None
+
 
 class PMTenantInvitationSerializer(serializers.ModelSerializer):
     class Meta:
         model = PMTenantInvitation
         fields = ("id", "tenant", "mode", "status", "code", "expires_at", "sent_to_email", "sent_from_name", "reply_to_email", "sent_at", "accepted_at", "revoked_at", "created_at")
         read_only_fields = fields
+
+
+class PMUnitSerializer(serializers.ModelSerializer):
+    property_name = serializers.CharField(source="property.name", read_only=True)
+    display_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PMUnit
+        fields = "__all__"
+        read_only_fields = ("id", "workspace", "property_name", "display_name", "created_at", "updated_at")
+
+    def get_display_name(self, obj):
+        return f"{obj.property.name} · {obj.label}"
+
+    def validate_property(self, value):
+        request = self.context.get("request")
+        if request and value.workspace.owner_id != request.user.id:
+            raise serializers.ValidationError("Property is not available in this portfolio.")
+        return value
+
+
+class PMProspectSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField()
+    assigned_unit_name = serializers.CharField(source="assigned_unit.label", read_only=True)
+    assigned_property_name = serializers.CharField(source="assigned_unit.property.name", read_only=True)
+
+    class Meta:
+        model = PMProspect
+        fields = "__all__"
+        read_only_fields = ("id", "workspace", "created_by", "created_at", "updated_at", "full_name", "assigned_unit_name", "assigned_property_name")
+
+    def get_full_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}".strip()
+
+    def to_internal_value(self, data):
+        normalized = data.copy() if hasattr(data, "copy") else dict(data)
+        for field in ("desired_move_in", "desired_bedrooms", "voucher_bedrooms", "max_rent", "assigned_unit", "showing_at"):
+            if normalized.get(field) == "":
+                normalized[field] = None
+        return super().to_internal_value(normalized)
+
+
+class PMLeaseSerializer(serializers.ModelSerializer):
+    tenant_name = serializers.CharField(source="tenant.full_name", read_only=True)
+    unit_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PMLease
+        fields = "__all__"
+        read_only_fields = ("id", "workspace", "tenant_name", "unit_name", "created_at", "updated_at")
+
+    def get_unit_name(self, obj):
+        return f"{obj.unit.property.name} · {obj.unit.label}" if obj.unit else ""
+
+    def validate(self, attrs):
+        term = attrs.get("term", getattr(self.instance, "term", PMLease.Term.TWELVE_MONTH))
+        start_date = attrs.get("start_date", getattr(self.instance, "start_date", None))
+        end_date = attrs.get("end_date", getattr(self.instance, "end_date", None))
+        if start_date and term == PMLease.Term.SIX_MONTH:
+            end_date = start_date + relativedelta(months=6, days=-1)
+        elif start_date and term == PMLease.Term.TWELVE_MONTH:
+            end_date = start_date + relativedelta(months=12, days=-1)
+        elif term == PMLease.Term.MONTH_TO_MONTH:
+            end_date = None
+        if term == PMLease.Term.CUSTOM and not end_date:
+            raise serializers.ValidationError({"end_date": "Custom leases require an end date."})
+        if start_date and end_date and end_date < start_date:
+            raise serializers.ValidationError({"end_date": "Lease end must be on or after lease start."})
+        attrs["end_date"] = end_date
+        return attrs
+
+
+class PMDocumentPacketSerializer(serializers.ModelSerializer):
+    tenant_name = serializers.CharField(source="tenant.full_name", read_only=True)
+    prospect_name = serializers.CharField(source="prospect.first_name", read_only=True)
+
+    class Meta:
+        model = PMDocumentPacket
+        fields = "__all__"
+        read_only_fields = ("id", "workspace", "created_at", "updated_at", "tenant_name", "prospect_name")
+
+    def validate(self, attrs):
+        if not attrs.get("tenant") and not attrs.get("prospect") and not getattr(self.instance, "tenant_id", None) and not getattr(self.instance, "prospect_id", None):
+            raise serializers.ValidationError("Choose a tenant or prospect for this packet.")
+        return attrs
+
+
+class PMLedgerEntrySerializer(serializers.ModelSerializer):
+    tenant_name = serializers.CharField(source="tenant.full_name", read_only=True)
+
+    class Meta:
+        model = PMLedgerEntry
+        fields = "__all__"
+        read_only_fields = ("id", "workspace", "created_by", "created_at", "updated_at", "tenant_name")
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Amount must be greater than zero.")
+        return value
