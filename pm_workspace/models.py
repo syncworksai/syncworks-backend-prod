@@ -118,10 +118,7 @@ class PMProject(models.Model):
 
     class Meta:
         ordering = ["-updated_at", "-id"]
-        indexes = [
-            models.Index(fields=["workspace", "status"]),
-            models.Index(fields=["workspace", "target_date"]),
-        ]
+        indexes = [models.Index(fields=["workspace", "status"]), models.Index(fields=["workspace", "target_date"])]
 
 
 class PMProjectUpdate(models.Model):
@@ -200,3 +197,162 @@ class PMTenantInvitation(models.Model):
         if not self.expires_at:
             self.expires_at = timezone.now() + timedelta(days=7)
         super().save(*args, **kwargs)
+
+
+class PMUnit(models.Model):
+    class Availability(models.TextChoices):
+        AVAILABLE = "AVAILABLE", "Available"
+        OCCUPIED = "OCCUPIED", "Occupied"
+        NOTICE_GIVEN = "NOTICE_GIVEN", "Notice given"
+        MAKE_READY = "MAKE_READY", "Make ready"
+        CONSTRUCTION = "CONSTRUCTION", "Under construction"
+        OFF_MARKET = "OFF_MARKET", "Off market"
+
+    workspace = models.ForeignKey(PMWorkspace, on_delete=models.CASCADE, related_name="units")
+    property = models.ForeignKey(PMProperty, on_delete=models.CASCADE, related_name="units")
+    label = models.CharField(max_length=80)
+    bedrooms = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True)
+    bathrooms = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True)
+    square_feet = models.PositiveIntegerField(null=True, blank=True)
+    market_rent = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    availability = models.CharField(max_length=24, choices=Availability.choices, default=Availability.AVAILABLE)
+    available_date = models.DateField(null=True, blank=True)
+    accepts_section8 = models.BooleanField(default=False)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["property__name", "label"]
+        constraints = [models.UniqueConstraint(fields=["property", "label"], name="uniq_pm_property_unit_label")]
+
+
+class PMProspect(models.Model):
+    class Stage(models.TextChoices):
+        LEAD = "LEAD", "Lead"
+        APPLICATION_SENT = "APPLICATION_SENT", "Application sent"
+        APPLICATION_RECEIVED = "APPLICATION_RECEIVED", "Application received"
+        SCREENING = "SCREENING", "Screening"
+        APPROVED = "APPROVED", "Approved"
+        SHOWING_SCHEDULED = "SHOWING_SCHEDULED", "Showing scheduled"
+        READY_FOR_ONBOARDING = "READY_FOR_ONBOARDING", "Ready for onboarding"
+        CONVERTED = "CONVERTED", "Converted to tenant"
+        DECLINED = "DECLINED", "Declined"
+        WITHDRAWN = "WITHDRAWN", "Withdrawn"
+
+    workspace = models.ForeignKey(PMWorkspace, on_delete=models.CASCADE, related_name="prospects")
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100, blank=True)
+    email = models.EmailField()
+    phone = models.CharField(max_length=40, blank=True)
+    stage = models.CharField(max_length=32, choices=Stage.choices, default=Stage.LEAD)
+    section8_requested = models.BooleanField(default=False)
+    voucher_authority = models.CharField(max_length=180, blank=True)
+    voucher_bedrooms = models.PositiveSmallIntegerField(null=True, blank=True)
+    desired_move_in = models.DateField(null=True, blank=True)
+    desired_bedrooms = models.PositiveSmallIntegerField(null=True, blank=True)
+    max_rent = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    assigned_unit = models.ForeignKey(PMUnit, null=True, blank=True, on_delete=models.SET_NULL, related_name="prospects")
+    showing_at = models.DateTimeField(null=True, blank=True)
+    application_sent_at = models.DateTimeField(null=True, blank=True)
+    application_received_at = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_pm_prospects")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+        indexes = [models.Index(fields=["workspace", "stage"])]
+
+
+class PMLease(models.Model):
+    class Term(models.TextChoices):
+        MONTH_TO_MONTH = "MONTH_TO_MONTH", "Month to month"
+        SIX_MONTH = "SIX_MONTH", "6 month"
+        TWELVE_MONTH = "TWELVE_MONTH", "12 month"
+        CUSTOM = "CUSTOM", "Custom"
+
+    workspace = models.ForeignKey(PMWorkspace, on_delete=models.CASCADE, related_name="leases")
+    tenant = models.ForeignKey(PMTenant, on_delete=models.CASCADE, related_name="leases")
+    unit = models.ForeignKey(PMUnit, null=True, blank=True, on_delete=models.SET_NULL, related_name="leases")
+    term = models.CharField(max_length=24, choices=Term.choices, default=Term.TWELVE_MONTH)
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    converts_to_month_to_month = models.BooleanField(default=True)
+    monthly_rent = models.DecimalField(max_digits=12, decimal_places=2)
+    security_deposit = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    section8 = models.BooleanField(default=False)
+    housing_authority = models.CharField(max_length=180, blank=True)
+    tenant_portion = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    assistance_portion = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    status = models.CharField(max_length=24, default="DRAFT")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-start_date", "-id"]
+
+
+class PMDocumentPacket(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        SENT = "SENT", "Sent"
+        PARTIALLY_SIGNED = "PARTIALLY_SIGNED", "Partially signed"
+        COMPLETED = "COMPLETED", "Completed"
+        VOID = "VOID", "Void"
+
+    workspace = models.ForeignKey(PMWorkspace, on_delete=models.CASCADE, related_name="document_packets")
+    tenant = models.ForeignKey(PMTenant, null=True, blank=True, on_delete=models.CASCADE, related_name="document_packets")
+    prospect = models.ForeignKey(PMProspect, null=True, blank=True, on_delete=models.CASCADE, related_name="document_packets")
+    lease = models.ForeignKey(PMLease, null=True, blank=True, on_delete=models.SET_NULL, related_name="document_packets")
+    packet_type = models.CharField(max_length=80, default="LEASE")
+    state_code = models.CharField(max_length=2, blank=True)
+    housing_authority = models.CharField(max_length=180, blank=True)
+    template_name = models.CharField(max_length=180)
+    template_version = models.CharField(max_length=80, blank=True)
+    source_url = models.URLField(blank=True)
+    field_data = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+
+
+class PMLedgerEntry(models.Model):
+    class EntryType(models.TextChoices):
+        CHARGE = "CHARGE", "Charge"
+        PAYMENT = "PAYMENT", "Payment"
+        CREDIT = "CREDIT", "Credit"
+        ADJUSTMENT = "ADJUSTMENT", "Adjustment"
+
+    class Method(models.TextChoices):
+        CASH = "CASH", "Cash"
+        CHECK = "CHECK", "Check"
+        ACH = "ACH", "ACH"
+        CARD = "CARD", "Card"
+        MONEY_ORDER = "MONEY_ORDER", "Money order"
+        HOUSING_AUTHORITY = "HOUSING_AUTHORITY", "Housing authority"
+        OTHER = "OTHER", "Other"
+
+    workspace = models.ForeignKey(PMWorkspace, on_delete=models.CASCADE, related_name="ledger_entries")
+    tenant = models.ForeignKey(PMTenant, on_delete=models.CASCADE, related_name="ledger_entries")
+    lease = models.ForeignKey(PMLease, null=True, blank=True, on_delete=models.SET_NULL, related_name="ledger_entries")
+    entry_date = models.DateField(default=timezone.localdate)
+    entry_type = models.CharField(max_length=16, choices=EntryType.choices)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    category = models.CharField(max_length=80, default="RENT")
+    payment_method = models.CharField(max_length=24, choices=Method.choices, blank=True)
+    reference = models.CharField(max_length=180, blank=True)
+    memo = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="created_pm_ledger_entries")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-entry_date", "-id"]
+        indexes = [models.Index(fields=["workspace", "tenant", "entry_date"])]
