@@ -83,6 +83,25 @@ class PMTenantSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ("id", "workspace", "user", "status", "created_by", "created_at", "updated_at")
 
+    def to_internal_value(self, data):
+        normalized = data.copy() if hasattr(data, "copy") else dict(data)
+        for field in ("move_in_date", "lease_start", "lease_end", "monthly_rent"):
+            if normalized.get(field) == "":
+                normalized[field] = None
+        for field in ("first_name", "last_name", "email", "phone", "property_name", "unit_label", "notes"):
+            if isinstance(normalized.get(field), str):
+                normalized[field] = normalized[field].strip()
+        if isinstance(normalized.get("email"), str):
+            normalized["email"] = normalized["email"].lower()
+        return super().to_internal_value(normalized)
+
+    def validate(self, attrs):
+        lease_start = attrs.get("lease_start") or getattr(self.instance, "lease_start", None)
+        lease_end = attrs.get("lease_end") or getattr(self.instance, "lease_end", None)
+        if lease_start and lease_end and lease_end < lease_start:
+            raise serializers.ValidationError({"lease_end": "Lease end must be on or after lease start."})
+        return attrs
+
     def get_full_name(self, obj):
         return f"{obj.first_name} {obj.last_name}".strip()
 
