@@ -211,6 +211,7 @@ INSTALLED_APPS = [
     "platform_growth.apps.PlatformGrowthConfig",
     "platform_affiliates.apps.PlatformAffiliatesConfig",
     "customer_health.apps.CustomerHealthConfig",
+    "personal_calendar.apps.PersonalCalendarConfig",
 ]
 
 
