@@ -1,7 +1,7 @@
-from datetime import date
+import calendar
+from datetime import date, timedelta
 from decimal import Decimal
 
-from dateutil.relativedelta import relativedelta
 from rest_framework import serializers
 
 from .models import (
@@ -17,6 +17,14 @@ from .models import (
     PMUnit,
     PMWorkspace,
 )
+
+
+def add_months(value, months):
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
 
 
 class PMWorkspaceSerializer(serializers.ModelSerializer):
@@ -200,13 +208,16 @@ class PMProspectSerializer(serializers.ModelSerializer):
 
 
 class PMLeaseSerializer(serializers.ModelSerializer):
-    tenant_name = serializers.CharField(source="tenant.full_name", read_only=True)
+    tenant_name = serializers.SerializerMethodField()
     unit_name = serializers.SerializerMethodField()
 
     class Meta:
         model = PMLease
         fields = "__all__"
         read_only_fields = ("id", "workspace", "tenant_name", "unit_name", "created_at", "updated_at")
+
+    def get_tenant_name(self, obj):
+        return f"{obj.tenant.first_name} {obj.tenant.last_name}".strip()
 
     def get_unit_name(self, obj):
         return f"{obj.unit.property.name} · {obj.unit.label}" if obj.unit else ""
@@ -216,9 +227,9 @@ class PMLeaseSerializer(serializers.ModelSerializer):
         start_date = attrs.get("start_date", getattr(self.instance, "start_date", None))
         end_date = attrs.get("end_date", getattr(self.instance, "end_date", None))
         if start_date and term == PMLease.Term.SIX_MONTH:
-            end_date = start_date + relativedelta(months=6, days=-1)
+            end_date = add_months(start_date, 6) - timedelta(days=1)
         elif start_date and term == PMLease.Term.TWELVE_MONTH:
-            end_date = start_date + relativedelta(months=12, days=-1)
+            end_date = add_months(start_date, 12) - timedelta(days=1)
         elif term == PMLease.Term.MONTH_TO_MONTH:
             end_date = None
         if term == PMLease.Term.CUSTOM and not end_date:
@@ -230,13 +241,19 @@ class PMLeaseSerializer(serializers.ModelSerializer):
 
 
 class PMDocumentPacketSerializer(serializers.ModelSerializer):
-    tenant_name = serializers.CharField(source="tenant.full_name", read_only=True)
-    prospect_name = serializers.CharField(source="prospect.first_name", read_only=True)
+    tenant_name = serializers.SerializerMethodField()
+    prospect_name = serializers.SerializerMethodField()
 
     class Meta:
         model = PMDocumentPacket
         fields = "__all__"
         read_only_fields = ("id", "workspace", "created_at", "updated_at", "tenant_name", "prospect_name")
+
+    def get_tenant_name(self, obj):
+        return f"{obj.tenant.first_name} {obj.tenant.last_name}".strip() if obj.tenant else ""
+
+    def get_prospect_name(self, obj):
+        return f"{obj.prospect.first_name} {obj.prospect.last_name}".strip() if obj.prospect else ""
 
     def validate(self, attrs):
         if not attrs.get("tenant") and not attrs.get("prospect") and not getattr(self.instance, "tenant_id", None) and not getattr(self.instance, "prospect_id", None):
@@ -245,12 +262,15 @@ class PMDocumentPacketSerializer(serializers.ModelSerializer):
 
 
 class PMLedgerEntrySerializer(serializers.ModelSerializer):
-    tenant_name = serializers.CharField(source="tenant.full_name", read_only=True)
+    tenant_name = serializers.SerializerMethodField()
 
     class Meta:
         model = PMLedgerEntry
         fields = "__all__"
         read_only_fields = ("id", "workspace", "created_by", "created_at", "updated_at", "tenant_name")
+
+    def get_tenant_name(self, obj):
+        return f"{obj.tenant.first_name} {obj.tenant.last_name}".strip()
 
     def validate_amount(self, value):
         if value <= 0:
