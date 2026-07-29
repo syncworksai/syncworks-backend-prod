@@ -9,6 +9,7 @@ from .leasing_views import (
     PMUnitViewSet,
 )
 from .views import PMProjectViewSet, PMPropertyViewSet, PMTenantInvitationViewSet, PMTenantViewSet, PMWorkspaceViewSet
+from .workorder_views import PMWorkOrderViewSet
 
 router = DefaultRouter()
 router.register(r"workspaces", PMWorkspaceViewSet, basename="pm-workspaces")
@@ -21,5 +22,6 @@ router.register(r"prospects", PMProspectViewSet, basename="pm-prospects")
 router.register(r"leases", PMLeaseViewSet, basename="pm-leases")
 router.register(r"document-packets", PMDocumentPacketViewSet, basename="pm-document-packets")
 router.register(r"ledger", PMLedgerEntryViewSet, basename="pm-ledger")
+router.register(r"work-orders", PMWorkOrderViewSet, basename="pm-work-orders")
 
 urlpatterns = [path("", include(router.urls))]
