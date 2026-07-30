@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from rest_framework import serializers
+
 from user_accounts.models import ServiceCategory
 
 
@@ -23,6 +24,12 @@ class ServiceCategorySerializer(serializers.ModelSerializer):
         ]
 
     def get_is_leaf(self, obj):
+        annotated = getattr(obj, "has_active_children", None)
+        if annotated is not None:
+            return not bool(annotated)
+
+        # Safe fallback for callers that instantiate this serializer with a
+        # queryset that does not use ServiceCategoryViewSet._base_qs().
         try:
             return not obj.children.filter(is_active=True).exists()
         except Exception:
@@ -31,11 +38,11 @@ class ServiceCategorySerializer(serializers.ModelSerializer):
     def get_path(self, obj):
         try:
             chain = []
-            cur = obj
+            current = obj
             guard = 0
-            while cur and guard < 20:
-                chain.insert(0, cur.name)
-                cur = getattr(cur, "parent", None)
+            while current and guard < 20:
+                chain.insert(0, current.name)
+                current = getattr(current, "parent", None)
                 guard += 1
             return " → ".join(chain)
         except Exception:
