@@ -8,10 +8,14 @@ class PMWorkspaceConfig(AppConfig):
 
     def ready(self):
         from django.db.models import Q
+        from rest_framework import status
+        from rest_framework.exceptions import ValidationError
+        from rest_framework.response import Response
 
         from . import workorder_models  # noqa: F401
         from .models import PMProperty
         from .serializers import PMProjectSerializer, PMTenantSerializer
+        from .views import PMProjectViewSet
 
         if not getattr(PMProjectSerializer, "_syncworks_blank_normalizer", False):
             original_project_to_internal = PMProjectSerializer.to_internal_value
@@ -75,3 +79,32 @@ class PMWorkspaceConfig(AppConfig):
 
             PMTenantSerializer.to_representation = tenant_to_representation
             PMTenantSerializer._syncworks_property_resolver = True
+
+        if not getattr(PMProjectViewSet, "_syncworks_detailed_create_errors", False):
+            original_project_create = PMProjectViewSet.create
+
+            def project_create(viewset, request, *args, **kwargs):
+                try:
+                    return original_project_create(viewset, request, *args, **kwargs)
+                except ValidationError as exc:
+                    detail = exc.detail
+                    parts = []
+                    if isinstance(detail, dict):
+                        for field, values in detail.items():
+                            values = values if isinstance(values, (list, tuple)) else [values]
+                            for value in values:
+                                parts.append(f"{str(field).replace('_', ' ')}: {value}")
+                    elif isinstance(detail, (list, tuple)):
+                        parts.extend(str(value) for value in detail)
+                    else:
+                        parts.append(str(detail))
+                    return Response(
+                        {
+                            "detail": " · ".join(parts) or "Project validation failed.",
+                            "errors": detail,
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+            PMProjectViewSet.create = project_create
+            PMProjectViewSet._syncworks_detailed_create_errors = True
