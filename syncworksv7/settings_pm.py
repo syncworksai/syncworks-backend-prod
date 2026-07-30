@@ -8,4 +8,15 @@ if "pm_workspace.apps.PMWorkspaceConfig" not in INSTALLED_APPS:
 if "x-pm-workspace-id" not in CORS_ALLOW_HEADERS:
     CORS_ALLOW_HEADERS = [*CORS_ALLOW_HEADERS, "x-pm-workspace-id"]
 
+# Render may provide DJANGO_CORS_ALLOWED_ORIGINS and replace the defaults from
+# settings.py. Keep the public SyncWorks web clients trusted even when that
+# environment variable is incomplete so login preflight requests can succeed.
+_REQUIRED_WEB_ORIGINS = {
+    "https://syncworksapp.com",
+    "https://www.syncworksapp.com",
+    "https://syncworks-frontend-prod.vercel.app",
+}
+CORS_ALLOWED_ORIGINS = list(dict.fromkeys([*CORS_ALLOWED_ORIGINS, *_REQUIRED_WEB_ORIGINS]))
+CSRF_TRUSTED_ORIGINS = list(dict.fromkeys([*CSRF_TRUSTED_ORIGINS, *_REQUIRED_WEB_ORIGINS]))
+
 FRONTEND_BASE_URL = FRONTEND_URL
