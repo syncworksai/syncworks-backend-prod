@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
@@ -30,19 +30,26 @@ class ServiceCategoryViewSet(viewsets.ReadOnlyModelViewSet):
       ?roots=1
       ?leaf_only=1
 
-    IMPORTANT:
-    We disable pagination here because the setup wizard and category picker
-    need the full active taxonomy, not just the first global DRF page.
+    Pagination remains disabled because the Business setup picker needs the full
+    active taxonomy. The queryset is annotated with child existence so the
+    serializer and leaf filters do not issue one query per category.
     """
+
     serializer_class = ServiceCategorySerializer
     permission_classes = [AllowAny]
     pagination_class = None
 
     def _base_qs(self):
+        active_children = ServiceCategory.objects.filter(
+            is_active=True,
+            parent_id=OuterRef("pk"),
+        )
+
         return (
             ServiceCategory.objects
             .filter(is_active=True)
-            .select_related("parent")
+            .select_related("parent", "parent__parent", "parent__parent__parent")
+            .annotate(has_active_children=Exists(active_children))
             .order_by("sort_order", "name")
         )
 
@@ -60,7 +67,7 @@ class ServiceCategoryViewSet(viewsets.ReadOnlyModelViewSet):
         if parent not in (None, "", "null"):
             try:
                 qs = qs.filter(parent_id=int(parent))
-            except Exception:
+            except (TypeError, ValueError):
                 pass
 
         if q:
@@ -71,11 +78,7 @@ class ServiceCategoryViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(query).distinct()
 
         if leaf_only:
-            ids = []
-            for c in qs:
-                if not c.children.filter(is_active=True).exists():
-                    ids.append(c.id)
-            qs = qs.filter(id__in=ids)
+            qs = qs.filter(has_active_children=False)
 
         return qs
 
@@ -124,8 +127,8 @@ class ServiceCategoryViewSet(viewsets.ReadOnlyModelViewSet):
             return Response([])
 
         qs = self._base_qs().filter(id__in=ids)
-        by_id = {c.id: c for c in qs}
-        ordered = [by_id[i] for i in ids if i in by_id]
+        by_id = {category.id: category for category in qs}
+        ordered = [by_id[category_id] for category_id in ids if category_id in by_id]
         return Response(ServiceCategorySerializer(ordered, many=True).data)
 
     @action(detail=False, methods=["get"], url_path="leaves")
@@ -138,7 +141,7 @@ class ServiceCategoryViewSet(viewsets.ReadOnlyModelViewSet):
         if parent not in (None, "", "null"):
             try:
                 qs = qs.filter(parent_id=int(parent))
-            except Exception:
+            except (TypeError, ValueError):
                 pass
 
         if q:
@@ -148,12 +151,7 @@ class ServiceCategoryViewSet(viewsets.ReadOnlyModelViewSet):
                 query |= Q(name__icontains=part) | Q(key__icontains=part)
             qs = qs.filter(query).distinct()
 
-        leaf_ids = []
-        for c in qs:
-            if not c.children.filter(is_active=True).exists():
-                leaf_ids.append(c.id)
-
-        leaf_qs = qs.filter(id__in=leaf_ids)
+        leaf_qs = qs.filter(has_active_children=False)
         return Response(ServiceCategorySerializer(leaf_qs, many=True).data)
 
     @action(detail=False, methods=["get"], url_path="debug-count")
