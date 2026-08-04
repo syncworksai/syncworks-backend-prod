@@ -22,5 +22,7 @@ router.register(r"work-orders", PMWorkOrderViewSet, basename="pm-work-orders")
 
 urlpatterns = [
     path("tenants/<int:tenant_id>/complete-internally/", complete_tenant_onboarding_internally, name="pm-tenant-complete-internally"),
+    path("tenants/<int:tenant_id>/complete-internally", complete_tenant_onboarding_internally, name="pm-tenant-complete-internally-no-slash"),
+    path("tenants/<int:tenant_id>/complete_internal/", complete_tenant_onboarding_internally, name="pm-tenant-complete-internal-compat"),
     path("", include(router.urls)),
 ]
