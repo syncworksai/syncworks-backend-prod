@@ -33,6 +33,8 @@ router.register(r"document-packets", PMDocumentPacketViewSet, basename="pm-docum
 router.register(r"ledger", PMLedgerEntryViewSet, basename="pm-ledger")
 router.register(r"work-orders", PMWorkOrderViewSet, basename="pm-work-orders")
 
+legacy_ledger_list = PMLedgerEntryViewSet.as_view({"get": "list", "post": "create"})
+
 urlpatterns = [
     path("tenants/<int:tenant_id>/complete-internally/", complete_tenant_onboarding_internally, name="pm-tenant-complete-internally"),
     path("tenants/<int:tenant_id>/complete-internally", complete_tenant_onboarding_internally, name="pm-tenant-complete-internally-no-slash"),
@@ -46,6 +48,7 @@ urlpatterns = [
     path("billing/tenants/<int:tenant_id>/undo-generated/", undo_generated_charges, name="pm-tenant-billing-undo-generated"),
     path("billing/my-account/", my_tenant_account, name="pm-tenant-my-account"),
     path("billing/investor-ledger/", investor_ledger, name="pm-investor-ledger"),
+    path("ledger-entries/", legacy_ledger_list, name="pm-ledger-entries-compat"),
     path("ledger/bulk-delete/", bulk_delete_ledger, name="pm-ledger-bulk-delete"),
     path("ledger/<int:entry_id>/correct/", correct_ledger_entry, name="pm-ledger-correct-entry"),
     path("ledger/<int:entry_id>/request-information/", request_ledger_information, name="pm-ledger-request-information"),
