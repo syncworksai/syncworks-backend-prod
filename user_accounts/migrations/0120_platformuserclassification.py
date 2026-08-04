@@ -5,8 +5,7 @@ import django.db.models.deletion
 
 class Migration(migrations.Migration):
     dependencies = [
-        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ("user_accounts", "0068_merge_20260729_1403"),
+        ("user_accounts", "0119_controlled_kpi_invoice_state_sync"),
     ]
 
     operations = [
