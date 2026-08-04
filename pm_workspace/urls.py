@@ -14,6 +14,7 @@ from .communication_views import (
     resolve_conversation,
 )
 from .document_views import PMPropertyDocumentViewSet, document_template_catalog, property_document_checklist
+from .lease_builder_views import lease_builder_bootstrap, lease_builder_finalize, lease_builder_prefill, lease_builder_save
 from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeaseViewSet, PMProspectViewSet, PMUnitViewSet
 from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
 from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_internally
@@ -56,6 +57,10 @@ urlpatterns = [
     path("ledger/<int:entry_id>/request-information/", request_ledger_information, name="pm-ledger-request-information"),
     path("document-library/checklist/", property_document_checklist, name="pm-document-checklist"),
     path("document-library/templates/", document_template_catalog, name="pm-document-template-catalog"),
+    path("lease-builder/properties/<int:property_id>/", lease_builder_bootstrap, name="pm-lease-builder-bootstrap"),
+    path("lease-builder/properties/<int:property_id>/tenants/<int:tenant_id>/prefill/", lease_builder_prefill, name="pm-lease-builder-prefill"),
+    path("lease-builder/properties/<int:property_id>/save/", lease_builder_save, name="pm-lease-builder-save"),
+    path("lease-builder/packets/<int:packet_id>/finalize/", lease_builder_finalize, name="pm-lease-builder-finalize"),
     path("conversations/", pm_conversations, name="pm-conversations"),
     path("conversations/<int:conversation_id>/reply/", reply_conversation, name="pm-conversation-reply"),
     path("conversations/<int:conversation_id>/resolve/", resolve_conversation, name="pm-conversation-resolve"),
