@@ -14,7 +14,7 @@ class PMWorkspaceConfig(AppConfig):
         from rest_framework.exceptions import ValidationError
         from rest_framework.response import Response
 
-        from . import communication_models, owner_models, workorder_models  # noqa: F401
+        from . import communication_models, document_models, owner_models, workorder_models  # noqa: F401
         from .models import PMLedgerEntry, PMProperty, PMTenant, PMUnit
         from .serializers import PMProjectSerializer, PMPropertySerializer, PMTenantSerializer
         from .views import PMProjectViewSet
@@ -68,8 +68,6 @@ class PMWorkspaceConfig(AppConfig):
                 occupied_units = units.filter(availability=PMUnit.Availability.OCCUPIED).count()
                 available_units = units.filter(availability=PMUnit.Availability.AVAILABLE).count()
 
-                # Single-family properties are occupied when a tenant is attached even if
-                # the manager did not create a separate unit record.
                 effective_total = total_units or 1
                 effective_occupied = occupied_units
                 if total_units == 0 and tenant_ids:

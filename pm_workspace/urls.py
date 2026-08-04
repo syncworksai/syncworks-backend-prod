@@ -13,6 +13,7 @@ from .communication_views import (
     requester_reply,
     resolve_conversation,
 )
+from .document_views import PMPropertyDocumentViewSet, document_template_catalog, property_document_checklist
 from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeaseViewSet, PMProspectViewSet, PMUnitViewSet
 from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
 from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_internally
@@ -30,6 +31,7 @@ router.register(r"units", PMUnitViewSet, basename="pm-units")
 router.register(r"prospects", PMProspectViewSet, basename="pm-prospects")
 router.register(r"leases", PMLeaseViewSet, basename="pm-leases")
 router.register(r"document-packets", PMDocumentPacketViewSet, basename="pm-document-packets")
+router.register(r"property-documents", PMPropertyDocumentViewSet, basename="pm-property-documents")
 router.register(r"ledger", PMLedgerEntryViewSet, basename="pm-ledger")
 router.register(r"work-orders", PMWorkOrderViewSet, basename="pm-work-orders")
 
@@ -52,6 +54,8 @@ urlpatterns = [
     path("ledger/bulk-delete/", bulk_delete_ledger, name="pm-ledger-bulk-delete"),
     path("ledger/<int:entry_id>/correct/", correct_ledger_entry, name="pm-ledger-correct-entry"),
     path("ledger/<int:entry_id>/request-information/", request_ledger_information, name="pm-ledger-request-information"),
+    path("document-library/checklist/", property_document_checklist, name="pm-document-checklist"),
+    path("document-library/templates/", document_template_catalog, name="pm-document-template-catalog"),
     path("conversations/", pm_conversations, name="pm-conversations"),
     path("conversations/<int:conversation_id>/reply/", reply_conversation, name="pm-conversation-reply"),
     path("conversations/<int:conversation_id>/resolve/", resolve_conversation, name="pm-conversation-resolve"),
