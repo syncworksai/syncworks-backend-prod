@@ -1,7 +1,18 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from .advanced_billing_views import advanced_tenant_billing, collections_statement_preview, generate_advanced_late_fees
 from .billing_views import generate_tenant_charges, my_tenant_account, portfolio_billing_summary, tenant_billing_profile
+from .communication_views import (
+    bulk_delete_ledger,
+    investor_ledger,
+    my_conversations,
+    pm_conversations,
+    reply_conversation,
+    request_ledger_information,
+    requester_reply,
+    resolve_conversation,
+)
 from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeaseViewSet, PMProspectViewSet, PMUnitViewSet
 from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
 from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_internally
@@ -28,9 +39,20 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/complete_internal/", complete_tenant_onboarding_internally, name="pm-tenant-complete-internal-compat"),
     path("billing/summary/", portfolio_billing_summary, name="pm-billing-summary"),
     path("billing/tenants/<int:tenant_id>/", tenant_billing_profile, name="pm-tenant-billing-profile"),
+    path("billing/tenants/<int:tenant_id>/advanced/", advanced_tenant_billing, name="pm-tenant-advanced-billing"),
     path("billing/tenants/<int:tenant_id>/generate/", generate_tenant_charges, name="pm-tenant-billing-generate"),
+    path("billing/tenants/<int:tenant_id>/generate-advanced-late-fees/", generate_advanced_late_fees, name="pm-tenant-generate-advanced-late-fees"),
+    path("billing/tenants/<int:tenant_id>/collections-preview/", collections_statement_preview, name="pm-tenant-collections-preview"),
     path("billing/tenants/<int:tenant_id>/undo-generated/", undo_generated_charges, name="pm-tenant-billing-undo-generated"),
     path("billing/my-account/", my_tenant_account, name="pm-tenant-my-account"),
+    path("billing/investor-ledger/", investor_ledger, name="pm-investor-ledger"),
+    path("ledger/bulk-delete/", bulk_delete_ledger, name="pm-ledger-bulk-delete"),
     path("ledger/<int:entry_id>/correct/", correct_ledger_entry, name="pm-ledger-correct-entry"),
+    path("ledger/<int:entry_id>/request-information/", request_ledger_information, name="pm-ledger-request-information"),
+    path("conversations/", pm_conversations, name="pm-conversations"),
+    path("conversations/<int:conversation_id>/reply/", reply_conversation, name="pm-conversation-reply"),
+    path("conversations/<int:conversation_id>/resolve/", resolve_conversation, name="pm-conversation-resolve"),
+    path("conversations/mine/", my_conversations, name="pm-my-conversations"),
+    path("conversations/<int:conversation_id>/requester-reply/", requester_reply, name="pm-conversation-requester-reply"),
     path("", include(router.urls)),
 ]
