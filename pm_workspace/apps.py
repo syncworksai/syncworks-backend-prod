@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.apps import AppConfig
 
 
@@ -13,8 +15,8 @@ class PMWorkspaceConfig(AppConfig):
         from rest_framework.response import Response
 
         from . import communication_models, owner_models, workorder_models  # noqa: F401
-        from .models import PMProperty
-        from .serializers import PMProjectSerializer, PMTenantSerializer
+        from .models import PMLedgerEntry, PMProperty, PMTenant, PMUnit
+        from .serializers import PMProjectSerializer, PMPropertySerializer, PMTenantSerializer
         from .views import PMProjectViewSet
 
         if not getattr(PMProjectSerializer, "_syncworks_blank_normalizer", False):
@@ -51,6 +53,58 @@ class PMWorkspaceConfig(AppConfig):
 
             PMTenantSerializer.to_representation = tenant_to_representation
             PMTenantSerializer._syncworks_property_resolver = True
+
+        if not getattr(PMPropertySerializer, "_syncworks_live_property_metrics", False):
+            original_property_representation = PMPropertySerializer.to_representation
+
+            def property_to_representation(serializer, instance):
+                data = original_property_representation(serializer, instance)
+                tenants = PMTenant.objects.filter(workspace_id=instance.workspace_id).filter(
+                    Q(property_name__iexact=instance.name) | Q(property_name__iexact=instance.address)
+                )
+                tenant_ids = list(tenants.values_list("id", flat=True))
+                units = PMUnit.objects.filter(property_id=instance.id)
+                total_units = units.count()
+                occupied_units = units.filter(availability=PMUnit.Availability.OCCUPIED).count()
+                available_units = units.filter(availability=PMUnit.Availability.AVAILABLE).count()
+
+                # Single-family properties are occupied when a tenant is attached even if
+                # the manager did not create a separate unit record.
+                effective_total = total_units or 1
+                effective_occupied = occupied_units
+                if total_units == 0 and tenant_ids:
+                    effective_occupied = 1
+                    available_units = 0
+                elif total_units and tenant_ids and occupied_units == 0:
+                    assigned_labels = {str(value or "").strip().lower() for value in tenants.values_list("unit_label", flat=True) if str(value or "").strip()}
+                    if assigned_labels:
+                        effective_occupied = units.filter(label__in=assigned_labels).count()
+                    if effective_occupied == 0:
+                        effective_occupied = min(len(tenant_ids), total_units)
+                    available_units = max(total_units - effective_occupied, 0)
+
+                balance = Decimal("0.00")
+                if tenant_ids:
+                    for ledger_entry in PMLedgerEntry.objects.filter(tenant_id__in=tenant_ids):
+                        if ledger_entry.entry_type in {PMLedgerEntry.EntryType.PAYMENT, PMLedgerEntry.EntryType.CREDIT}:
+                            balance -= ledger_entry.amount
+                        else:
+                            balance += ledger_entry.amount
+
+                occupancy_rate = Decimal(effective_occupied) / Decimal(effective_total) if effective_total else Decimal("0")
+                data.update({
+                    "tenant_count": len(tenant_ids),
+                    "total_units": total_units,
+                    "occupied_units": effective_occupied,
+                    "available_units": available_units,
+                    "occupancy_rate": float(occupancy_rate.quantize(Decimal("0.0001"))),
+                    "balance_due": str(balance.quantize(Decimal("0.01"))),
+                    "occupancy_status": "OCCUPIED" if effective_occupied else "VACANT",
+                })
+                return data
+
+            PMPropertySerializer.to_representation = property_to_representation
+            PMPropertySerializer._syncworks_live_property_metrics = True
 
         if not getattr(PMProjectViewSet, "_syncworks_detailed_create_errors", False):
             original_project_create = PMProjectViewSet.create
