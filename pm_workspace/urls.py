@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .billing_views import generate_tenant_charges, my_tenant_account, portfolio_billing_summary, tenant_billing_profile
 from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeaseViewSet, PMProspectViewSet, PMUnitViewSet
+from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
 from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_internally
 from .views import PMProjectViewSet, PMPropertyViewSet, PMTenantInvitationViewSet, PMTenantViewSet, PMWorkspaceViewSet
 from .workorder_views import PMWorkOrderViewSet
@@ -28,6 +29,8 @@ urlpatterns = [
     path("billing/summary/", portfolio_billing_summary, name="pm-billing-summary"),
     path("billing/tenants/<int:tenant_id>/", tenant_billing_profile, name="pm-tenant-billing-profile"),
     path("billing/tenants/<int:tenant_id>/generate/", generate_tenant_charges, name="pm-tenant-billing-generate"),
+    path("billing/tenants/<int:tenant_id>/undo-generated/", undo_generated_charges, name="pm-tenant-billing-undo-generated"),
     path("billing/my-account/", my_tenant_account, name="pm-tenant-my-account"),
+    path("ledger/<int:entry_id>/correct/", correct_ledger_entry, name="pm-ledger-correct-entry"),
     path("", include(router.urls)),
 ]
