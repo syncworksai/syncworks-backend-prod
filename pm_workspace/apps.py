@@ -12,7 +12,7 @@ class PMWorkspaceConfig(AppConfig):
         from rest_framework.exceptions import ValidationError
         from rest_framework.response import Response
 
-        from . import workorder_models  # noqa: F401
+        from . import owner_models, workorder_models  # noqa: F401
         from .models import PMProperty
         from .serializers import PMProjectSerializer, PMTenantSerializer
         from .views import PMProjectViewSet
@@ -22,35 +22,12 @@ class PMWorkspaceConfig(AppConfig):
 
             def project_to_internal_value(serializer, data):
                 normalized = data.copy() if hasattr(data, "copy") else dict(data or {})
-                for field in (
-                    "property",
-                    "start_date",
-                    "target_date",
-                    "next_action_due",
-                    "budget_amount",
-                    "actual_amount",
-                ):
+                for field in ("property", "start_date", "target_date", "next_action_due", "budget_amount", "actual_amount"):
                     if normalized.get(field) == "":
                         normalized[field] = None
                 if normalized.get("progress_percent") in ("", None):
                     normalized["progress_percent"] = 0
-                for field in (
-                    "title",
-                    "description",
-                    "category",
-                    "unit_label",
-                    "internal_assignee_name",
-                    "internal_assignee_email",
-                    "external_assignee_name",
-                    "external_assignee_email",
-                    "vendor_title",
-                    "vendor_contact_name",
-                    "vendor_email",
-                    "contract_reference",
-                    "blocker",
-                    "next_action",
-                    "update_recipient_emails",
-                ):
+                for field in ("title", "description", "category", "unit_label", "internal_assignee_name", "internal_assignee_email", "external_assignee_name", "external_assignee_email", "vendor_title", "vendor_contact_name", "vendor_email", "contract_reference", "blocker", "next_action", "update_recipient_emails"):
                     if isinstance(normalized.get(field), str):
                         normalized[field] = normalized[field].strip()
                 return original_project_to_internal(serializer, normalized)
@@ -65,12 +42,7 @@ class PMWorkspaceConfig(AppConfig):
                 data = original_tenant_representation(serializer, instance)
                 label = str(data.get("property_name") or "").strip()
                 if label:
-                    matched = (
-                        PMProperty.objects.filter(workspace_id=instance.workspace_id)
-                        .filter(Q(name__iexact=label) | Q(address__iexact=label))
-                        .order_by("id")
-                        .first()
-                    )
+                    matched = PMProperty.objects.filter(workspace_id=instance.workspace_id).filter(Q(name__iexact=label) | Q(address__iexact=label)).order_by("id").first()
                     if matched:
                         data["property_name"] = matched.name
                         data["property_id"] = matched.id
@@ -98,13 +70,7 @@ class PMWorkspaceConfig(AppConfig):
                         parts.extend(str(value) for value in detail)
                     else:
                         parts.append(str(detail))
-                    return Response(
-                        {
-                            "detail": " · ".join(parts) or "Project validation failed.",
-                            "errors": detail,
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+                    return Response({"detail": " · ".join(parts) or "Project validation failed.", "errors": detail}, status=status.HTTP_400_BAD_REQUEST)
 
             PMProjectViewSet.create = project_create
             PMProjectViewSet._syncworks_detailed_create_errors = True
