@@ -2,6 +2,16 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .billing_views import generate_tenant_charges, my_tenant_account, portfolio_billing_summary, tenant_billing_profile
+from .communication_views import (
+    bulk_delete_ledger,
+    investor_ledger,
+    my_conversations,
+    pm_conversations,
+    reply_conversation,
+    request_ledger_information,
+    requester_reply,
+    resolve_conversation,
+)
 from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeaseViewSet, PMProspectViewSet, PMUnitViewSet
 from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
 from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_internally
@@ -31,6 +41,14 @@ urlpatterns = [
     path("billing/tenants/<int:tenant_id>/generate/", generate_tenant_charges, name="pm-tenant-billing-generate"),
     path("billing/tenants/<int:tenant_id>/undo-generated/", undo_generated_charges, name="pm-tenant-billing-undo-generated"),
     path("billing/my-account/", my_tenant_account, name="pm-tenant-my-account"),
+    path("billing/investor-ledger/", investor_ledger, name="pm-investor-ledger"),
+    path("ledger/bulk-delete/", bulk_delete_ledger, name="pm-ledger-bulk-delete"),
     path("ledger/<int:entry_id>/correct/", correct_ledger_entry, name="pm-ledger-correct-entry"),
+    path("ledger/<int:entry_id>/request-information/", request_ledger_information, name="pm-ledger-request-information"),
+    path("conversations/", pm_conversations, name="pm-conversations"),
+    path("conversations/<int:conversation_id>/reply/", reply_conversation, name="pm-conversation-reply"),
+    path("conversations/<int:conversation_id>/resolve/", resolve_conversation, name="pm-conversation-resolve"),
+    path("conversations/mine/", my_conversations, name="pm-my-conversations"),
+    path("conversations/<int:conversation_id>/requester-reply/", requester_reply, name="pm-conversation-requester-reply"),
     path("", include(router.urls)),
 ]
