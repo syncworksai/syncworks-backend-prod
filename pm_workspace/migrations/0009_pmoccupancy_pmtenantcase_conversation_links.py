@@ -3,6 +3,43 @@ from django.db import migrations, models
 import django.db.models.deletion
 
 
+def backfill_existing_occupancies(apps, schema_editor):
+    PMTenant = apps.get_model("pm_workspace", "PMTenant")
+    PMProperty = apps.get_model("pm_workspace", "PMProperty")
+    PMUnit = apps.get_model("pm_workspace", "PMUnit")
+    PMLease = apps.get_model("pm_workspace", "PMLease")
+    PMOccupancy = apps.get_model("pm_workspace", "PMOccupancy")
+
+    for tenant in PMTenant.objects.exclude(property_name="").iterator():
+        label = str(tenant.property_name or "").strip()
+        if not label:
+            continue
+        property_obj = PMProperty.objects.filter(workspace_id=tenant.workspace_id, name__iexact=label).first()
+        if not property_obj:
+            property_obj = PMProperty.objects.filter(workspace_id=tenant.workspace_id, address__iexact=label).first()
+        if not property_obj:
+            continue
+        unit = None
+        if tenant.unit_label:
+            unit = PMUnit.objects.filter(property_id=property_obj.id, label__iexact=str(tenant.unit_label).strip()).first()
+        lease = PMLease.objects.filter(workspace_id=tenant.workspace_id, tenant_id=tenant.id).order_by("-start_date", "-id").first()
+        PMOccupancy.objects.get_or_create(
+            workspace_id=tenant.workspace_id,
+            tenant_id=tenant.id,
+            property_id=property_obj.id,
+            status="ACTIVE",
+            defaults={
+                "unit_id": unit.id if unit else None,
+                "lease_id": lease.id if lease else None,
+                "move_in_date": tenant.move_in_date or tenant.lease_start,
+                "notes": "Backfilled from existing tenant-property assignment.",
+            },
+        )
+        if unit and unit.availability != "OCCUPIED":
+            unit.availability = "OCCUPIED"
+            unit.save(update_fields=["availability"])
+
+
 class Migration(migrations.Migration):
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
@@ -67,6 +104,7 @@ class Migration(migrations.Migration):
         migrations.AlterField(model_name="pmconversation", name="property_owner", field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="conversations", to="pm_workspace.pmpropertyowner")),
         migrations.AlterField(model_name="pmconversation", name="tenant", field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="conversations", to="pm_workspace.pmtenant")),
         migrations.AlterField(model_name="pmconversationmessage", name="sender_role", field=models.CharField(choices=[("PM", "Property management"), ("TENANT", "Tenant"), ("INVESTOR", "Investor"), ("INTERNAL", "Internal team"), ("SYSTEM", "System")], max_length=16)),
+        migrations.RunPython(backfill_existing_occupancies, migrations.RunPython.noop),
         migrations.AddIndex(model_name="pmoccupancy", index=models.Index(fields=["workspace", "property", "status"], name="pm_workspac_workspa_4c4553_idx")),
         migrations.AddIndex(model_name="pmoccupancy", index=models.Index(fields=["workspace", "tenant", "status"], name="pm_workspac_workspa_950a50_idx")),
         migrations.AddIndex(model_name="pmtenantcase", index=models.Index(fields=["workspace", "status"], name="pm_workspac_workspa_f19478_idx")),
