@@ -17,6 +17,15 @@ from .document_views import PMPropertyDocumentViewSet, document_template_catalog
 from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeaseViewSet, PMProspectViewSet, PMUnitViewSet
 from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
 from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_internally
+from .record_views import (
+    inbox_reply,
+    move_out_tenant,
+    occupancies,
+    tenant_cases,
+    tenant_portal_communications,
+    unified_inbox,
+    update_tenant_case,
+)
 from .views import PMProjectViewSet, PMPropertyViewSet, PMTenantInvitationViewSet, PMTenantViewSet, PMWorkspaceViewSet
 from .workorder_views import PMWorkOrderViewSet
 
@@ -41,6 +50,13 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/complete-internally/", complete_tenant_onboarding_internally, name="pm-tenant-complete-internally"),
     path("tenants/<int:tenant_id>/complete-internally", complete_tenant_onboarding_internally, name="pm-tenant-complete-internally-no-slash"),
     path("tenants/<int:tenant_id>/complete_internal/", complete_tenant_onboarding_internally, name="pm-tenant-complete-internal-compat"),
+    path("occupancies/", occupancies, name="pm-occupancies"),
+    path("occupancies/<int:occupancy_id>/move-out/", move_out_tenant, name="pm-occupancy-move-out"),
+    path("tenant-cases/", tenant_cases, name="pm-tenant-cases"),
+    path("tenant-cases/<int:case_id>/", update_tenant_case, name="pm-tenant-case-update"),
+    path("messages/", unified_inbox, name="pm-unified-inbox"),
+    path("messages/<int:conversation_id>/reply/", inbox_reply, name="pm-unified-inbox-reply"),
+    path("tenant-portal/communications/", tenant_portal_communications, name="pm-tenant-portal-communications"),
     path("billing/summary/", portfolio_billing_summary, name="pm-billing-summary"),
     path("billing/tenants/<int:tenant_id>/", tenant_billing_profile, name="pm-tenant-billing-profile"),
     path("billing/tenants/<int:tenant_id>/advanced/", advanced_tenant_billing, name="pm-tenant-advanced-billing"),
