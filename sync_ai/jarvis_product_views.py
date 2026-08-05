@@ -8,10 +8,9 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from user_accounts.models import AuditLog, UserBillingProfile, User
+from user_accounts.models import AuditLog, User, UserBillingProfile
 
-from .jarvis_product import PLAN_PRICE_ENV if False else None
-from .jarvis_product import effective_plan, load_profile, product_payload, save_profile
+from .jarvis_product import product_payload, save_profile
 
 PRICE_ENV = {
     "PERSONAL": "STRIPE_JARVIS_PERSONAL_PRICE_ID",
@@ -27,7 +26,7 @@ class UserJarvisProfileView(APIView):
         return Response(product_payload(request.user))
 
     def patch(self, request):
-        profile = save_profile(request.user, request.data)
+        save_profile(request.user, request.data)
         AuditLog.objects.create(actor=request.user, action="jarvis.profile.updated", metadata={"fields": sorted(request.data.keys())})
         return Response(product_payload(request.user))
 
