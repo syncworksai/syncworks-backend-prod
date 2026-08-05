@@ -19,7 +19,6 @@ from .ledger_correction_views import correct_ledger_entry, undo_generated_charge
 from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_internally
 from .record_views import (
     inbox_reply,
-    move_out_tenant,
     occupancies,
     tenant_cases,
     tenant_portal_communications,
@@ -27,6 +26,8 @@ from .record_views import (
     update_tenant_case,
 )
 from .views import PMProjectViewSet, PMPropertyViewSet, PMTenantInvitationViewSet, PMTenantViewSet, PMWorkspaceViewSet
+from .workflow_close_views import close_occupancy_workflow
+from .workflow_views import email_conversation, evict_occupancy, make_ready_board, update_make_ready
 from .workorder_views import PMWorkOrderViewSet
 
 router = DefaultRouter()
@@ -51,11 +52,15 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/complete-internally", complete_tenant_onboarding_internally, name="pm-tenant-complete-internally-no-slash"),
     path("tenants/<int:tenant_id>/complete_internal/", complete_tenant_onboarding_internally, name="pm-tenant-complete-internal-compat"),
     path("occupancies/", occupancies, name="pm-occupancies"),
-    path("occupancies/<int:occupancy_id>/move-out/", move_out_tenant, name="pm-occupancy-move-out"),
+    path("occupancies/<int:occupancy_id>/move-out/", close_occupancy_workflow, name="pm-occupancy-move-out"),
+    path("occupancies/<int:occupancy_id>/evict/", evict_occupancy, name="pm-occupancy-evict"),
     path("tenant-cases/", tenant_cases, name="pm-tenant-cases"),
     path("tenant-cases/<int:case_id>/", update_tenant_case, name="pm-tenant-case-update"),
     path("messages/", unified_inbox, name="pm-unified-inbox"),
     path("messages/<int:conversation_id>/reply/", inbox_reply, name="pm-unified-inbox-reply"),
+    path("messages/<int:conversation_id>/email/", email_conversation, name="pm-unified-inbox-email"),
+    path("make-ready/", make_ready_board, name="pm-make-ready-board"),
+    path("make-ready/<int:work_order_id>/", update_make_ready, name="pm-make-ready-update"),
     path("tenant-portal/communications/", tenant_portal_communications, name="pm-tenant-portal-communications"),
     path("billing/summary/", portfolio_billing_summary, name="pm-billing-summary"),
     path("billing/tenants/<int:tenant_id>/", tenant_billing_profile, name="pm-tenant-billing-profile"),
