@@ -14,7 +14,8 @@ class PMWorkspaceConfig(AppConfig):
         from rest_framework.exceptions import ValidationError
         from rest_framework.response import Response
 
-        from . import communication_models, document_models, owner_models, workorder_models  # noqa: F401
+        from . import communication_models, document_models, lifecycle_models, owner_models, workorder_models  # noqa: F401
+        from .lifecycle_models import PMOccupancy
         from .models import PMLedgerEntry, PMProperty, PMTenant, PMUnit
         from .serializers import PMProjectSerializer, PMPropertySerializer, PMTenantSerializer
         from .views import PMProjectViewSet
@@ -42,13 +43,25 @@ class PMWorkspaceConfig(AppConfig):
 
             def tenant_to_representation(serializer, instance):
                 data = original_tenant_representation(serializer, instance)
-                label = str(data.get("property_name") or "").strip()
-                if label:
-                    matched = PMProperty.objects.filter(workspace_id=instance.workspace_id).filter(Q(name__iexact=label) | Q(address__iexact=label)).order_by("id").first()
-                    if matched:
-                        data["property_name"] = matched.name
-                        data["property_id"] = matched.id
-                        data["property_address"] = matched.address
+                occupancy = PMOccupancy.objects.filter(
+                    workspace_id=instance.workspace_id,
+                    tenant_id=instance.id,
+                    status__in=[PMOccupancy.Status.ACTIVE, PMOccupancy.Status.NOTICE_GIVEN],
+                ).select_related("property", "unit").order_by("-move_in_date", "-id").first()
+                if occupancy:
+                    data["property_name"] = occupancy.property.name
+                    data["property_id"] = occupancy.property_id
+                    data["property_address"] = occupancy.property.address
+                    data["unit_label"] = occupancy.unit.label if occupancy.unit else data.get("unit_label", "")
+                    data["active_occupancy_id"] = occupancy.id
+                else:
+                    label = str(data.get("property_name") or "").strip()
+                    if label:
+                        matched = PMProperty.objects.filter(workspace_id=instance.workspace_id).filter(Q(name__iexact=label) | Q(address__iexact=label)).order_by("id").first()
+                        if matched:
+                            data["property_name"] = matched.name
+                            data["property_id"] = matched.id
+                            data["property_address"] = matched.address
                 return data
 
             PMTenantSerializer.to_representation = tenant_to_representation
@@ -59,27 +72,24 @@ class PMWorkspaceConfig(AppConfig):
 
             def property_to_representation(serializer, instance):
                 data = original_property_representation(serializer, instance)
-                tenants = PMTenant.objects.filter(workspace_id=instance.workspace_id).filter(
-                    Q(property_name__iexact=instance.name) | Q(property_name__iexact=instance.address)
-                )
-                tenant_ids = list(tenants.values_list("id", flat=True))
+                active_occupancies = PMOccupancy.objects.filter(
+                    workspace_id=instance.workspace_id,
+                    property_id=instance.id,
+                    status__in=[PMOccupancy.Status.ACTIVE, PMOccupancy.Status.NOTICE_GIVEN],
+                ).select_related("tenant", "unit")
+                tenant_ids = list(active_occupancies.values_list("tenant_id", flat=True))
                 units = PMUnit.objects.filter(property_id=instance.id)
                 total_units = units.count()
-                occupied_units = units.filter(availability=PMUnit.Availability.OCCUPIED).count()
-                available_units = units.filter(availability=PMUnit.Availability.AVAILABLE).count()
+                occupied_unit_ids = set(active_occupancies.exclude(unit_id=None).values_list("unit_id", flat=True))
+                occupied_units = len(occupied_unit_ids)
 
                 effective_total = total_units or 1
                 effective_occupied = occupied_units
                 if total_units == 0 and tenant_ids:
                     effective_occupied = 1
-                    available_units = 0
-                elif total_units and tenant_ids and occupied_units == 0:
-                    assigned_labels = {str(value or "").strip().lower() for value in tenants.values_list("unit_label", flat=True) if str(value or "").strip()}
-                    if assigned_labels:
-                        effective_occupied = units.filter(label__in=assigned_labels).count()
-                    if effective_occupied == 0:
-                        effective_occupied = min(len(tenant_ids), total_units)
-                    available_units = max(total_units - effective_occupied, 0)
+                elif total_units and tenant_ids and effective_occupied == 0:
+                    effective_occupied = min(len(set(tenant_ids)), total_units)
+                available_units = max(effective_total - effective_occupied, 0)
 
                 balance = Decimal("0.00")
                 if tenant_ids:
@@ -91,7 +101,7 @@ class PMWorkspaceConfig(AppConfig):
 
                 occupancy_rate = Decimal(effective_occupied) / Decimal(effective_total) if effective_total else Decimal("0")
                 data.update({
-                    "tenant_count": len(tenant_ids),
+                    "tenant_count": len(set(tenant_ids)),
                     "total_units": total_units,
                     "occupied_units": effective_occupied,
                     "available_units": available_units,
