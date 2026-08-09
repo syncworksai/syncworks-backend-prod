@@ -3,6 +3,11 @@ from .settings import *  # noqa: F401,F403
 if "pm_workspace.apps.PMWorkspaceConfig" not in INSTALLED_APPS:
     INSTALLED_APPS = [*INSTALLED_APPS, "pm_workspace.apps.PMWorkspaceConfig"]
 
+if "platform_edge.apps.PlatformEdgeConfig" not in INSTALLED_APPS:
+    INSTALLED_APPS = [*INSTALLED_APPS, "platform_edge.apps.PlatformEdgeConfig"]
+
+EDGE_CREDENTIAL_ENCRYPTION_KEY = env("EDGE_CREDENTIAL_ENCRYPTION_KEY", "") or ""
+
 # PM requests identify the active portfolio with this custom header.
 # It must be explicitly allowed so browser CORS preflight requests can succeed.
 if "x-pm-workspace-id" not in CORS_ALLOW_HEADERS:
