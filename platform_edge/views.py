@@ -42,6 +42,7 @@ def dashboard(request):
     return Response({
         "mode": "PAPER",
         "live_trading_enabled": False,
+        "automation_enabled": False,
         "strategy": EdgeStrategySerializer(strategy).data,
         "connections": EdgeExchangeConnectionSerializer(connections, many=True).data,
         "signals": EdgeSignalSerializer(signals, many=True).data,
@@ -63,6 +64,10 @@ class StrategyViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user, is_armed=False)
+
+    def perform_update(self, serializer):
+        # Automation cannot be armed until the verified-exchange/risk-engine stage lands.
+        serializer.save(is_armed=False)
 
     @action(detail=True, methods=["post"])
     def disarm(self, request, pk=None):
