@@ -1,11 +1,13 @@
 from django.db.models import Sum
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from .kalshi import get_balance
 from .models import EdgeAuditEvent, EdgeExchangeConnection, EdgePaperTrade, EdgeSignal, EdgeStrategy
-from .security import encrypt_secret
+from .security import decrypt_secret, encrypt_secret
 from .serializers import EdgeExchangeConnectionSerializer, EdgePaperTradeSerializer, EdgeSignalSerializer, EdgeStrategySerializer
 
 
@@ -29,6 +31,13 @@ def _default_strategy(user):
         },
     )
     return strategy
+
+
+def _environment(request):
+    value = str(request.data.get("environment") or request.query_params.get("environment") or "DEMO").upper()
+    if value not in {"DEMO", "LIVE"}:
+        return None
+    return value
 
 
 @api_view(["GET"])
@@ -66,7 +75,7 @@ class StrategyViewSet(viewsets.ModelViewSet):
         serializer.save(user=self.request.user, is_armed=False)
 
     def perform_update(self, serializer):
-        # Automation cannot be armed until the verified-exchange/risk-engine stage lands.
+        # Automation cannot be armed until verified live execution/risk controls land.
         serializer.save(is_armed=False)
 
     @action(detail=True, methods=["post"])
@@ -92,8 +101,8 @@ class PaperTradeViewSet(viewsets.ModelViewSet):
 @api_view(["GET", "POST", "DELETE"])
 @permission_classes([IsAuthenticated])
 def kalshi_connection(request):
-    environment = str(request.data.get("environment") or request.query_params.get("environment") or "DEMO").upper()
-    if environment not in {"DEMO", "LIVE"}:
+    environment = _environment(request)
+    if not environment:
         return Response({"detail": "environment must be DEMO or LIVE"}, status=status.HTTP_400_BAD_REQUEST)
 
     existing = EdgeExchangeConnection.objects.filter(user=request.user, exchange="KALSHI", environment=environment).first()
@@ -114,20 +123,72 @@ def kalshi_connection(request):
     if not api_key_id or "PRIVATE KEY" not in private_key:
         return Response({"detail": "A Kalshi API Key ID and RSA private key are required."}, status=status.HTTP_400_BAD_REQUEST)
 
+    try:
+        encrypted_private_key = encrypt_secret(private_key)
+    except RuntimeError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
     connection, _ = EdgeExchangeConnection.objects.update_or_create(
         user=request.user,
         exchange="KALSHI",
         environment=environment,
         defaults={
             "api_key_id": api_key_id,
-            "encrypted_private_key": encrypt_secret(private_key),
+            "encrypted_private_key": encrypted_private_key,
             "can_read": False,
             "can_trade": False,
             "is_active": True,
+            "last_verified_at": None,
         },
     )
     EdgeAuditEvent.objects.create(user=request.user, event_type="KALSHI_CREDENTIALS_SAVED", payload={"environment": environment})
     data = EdgeExchangeConnectionSerializer(connection).data
     data["verification_required"] = True
-    data["message"] = "Credentials saved securely. Exchange verification is the next stage; live trading remains locked."
+    data["message"] = "Credentials saved securely. Verify the account before using EDGE with Kalshi."
     return Response(data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def kalshi_verify(request):
+    environment = _environment(request)
+    if not environment:
+        return Response({"detail": "environment must be DEMO or LIVE"}, status=status.HTTP_400_BAD_REQUEST)
+
+    connection = EdgeExchangeConnection.objects.filter(
+        user=request.user,
+        exchange="KALSHI",
+        environment=environment,
+        is_active=True,
+    ).first()
+    if not connection:
+        return Response({"detail": "No saved Kalshi connection was found."}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        private_key = decrypt_secret(connection.encrypted_private_key)
+        balance = get_balance(connection.api_key_id, private_key, environment)
+    except RuntimeError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except (ValueError, TypeError) as exc:
+        connection.can_read = False
+        connection.can_trade = False
+        connection.save(update_fields=["can_read", "can_trade", "updated_at"])
+        EdgeAuditEvent.objects.create(user=request.user, event_type="KALSHI_VERIFY_FAILED", payload={"environment": environment})
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception:
+        return Response({"detail": "Kalshi verification is temporarily unavailable."}, status=status.HTTP_502_BAD_GATEWAY)
+
+    connection.can_read = True
+    connection.can_trade = False
+    connection.last_verified_at = timezone.now()
+    connection.save(update_fields=["can_read", "can_trade", "last_verified_at", "updated_at"])
+    EdgeAuditEvent.objects.create(user=request.user, event_type="KALSHI_VERIFIED", payload={"environment": environment})
+
+    data = EdgeExchangeConnectionSerializer(connection).data
+    data.update({
+        "balance_cents": int(balance.get("balance") or 0),
+        "portfolio_value_cents": int(balance.get("portfolio_value") or 0),
+        "live_trading_enabled": False,
+        "message": "Kalshi account verified. Trading remains locked until the execution stage is enabled.",
+    })
+    return Response(data)
