@@ -75,7 +75,6 @@ class StrategyViewSet(viewsets.ModelViewSet):
         serializer.save(user=self.request.user, is_armed=False)
 
     def perform_update(self, serializer):
-        # Automation cannot be armed until verified live execution/risk controls land.
         serializer.save(is_armed=False)
 
     @action(detail=True, methods=["post"])
@@ -124,9 +123,15 @@ def kalshi_connection(request):
         return Response({"detail": "A Kalshi API Key ID and RSA private key are required."}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
+        balance = get_balance(api_key_id, private_key, environment)
         encrypted_private_key = encrypt_secret(private_key)
     except RuntimeError as exc:
         return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except (ValueError, TypeError) as exc:
+        EdgeAuditEvent.objects.create(user=request.user, event_type="KALSHI_CONNECT_FAILED", payload={"environment": environment})
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception:
+        return Response({"detail": "Kalshi connection verification is temporarily unavailable."}, status=status.HTTP_502_BAD_GATEWAY)
 
     connection, _ = EdgeExchangeConnection.objects.update_or_create(
         user=request.user,
@@ -135,16 +140,20 @@ def kalshi_connection(request):
         defaults={
             "api_key_id": api_key_id,
             "encrypted_private_key": encrypted_private_key,
-            "can_read": False,
+            "can_read": True,
             "can_trade": False,
             "is_active": True,
-            "last_verified_at": None,
+            "last_verified_at": timezone.now(),
         },
     )
-    EdgeAuditEvent.objects.create(user=request.user, event_type="KALSHI_CREDENTIALS_SAVED", payload={"environment": environment})
+    EdgeAuditEvent.objects.create(user=request.user, event_type="KALSHI_VERIFIED", payload={"environment": environment})
     data = EdgeExchangeConnectionSerializer(connection).data
-    data["verification_required"] = True
-    data["message"] = "Credentials saved securely. Verify the account before using EDGE with Kalshi."
+    data.update({
+        "balance_cents": int(balance.get("balance") or 0),
+        "portfolio_value_cents": int(balance.get("portfolio_value") or 0),
+        "live_trading_enabled": False,
+        "message": "Kalshi account verified and connected. Trading remains locked until the execution stage is enabled.",
+    })
     return Response(data, status=status.HTTP_201_CREATED)
 
 
