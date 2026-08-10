@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# EDGE v0.6 one-shot historical research runner.
 import bisect
 import json
 import math
@@ -57,7 +58,6 @@ def logit(p):
 
 
 def fair_prob(side, away, home, away_score, home_score, inning, half, outs):
-    # Same intentionally-simple v0.2 family: neutral pregame strength + home field + live score/time.
     x = logit(.5) - .10
     remaining_outs = max(0, 27 - ((max(1, inning)-1)*3 + (3 if str(half).lower()=="bottom" else 0) + outs))
     leverage = min(1.0, remaining_outs / 27.0)
@@ -170,7 +170,6 @@ def run(days=10):
                     observations.append({"date":str(day),"game_pk":game_pk,"ticker":m["ticker"],"side":side,"away":away,"home":home,"score":[st["away_score"],st["home_score"]],"inning":st["inning"],"half":st["half"],"outs":st["outs"],"ask":ask,"model":round(p*100,2),"edge":round(p*100-ask,2),"won":result=="yes","trailing":trailing,"deficit":deficit,"ts":ts})
             time.sleep(.03)
 
-    # One entry per market per threshold: first qualifying observation. This prevents minute-by-minute double-counting.
     thresholds={}
     for th in (5,8,10):
         first={}
@@ -178,7 +177,6 @@ def run(days=10):
             if o["edge"]>=th and o["ticker"] not in first: first[o["ticker"]]=o
         trades=list(first.values()); profits=[]
         for o in trades:
-            # $1 invested at ask, held to settlement. Gross before fees.
             profit=(100/o["ask"]-1) if o["won"] else -1
             profits.append(profit)
         thresholds[str(th)]={"trades":len(trades),"wins":sum(x["won"] for x in trades),"win_rate_pct":round(100*sum(x["won"] for x in trades)/len(trades),2) if trades else None,"gross_profit_per_$1_each":round(sum(profits),2),"gross_roi_pct":round(100*sum(profits)/len(trades),2) if trades else None}
@@ -186,7 +184,6 @@ def run(days=10):
     comeback={}
     for deficit in (1,2,3):
         subset=[o for o in observations if o["trailing"] and o["deficit"]==deficit and 4<=o["inning"]<=6]
-        # unique market+inning observation, earliest minute in state
         seen={}
         for o in sorted(subset,key=lambda x:x["ts"]): seen.setdefault((o["ticker"],o["inning"]),o)
         rows=list(seen.values())
