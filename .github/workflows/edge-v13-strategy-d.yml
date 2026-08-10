@@ -1,0 +1,33 @@
+name: EDGE v1.3 Strategy D Game Reentry
+
+on:
+  push:
+    branches:
+      - agent/edge-strategy-d-game-reentry
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run Strategy D full-game reentry replay
+        env:
+          EDGE_DAYS: '120'
+        run: python scripts/edge_v13_strategy_d_game_reentry.py | tee edge_v13_console.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v13-strategy-d-results
+          path: |
+            edge_v13_strategy_d_results.json
+            edge_v13_strategy_d_multi_trades.json
+            edge_v13_console.txt
+          retention-days: 14
