@@ -130,3 +130,4 @@ def run(days=20):
     result={"period":{"start":str(start),"end":str(end)},"coverage":cov,"model":{"version":"EDGE-MLB-v0.7-pregame-context","pregame_baseline":"normalized last pregame Kalshi asks","fit":params,"split":"chronological 60% train / 40% untouched holdout"},"results":{"train":pack(train),"holdout":pack(hold)},"limitations":["Research only; no live orders.","Friction modeled as +1.5 cents to entry price.","Pitcher, bullpen, lineup and injuries are not yet included.","Holdout dates are untouched by coefficient fitting."]}
     Path("edge_v07_results.json").write_text(json.dumps(result,indent=2)); Path("edge_v07_holdout_sample.json").write_text(json.dumps(hold[:5000],indent=2)); print(json.dumps(result,indent=2))
 if __name__=="__main__":run(int(os.environ.get("EDGE_DAYS","20")))
+# Trigger-only research rerun marker.
