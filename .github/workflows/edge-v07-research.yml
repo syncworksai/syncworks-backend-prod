@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - agent/edge-v07-context-model
+      - agent/edge-v07c-clean
   workflow_dispatch:
 
 permissions:
@@ -19,10 +20,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install requests
-      - name: Run EDGE v0.7 pregame baseline + untouched holdout
+      - name: Run EDGE v0.7 trade-backed pregame baseline + untouched holdout
         env:
           EDGE_DAYS: '20'
-        run: python scripts/edge_v07_pregame_holdout.py | tee edge_v07_console.txt
+        run: python scripts/edge_v07c_pregame_holdout.py | tee edge_v07_console.txt
       - uses: actions/upload-artifact@v4
         with:
           name: edge-v07-results
