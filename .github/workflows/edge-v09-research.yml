@@ -1,0 +1,33 @@
+name: EDGE v0.9 Focused Reversion Research
+
+on:
+  push:
+    branches:
+      - agent/edge-v09-focused-reversion
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run EDGE v0.9 large-sample focused reversion holdout
+        env:
+          EDGE_DAYS: '60'
+        run: python scripts/edge_v09_focused_reversion.py | tee edge_v09_console.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v09-results
+          path: |
+            edge_v09_results.json
+            edge_v09_holdout_replays.json
+            edge_v09_console.txt
+          retention-days: 14
