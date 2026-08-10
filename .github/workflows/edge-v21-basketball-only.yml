@@ -1,0 +1,28 @@
+name: EDGE v2.1 Basketball Only
+
+on:
+  push:
+    branches:
+      - agent/edge-v21-basketball-only
+  workflow_dispatch:
+
+jobs:
+  backtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run basketball-only state-aware discovery
+        env:
+          EDGE_DAYS: '240'
+          EDGE_MAX_EVENTS: '100'
+        run: python scripts/edge_v21_basketball_only.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v21-basketball-only-results
+          path: edge_v20_state_sports_results.json
+          if-no-files-found: error
