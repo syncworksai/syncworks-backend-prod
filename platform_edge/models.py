@@ -84,3 +84,37 @@ class EdgeAuditEvent(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class EdgeHistoricalSnapshot(models.Model):
+    """One-minute replay point joining a historical MLB state to a Kalshi price."""
+
+    game_pk = models.BigIntegerField()
+    market_ticker = models.CharField(max_length=180)
+    event_ticker = models.CharField(max_length=180, blank=True)
+    observed_at = models.DateTimeField(db_index=True)
+    away_code = models.CharField(max_length=8)
+    home_code = models.CharField(max_length=8)
+    side_code = models.CharField(max_length=8)
+    away_score = models.PositiveSmallIntegerField(default=0)
+    home_score = models.PositiveSmallIntegerField(default=0)
+    inning = models.PositiveSmallIntegerField(null=True, blank=True)
+    inning_half = models.CharField(max_length=8, blank=True)
+    outs = models.PositiveSmallIntegerField(default=0)
+    runners_on_base = models.PositiveSmallIntegerField(default=0)
+    yes_bid_cents = models.PositiveSmallIntegerField(null=True, blank=True)
+    yes_ask_cents = models.PositiveSmallIntegerField(null=True, blank=True)
+    yes_close_cents = models.PositiveSmallIntegerField(null=True, blank=True)
+    market_result = models.CharField(max_length=8, blank=True)
+    model_probability_bps = models.PositiveIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["market_ticker", "observed_at"], name="edge_hist_market_time_uniq"),
+        ]
+        indexes = [
+            models.Index(fields=["game_pk", "observed_at"]),
+            models.Index(fields=["side_code", "away_score", "home_score", "inning"]),
+        ]
+        ordering = ["observed_at"]
