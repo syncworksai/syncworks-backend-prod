@@ -9,7 +9,7 @@ class StrategyATests(TestCase):
         self.assertGreater(p, 0)
         self.assertLess(p, 1)
 
-    def test_strategy_a_requires_frozen_rule(self):
+    def test_strategy_a_rule_fields_are_computed(self):
         game = {
             "game_pk": 1,
             "is_live": True,
@@ -24,6 +24,9 @@ class StrategyATests(TestCase):
         }
         row = _side_row(game, "away", 0.60)
         self.assertEqual(row["deficit"], 1)
-        self.assertGreaterEqual(row["market_drop_pct"], 18)
+        self.assertEqual(row["inning"], 5)
+        self.assertEqual(row["pregame_probability_pct"], 60.0)
+        self.assertEqual(row["market_drop_pct"], 22.0)
         self.assertEqual(row["strategy"], "EDGE Strategy A")
-        self.assertFalse(row["qualifies"] if row["model_edge_pct"] < 5 else False)
+        expected = row["model_edge_pct"] >= 5
+        self.assertEqual(row["qualifies"], expected)
