@@ -1,0 +1,33 @@
+name: EDGE v1.2 Strategy C Discovery
+
+on:
+  push:
+    branches:
+      - agent/edge-strategy-c-discovery
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run Strategy C continuation/underreaction discovery
+        env:
+          EDGE_DAYS: '120'
+        run: python scripts/edge_v12_strategy_c_discovery.py | tee edge_v12_console.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v12-strategy-c-results
+          path: |
+            edge_v12_strategy_c_results.json
+            edge_v12_strategy_c_holdout_replays.json
+            edge_v12_console.txt
+          retention-days: 14
