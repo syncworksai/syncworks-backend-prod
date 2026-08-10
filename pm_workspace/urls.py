@@ -18,6 +18,7 @@ from .document_views import PMPropertyDocumentViewSet, document_template_catalog
 from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeaseViewSet, PMProspectViewSet, PMUnitViewSet
 from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
 from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_internally
+from .property_profile_views import property_inventory, property_inventory_item, property_profile
 from .record_views import (
     inbox_reply,
     occupancies,
@@ -52,6 +53,9 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/complete-internally/", complete_tenant_onboarding_internally, name="pm-tenant-complete-internally"),
     path("tenants/<int:tenant_id>/complete-internally", complete_tenant_onboarding_internally, name="pm-tenant-complete-internally-no-slash"),
     path("tenants/<int:tenant_id>/complete_internal/", complete_tenant_onboarding_internally, name="pm-tenant-complete-internal-compat"),
+    path("properties/<int:property_id>/profile/", property_profile, name="pm-property-detail-profile"),
+    path("properties/<int:property_id>/inventory/", property_inventory, name="pm-property-inventory"),
+    path("properties/<int:property_id>/inventory/<int:item_id>/", property_inventory_item, name="pm-property-inventory-item"),
     path("occupancies/", occupancies, name="pm-occupancies"),
     path("occupancies/<int:occupancy_id>/move-out/", close_occupancy_workflow, name="pm-occupancy-move-out"),
     path("occupancies/<int:occupancy_id>/evict/", evict_occupancy, name="pm-occupancy-evict"),
