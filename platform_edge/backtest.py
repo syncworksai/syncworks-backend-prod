@@ -1,166 +1,104 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, timedelta
-from typing import Any
+from datetime import date, datetime
+from typing import Any, Iterable
 
-import requests
-
-from .research_model import _model_game
-
-SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule"
-FEED_URL = "https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
+from .models import EdgeHistoricalSnapshot
 
 
-def _dates(start: date, end: date):
-    current = start
-    while current <= end:
-        yield current
-        current += timedelta(days=1)
-
-
-def _fetch_schedule(day: date) -> list[dict[str, Any]]:
-    try:
-        r = requests.get(SCHEDULE_URL, params={"sportId": 1, "date": day.isoformat(), "hydrate": "linescore"}, timeout=8)
-        r.raise_for_status()
-        payload = r.json()
-        return payload.get("dates", [{}])[0].get("games", []) if payload.get("dates") else []
-    except requests.RequestException:
-        return []
-
-
-def _fetch_feed(game_pk: int) -> dict[str, Any] | None:
-    try:
-        r = requests.get(FEED_URL.format(game_pk=game_pk), timeout=10)
-        r.raise_for_status()
-        return r.json()
-    except requests.RequestException:
-        return None
-
-
-def _sample_game_states(feed: dict[str, Any]) -> list[dict[str, Any]]:
-    game_data = feed.get("gameData", {})
-    live = feed.get("liveData", {})
-    teams = game_data.get("teams", {})
-    away = teams.get("away", {})
-    home = teams.get("home", {})
-    away_code = away.get("abbreviation") or away.get("name", "AWY")[:3].upper()
-    home_code = home.get("abbreviation") or home.get("name", "HOM")[:3].upper()
-    game_pk = feed.get("gamePk")
-    plays = live.get("plays", {}).get("allPlays", [])
-    final_linescore = live.get("linescore", {})
-    outcome_away = int((final_linescore.get("teams", {}).get("away", {}) or {}).get("runs") or 0)
-    outcome_home = int((final_linescore.get("teams", {}).get("home", {}) or {}).get("runs") or 0)
-    rows: list[dict[str, Any]] = []
-    for play in plays:
-        about = play.get("about", {})
-        if not about.get("isComplete"):
+def _run_market_strategy(rows: Iterable[EdgeHistoricalSnapshot], minimum_edge_pct: float, fee_bps: float, risk_cents: int) -> dict[str, Any]:
+    opportunities = wins = 0
+    pnl = 0.0
+    equity = peak = max_drawdown = 0.0
+    losing = max_losing = 0
+    brier_values: list[float] = []
+    for row in rows:
+        if row.yes_ask_cents is None or row.model_probability_bps is None or row.market_result not in {"YES", "NO"}:
             continue
-        inning = int(about.get("inning") or 0)
-        half = str(about.get("halfInning") or "")
-        if inning <= 0 or inning > 9:
+        if row.yes_bid_cents is not None and row.yes_ask_cents - row.yes_bid_cents > 3:
             continue
-        runners = {"first": None, "second": None, "third": None}
-        for runner in play.get("runners", []):
-            movement = runner.get("movement", {})
-            end = movement.get("end")
-            details = runner.get("details", {})
-            if end in runners and not details.get("isOut"):
-                runners[end] = {"id": details.get("runner", {}).get("id")}
-        score = play.get("score", {})
-        game = {
-            "game_pk": game_pk,
-            "away": {"code": away_code, "score": int(score.get("awayScore") or 0)},
-            "home": {"code": home_code, "score": int(score.get("homeScore") or 0)},
-            "inning": inning,
-            "inning_half": "Top" if half.lower() == "top" else "Bottom",
-            "outs": int(about.get("outs") or 0),
-            "offense": runners,
-            "game_state": f"{half} {inning} • {int(about.get('outs') or 0)} out",
-        }
-        rows.append({"game": game, "away_won": outcome_away > outcome_home})
-    return rows
-
-
-def _trailing_context(game: dict[str, Any]) -> tuple[str | None, int, int]:
-    away_score = int(game["away"]["score"])
-    home_score = int(game["home"]["score"])
-    inning = int(game["inning"])
-    half = str(game.get("inning_half") or "").lower()
-    diff = away_score - home_score
-    if diff == 0:
-        return None, 0, max(0, 9 - inning)
-    trailing = game["away"]["code"] if diff < 0 else game["home"]["code"]
-    deficit = abs(diff)
-    remaining = max(0, 9 - inning)
-    if half == "top" and trailing == game["home"]["code"]:
-        remaining += 1
-    return trailing, deficit, remaining
-
-
-def run_mlb_backtest(start: date, end: date, max_games: int = 250) -> dict[str, Any]:
-    states: list[dict[str, Any]] = []
-    games_seen = 0
-    for day in _dates(start, end):
-        for game_meta in _fetch_schedule(day):
-            if game_meta.get("status", {}).get("abstractGameState") != "Final":
-                continue
-            if games_seen >= max_games:
-                break
-            feed = _fetch_feed(int(game_meta["gamePk"]))
-            if not feed:
-                continue
-            states.extend(_sample_game_states(feed))
-            games_seen += 1
-        if games_seen >= max_games:
-            break
-
-    # Neutral team strength isolates the comeback relationship and avoids
-    # using future standings information during historical replay.
-    strengths: dict[str, float] = {}
-    comeback_buckets: dict[str, list[dict[str, float]]] = defaultdict(list)
-    calibration_rows: list[dict[str, float]] = []
-    for row in states:
-        game = row["game"]
-        away_p, home_p, _ = _model_game(game, strengths)
-        trailing, deficit, remaining = _trailing_context(game)
-        if trailing is None:
+        model = row.model_probability_bps / 100.0
+        market = float(row.yes_ask_cents)
+        outcome = 1.0 if row.market_result == "YES" else 0.0
+        brier_values.append((model / 100.0 - outcome) ** 2)
+        if model - market < minimum_edge_pct or not 0 < market < 100:
             continue
-        trailing_p = away_p if trailing == game["away"]["code"] else home_p
-        actual = 1.0 if ((trailing == game["away"]["code"]) == row["away_won"]) else 0.0
-        key = f"down {deficit} / {min(9, remaining)}+ innings"
-        comeback_buckets[key].append({"pred": trailing_p, "actual": actual})
-        calibration_rows.append({"pred": trailing_p, "actual": actual})
-
-    bucket_rows = []
-    for key, values in sorted(comeback_buckets.items()):
-        n = len(values)
-        predicted = sum(v["pred"] for v in values) / n
-        actual = sum(v["actual"] for v in values) / n
-        bucket_rows.append({
-            "bucket": key,
-            "samples": n,
-            "predicted_trailing_win_pct": round(predicted * 100, 1),
-            "actual_trailing_win_pct": round(actual * 100, 1),
-            "calibration_gap_pct": round((actual - predicted) * 100, 1),
-        })
-
-    brier = None
-    if calibration_rows:
-        brier = round(sum((v["pred"] - v["actual"]) ** 2 for v in calibration_rows) / len(calibration_rows), 5)
-
+        opportunities += 1
+        wins += int(outcome == 1.0)
+        contracts = risk_cents / market
+        gross = contracts * ((outcome * 100.0) - market)
+        fee = risk_cents * fee_bps / 10000.0
+        trade_pnl = gross - fee
+        pnl += trade_pnl
+        equity += trade_pnl
+        peak = max(peak, equity)
+        max_drawdown = max(max_drawdown, peak - equity)
+        if trade_pnl < 0:
+            losing += 1
+            max_losing = max(max_losing, losing)
+        else:
+            losing = 0
     return {
-        "start": start.isoformat(),
-        "end": end.isoformat(),
-        "games": games_seen,
-        "states": len(states),
-        "comeback_states": len(calibration_rows),
-        "brier_score": brier,
-        "buckets": bucket_rows,
-        "limitations": [
-            "Historical MLB game states are used; historical Kalshi prices are not included in this pass.",
-            "The first calibration pass uses neutral team strength to isolate the in-game comeback relationship.",
-            "No strategy profitability claim is made until market-price history, fees, spreads, slippage, and executable timing are added.",
-            "Model probabilities are experimental and should be calibrated on held-out data before any live use.",
-        ],
+        "minimum_edge_pct": minimum_edge_pct,
+        "samples": len(list(rows)) if not isinstance(rows, list) else len(rows),
+        "opportunities": opportunities,
+        "wins": wins,
+        "win_rate_pct": round(wins / opportunities * 100, 3) if opportunities else 0.0,
+        "total_risk_cents": opportunities * risk_cents,
+        "total_pnl_cents": round(pnl, 3),
+        "roi_pct": round(pnl / (opportunities * risk_cents) * 100, 3) if opportunities else 0.0,
+        "avg_pnl_cents": round(pnl / opportunities, 3) if opportunities else 0.0,
+        "max_drawdown_cents": round(max_drawdown, 3),
+        "max_losing_streak": max_losing,
+        "brier_score": round(sum(brier_values) / len(brier_values), 6) if brier_values else None,
+    }
+
+
+def _bucket_rows(rows: list[EdgeHistoricalSnapshot]) -> list[dict[str, Any]]:
+    buckets: dict[str, list[EdgeHistoricalSnapshot]] = defaultdict(list)
+    for row in rows:
+        if row.market_result not in {"YES", "NO"}:
+            continue
+        diff = int(row.away_score) - int(row.home_score)
+        if row.side_code == row.home_code:
+            diff = -diff
+        if diff >= 0:
+            continue
+        deficit = abs(diff)
+        inning = int(row.inning or 0)
+        half = (row.inning_half or "").upper()
+        remaining = max(0, 9 - inning + (1 if half == "TOP" else 0))
+        run_bucket = "down_1" if deficit == 1 else "down_2" if deficit == 2 else "down_3_plus"
+        remaining_bucket = "4_plus" if remaining >= 4 else "3" if remaining == 3 else "2" if remaining == 2 else "1"
+        buckets[f"{run_bucket}|{remaining_bucket}_innings_remaining"].append(row)
+    result = []
+    for key, items in sorted(buckets.items()):
+        wins = sum(1 for row in items if row.market_result == "YES")
+        prices = [row.yes_close_cents for row in items if row.yes_close_cents is not None]
+        result.append({
+            "bucket": key,
+            "samples": len(items),
+            "wins": wins,
+            "actual_win_rate_pct": round(wins / len(items) * 100, 3) if items else 0.0,
+            "average_market_price_pct": round(sum(prices) / len(prices), 3) if prices else None,
+        })
+    return result
+
+
+def run_mlb_backtest(start: datetime | None = None, end: datetime | None = None, fee_bps: float = 0.0, risk_cents: int = 100) -> dict[str, Any]:
+    qs = EdgeHistoricalSnapshot.objects.all().order_by("observed_at", "id")
+    if start:
+        qs = qs.filter(observed_at__gte=start)
+    if end:
+        qs = qs.filter(observed_at__lt=end)
+    rows = list(qs)
+    strategies = [_run_market_strategy(rows, threshold, fee_bps, risk_cents) for threshold in (5.0, 8.0, 10.0)]
+    return {
+        "dataset": {"samples": len(rows), "start": start.isoformat() if start else None, "end": end.isoformat() if end else None},
+        "strategies": strategies,
+        "comeback_buckets": _bucket_rows(rows),
+        "cost_assumption": {"fee_bps": fee_bps, "risk_cents_per_trade": risk_cents, "spread_filter_cents": 3},
+        "status": "research_only",
+        "note": "This is historical analysis, not a profitability guarantee. Use held-out dates before treating a rule as validated.",
     }
