@@ -1,0 +1,33 @@
+name: EDGE v1.6b Tennis Binary
+
+on:
+  push:
+    branches:
+      - agent/edge-v16b-tennis
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run tennis binary hedge discovery
+        env:
+          EDGE_DAYS: '240'
+          EDGE_MAX_EVENTS: '1200'
+        run: python scripts/edge_v16b_tennis_binary.py | tee edge_v16b_tennis_console.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v16b-tennis-results
+          path: |
+            edge_v16b_tennis_results.json
+            edge_v16b_tennis_console.txt
+          retention-days: 14
