@@ -17,7 +17,8 @@ def historical_mlb_markets():
     rows = []
     cursor = ""
     for _ in range(20):
-        params = {"series_ticker": "KXMLBGAME", "limit": 1000, "mve_filter": "exclude"}
+        # Historical filters are mutually exclusive; series_ticker alone scopes us to MLB.
+        params = {"series_ticker": "KXMLBGAME", "limit": 1000}
         if cursor:
             params["cursor"] = cursor
         payload = get_json(f"{KALSHI}/historical/markets", params)
@@ -30,9 +31,6 @@ def historical_mlb_markets():
 
 
 def combined_markets_for_day(day):
-    # Recent settled markets remain in /markets. Archived markets must be sourced from
-    # /historical/markets. Historical market listing has no settled-time query filter,
-    # so fetch the KXMLBGAME archive once and filter locally by settlement timestamp.
     recent = live_markets_for_day(day)
     start = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc).timestamp()
     end = start + 172800
