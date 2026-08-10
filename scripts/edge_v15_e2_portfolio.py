@@ -23,14 +23,17 @@ def group_game(rows):
     d = defaultdict(list)
     for r in rows:
         d[r['game_pk']].append(r)
-    for v in d.values(): v.sort(key=lambda x: x['ts'])
+    for v in d.values():
+        v.sort(key=lambda x: x['ts'])
     return d
 
 
 def group_ticker(rows):
     d = defaultdict(list)
-    for r in rows: d[r['ticker']].append(r)
-    for v in d.values(): v.sort(key=lambda x: x['ts'])
+    for r in rows:
+        d[r['ticker']].append(r)
+    for v in d.values():
+        v.sort(key=lambda x: x['ts'])
     return d
 
 
@@ -65,7 +68,8 @@ def first_ab(rows):
             t=fixed_trade(r,gt[r['ticker']],20,A_RISK,'A')
         elif qb(r):
             t=fixed_trade(r,gt[r['ticker']],30,B_RISK,'B')
-        else: t=None
+        else:
+            t=None
         if t:
             seen_games.add(r['game_pk']); out.append(t)
     return out
@@ -73,7 +77,8 @@ def first_ab(rows):
 
 def first_quotes(rows):
     f={}
-    for r in rows: f.setdefault(r['side'],r)
+    for r in rows:
+        f.setdefault(r['side'],r)
     return list(f.values()) if len(f)==2 else []
 
 
@@ -81,7 +86,8 @@ def e_trade(rows,cfg):
     fq=first_quotes(rows)
     if len(fq)!=2:return None
     fav=max(fq,key=lambda r:r['pregame_side']); dog=min(fq,key=lambda r:r['pregame_side'])
-    if fav['pregame_side'] < cfg['pregame_min'] or fav['pregame_side'] >= cfg['pregame_max']: return None
+    if fav['pregame_side'] < cfg['pregame_min'] or fav['pregame_side'] >= cfg['pregame_max']:
+        return None
     latest={fav['side']:fav,dog['side']:dog}; trigger=None; dog_at=None
     for r in rows:
         latest[r['side']]=r
@@ -90,7 +96,8 @@ def e_trade(rows,cfg):
         if int(f['inning'] or 0)<=cfg['max_inning'] and float(f['ask'])>=cfg['trigger']:
             trigger=f; dog_at=d; break
     if trigger is None:return None
-    fav_contracts=E_BASE_RISK*100/min(99,float(fav['ask'])+ENTRY_FRICTION)
+    fav_entry=min(99,float(fav['ask'])+ENTRY_FRICTION)
+    fav_contracts=E_BASE_RISK*100/fav_entry
     hedge_risk=E_BASE_RISK*cfg['hedge_mult']
     dog_entry=min(99,float(dog_at['ask'])+ENTRY_FRICTION)
     dog_contracts=hedge_risk*100/dog_entry
@@ -100,7 +107,8 @@ def e_trade(rows,cfg):
         bid=max(0,float(r['bid'])-EXIT_FRICTION)
         if bid>=dog_entry+cfg['target']:
             dog_value=dog_contracts*bid/100; hedge_closed=True; break
-    if dog_value is None: dog_value=dog_contracts if dog['won'] else 0
+    if dog_value is None:
+        dog_value=dog_contracts if dog['won'] else 0
     fav_value=fav_contracts if fav['won'] else 0
     cost=E_BASE_RISK+hedge_risk
     pnl=fav_value+dog_value-cost
@@ -118,14 +126,18 @@ def stats(ts):
 
 def portfolio(ab,e):
     by_day=defaultdict(list)
-    for t in ab+e: by_day[t['date']].append(t)
+    for t in ab+e:
+        by_day[t['date']].append(t)
     accepted=[]; skips=0
     for day,items in sorted(by_day.items()):
         used=0
         for t in sorted(items,key=lambda x:(x['entry_ts'], 0 if x['code']=='E' else 1)):
-            if used+t['risk']>DAILY_CAP+1e-9: skips+=1; continue
+            if used+t['risk']>DAILY_CAP+1e-9:
+                skips+=1; continue
             used+=t['risk']; accepted.append(t)
-    s=stats(accepted); s['skipped_daily_cap']=skips; s['breakdown']={c:stats([t for t in accepted if t['code']==c]) for c in ('A','B','E')}
+    s=stats(accepted)
+    s['skipped_daily_cap']=skips
+    s['breakdown']={c:stats([t for t in accepted if t['code']==c]) for c in ('A','B','E')}
     return s
 
 
@@ -136,29 +148,40 @@ def run(days=120):
     ds=set(dates[:c1]); vs=set(dates[c1:c2]); hs=set(dates[c2:])
     dev=[r for r in obs if r['date'] in ds]; val=[r for r in obs if r['date'] in vs]; hold=[r for r in obs if r['date'] in hs]
     p=fit(dev)
-    for rows in (dev,val,hold): apply_model(rows,p)
+    for rows in (dev,val,hold):
+        apply_model(rows,p)
+
     configs=[]
-    for trigger,mult,target,maxi,pmin,pmax in product([78,80,82,84,85,87,90],[.10,.15,.20,.25,.30],[3,5,7,10],[4,5,6],[(50,55),(55,60),(60,65),(65,70),(70,80),(50,80)]):
-        pmin,pmax=pmin
+    bands=[(50,55),(55,60),(60,65),(65,70),(70,80),(50,80)]
+    for trigger,mult,target,maxi,band in product([78,80,82,84,85,87,90],[.10,.15,.20,.25,.30],[3,5,7,10],[4,5,6],bands):
+        pmin,pmax=band
         configs.append({'trigger':trigger,'hedge_mult':mult,'target':target,'max_inning':maxi,'pregame_min':pmin,'pregame_max':pmax})
+
+    dev_games=group_game(dev); val_games=group_game(val); hold_games=group_game(hold)
     scored=[]
     for cfg in configs:
-        de=[e_trade(g,cfg) for g in group_game(dev).values()]; de=[x for x in de if x]
-        va=[e_trade(g,cfg) for g in group_game(val).values()]; va=[x for x in va if x]
+        de=[e_trade(g,cfg) for g in dev_games.values()]; de=[x for x in de if x]
+        va=[e_trade(g,cfg) for g in val_games.values()]; va=[x for x in va if x]
         sd,sv=stats(de),stats(va)
-        if sd['trades']<15 or sv['trades']<8 or sd['roi_pct'] is None or sv['roi_pct'] is None or min(sd['roi_pct'],sv['roi_pct'])<=0: continue
+        if sd['trades']<15 or sv['trades']<8 or sd['roi_pct'] is None or sv['roi_pct'] is None or min(sd['roi_pct'],sv['roi_pct'])<=0:
+            continue
         score=min(sd['roi_pct'],sv['roi_pct'])+.15*(sd['roi_pct']+sv['roi_pct'])/2
         scored.append((score,cfg,sd,sv))
     scored.sort(key=lambda x:x[0],reverse=True)
     winner=scored[0] if scored else None
-    hold_e=[e_trade(g,winner[1]) for g in group_game(hold).values()] if winner else []; hold_e=[x for x in hold_e if x]
+
+    hold_e=[e_trade(g,winner[1]) for g in hold_games.values()] if winner else []
+    hold_e=[x for x in hold_e if x]
     hold_ab=first_ab(hold)
-    result={'version':'EDGE-v1.5-E2-portfolio','period':[str(start),str(end)],'coverage':coverage,'configs_tested':len(configs),'robust_candidates':len(scored),'selected_e2':None,'e1_frozen':{'trigger':80,'hedge_mult':.25,'target':5,'max_inning':5,'pregame_min':50,'pregame_max':100},'holdout':{},'guardrails':['E1 frozen; E2 selected without holdout','1% daily new-risk cap in portfolio replay','Historical simulation is not future performance']}
+    e1_cfg={'trigger':80,'hedge_mult':.25,'target':5,'max_inning':5,'pregame_min':50,'pregame_max':100}
+    e1=[e_trade(g,e1_cfg) for g in hold_games.values()]; e1=[x for x in e1 if x]
+
+    result={'version':'EDGE-v1.5-E2-portfolio','period':[str(start),str(end)],'coverage':coverage,'configs_tested':len(configs),'robust_candidates':len(scored),'selected_e2':None,'e1_frozen':e1_cfg,'holdout':{},'guardrails':['E1 frozen; E2 selected without holdout','1% daily new-risk cap in portfolio replay','Historical simulation is not future performance']}
     if winner:
         result['selected_e2']={'config':winner[1],'development':winner[2],'validation':winner[3],'holdout':stats(hold_e)}
-    e1=[e_trade(g,result['e1_frozen']) for g in group_game(hold).values()]; e1=[x for x in e1 if x]
     result['holdout']={'A_B_only':portfolio(hold_ab,[]),'A_B_E1':portfolio(hold_ab,e1),'A_B_E2':portfolio(hold_ab,hold_e) if winner else None,'E1_alone':stats(e1),'E2_alone':stats(hold_e)}
     Path('edge_v15_e2_portfolio_results.json').write_text(json.dumps(result,indent=2))
     print(json.dumps(result,indent=2))
 
-if __name__=='__main__': run(int(os.environ.get('EDGE_DAYS','120')))
+if __name__=='__main__':
+    run(int(os.environ.get('EDGE_DAYS','120')))
