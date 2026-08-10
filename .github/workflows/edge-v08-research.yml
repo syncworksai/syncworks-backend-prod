@@ -19,10 +19,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install requests
-      - name: Run EDGE v0.8 price reversion holdout
+      - name: Run corrected EDGE v0.8 price reversion holdout
         env:
           EDGE_DAYS: '24'
-        run: python scripts/edge_v08_reversion.py | tee edge_v08_console.txt
+        run: python scripts/edge_v08b_reversion.py | tee edge_v08_console.txt
       - uses: actions/upload-artifact@v4
         with:
           name: edge-v08-results
