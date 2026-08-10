@@ -1,0 +1,30 @@
+name: EDGE v1.9 Category Discovery
+
+on:
+  push:
+    branches:
+      - agent/edge-v18-basketball-football-golf
+    paths:
+      - 'scripts/edge_v19_category_discovery.py'
+      - '.github/workflows/edge-v19-category.yml'
+  workflow_dispatch:
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run category edge discovery
+        env:
+          EDGE_DAYS: '365'
+          EDGE_MAX_PER_CAT: '600'
+        run: python scripts/edge_v19_category_discovery.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v19-category-results
+          path: edge_v19_category_results.json
