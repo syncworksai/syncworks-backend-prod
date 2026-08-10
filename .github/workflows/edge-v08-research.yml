@@ -1,0 +1,33 @@
+name: EDGE v0.8 Reversion Research
+
+on:
+  push:
+    branches:
+      - agent/edge-v08-reversion
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run EDGE v0.8 price reversion holdout
+        env:
+          EDGE_DAYS: '24'
+        run: python scripts/edge_v08_reversion.py | tee edge_v08_console.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v08-results
+          path: |
+            edge_v08_results.json
+            edge_v08_holdout_replays.json
+            edge_v08_console.txt
+          retention-days: 14
