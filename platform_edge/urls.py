@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .backtest_views import mlb_backtest
+from .historical_views import replay_summary, sync_mlb_kalshi
 from .live_views import live_mlb_board
 from .research_views import mlb_research_board, paper_simulate, paper_summary
 from .views import PaperTradeViewSet, StrategyViewSet, dashboard, kalshi_connection, kalshi_verify
@@ -15,6 +16,8 @@ urlpatterns = [
     path("live/mlb/", live_mlb_board, name="edge-live-mlb"),
     path("research/mlb/", mlb_research_board, name="edge-research-mlb"),
     path("research/mlb/backtest/", mlb_backtest, name="edge-research-mlb-backtest"),
+    path("research/mlb/history/sync/", sync_mlb_kalshi, name="edge-research-mlb-history-sync"),
+    path("research/mlb/history/summary/", replay_summary, name="edge-research-mlb-history-summary"),
     path("research/paper/simulate/", paper_simulate, name="edge-paper-simulate"),
     path("research/paper/summary/", paper_summary, name="edge-paper-summary"),
     path("exchanges/kalshi/", kalshi_connection, name="edge-kalshi-connection"),
