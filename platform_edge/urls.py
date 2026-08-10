@@ -5,6 +5,7 @@ from .backtest_views import mlb_backtest
 from .historical_views import replay_summary, sync_mlb_kalshi
 from .live_views import live_mlb_board
 from .research_views import mlb_research_board, paper_simulate, paper_summary
+from .strategy_a_views import strategy_a_live, strategy_a_paper_tick
 from .views import PaperTradeViewSet, StrategyViewSet, dashboard, kalshi_connection, kalshi_verify
 
 router = DefaultRouter()
@@ -14,6 +15,8 @@ router.register("paper-trades", PaperTradeViewSet, basename="edge-paper-trade")
 urlpatterns = [
     path("dashboard/", dashboard, name="edge-dashboard"),
     path("live/mlb/", live_mlb_board, name="edge-live-mlb"),
+    path("strategy-a/live/", strategy_a_live, name="edge-strategy-a-live"),
+    path("strategy-a/paper/tick/", strategy_a_paper_tick, name="edge-strategy-a-paper-tick"),
     path("research/mlb/", mlb_research_board, name="edge-research-mlb"),
     path("research/mlb/backtest/", mlb_backtest, name="edge-research-mlb-backtest"),
     path("research/mlb/history/sync/", sync_mlb_kalshi, name="edge-research-mlb-history-sync"),
