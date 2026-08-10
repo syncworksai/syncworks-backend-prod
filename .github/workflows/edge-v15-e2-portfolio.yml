@@ -1,0 +1,32 @@
+name: EDGE v1.5 E2 Portfolio
+
+on:
+  push:
+    branches:
+      - agent/edge-v15-e2-portfolio
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run E2 optimization and combined portfolio replay
+        env:
+          EDGE_DAYS: '120'
+        run: python scripts/edge_v15_e2_portfolio.py | tee edge_v15_console.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v15-e2-portfolio-results
+          path: |
+            edge_v15_e2_portfolio_results.json
+            edge_v15_console.txt
+          retention-days: 14
