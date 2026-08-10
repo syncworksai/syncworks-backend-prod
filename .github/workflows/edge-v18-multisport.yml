@@ -1,0 +1,31 @@
+name: EDGE v1.8 Multisport
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/edge-v18-basketball-football-golf
+    paths:
+      - 'scripts/edge_v18_multisport_discovery.py'
+      - '.github/workflows/edge-v18-multisport.yml'
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run basketball football golf discovery
+        env:
+          EDGE_DAYS: '365'
+          EDGE_MAX_MARKETS_PER_BUCKET: '1800'
+        run: python scripts/edge_v18_multisport_discovery.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v18-multisport-results
+          path: edge_v18_multisport_results.json
+          retention-days: 14
