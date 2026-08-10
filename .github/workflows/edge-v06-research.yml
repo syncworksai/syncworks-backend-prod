@@ -1,0 +1,33 @@
+name: EDGE v0.6 Research Run
+
+on:
+  push:
+    branches:
+      - agent/edge-v06-data-run
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run recent historical MLB + Kalshi research sample
+        env:
+          EDGE_DAYS: '10'
+        run: python scripts/edge_v06_data_run.py | tee edge_v06_console.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v06-results
+          path: |
+            edge_v06_results.json
+            edge_v06_sample.json
+            edge_v06_console.txt
+          retention-days: 14
