@@ -19,10 +19,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install requests
-      - name: Run EDGE v0.7 pregame baseline + untouched holdout
+      - name: Run EDGE v0.7 corrected pregame baseline + untouched holdout
         env:
           EDGE_DAYS: '20'
-        run: python scripts/edge_v07_pregame_holdout.py | tee edge_v07_console.txt
+        run: python scripts/edge_v07b_pregame_holdout.py | tee edge_v07_console.txt
       - uses: actions/upload-artifact@v4
         with:
           name: edge-v07-results
