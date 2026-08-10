@@ -1,0 +1,33 @@
+name: EDGE v1.6 Cross Market
+
+on:
+  push:
+    branches:
+      - agent/edge-v16-cross-market
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run cross-market volatility discovery
+        env:
+          EDGE_DAYS: '180'
+          EDGE_MAX_EVENTS: '220'
+        run: python scripts/edge_v16_cross_market.py | tee edge_v16_console.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v16-cross-market-results
+          path: |
+            edge_v16_cross_market_results.json
+            edge_v16_console.txt
+          retention-days: 14
