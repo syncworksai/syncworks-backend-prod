@@ -13,6 +13,7 @@ from .communication_views import (
     requester_reply,
     resolve_conversation,
 )
+from .document_builder_views import document_builder_bootstrap, document_builder_finalize, document_builder_prefill, document_builder_save
 from .document_views import PMPropertyDocumentViewSet, document_template_catalog, property_document_checklist
 from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeaseViewSet, PMProspectViewSet, PMUnitViewSet
 from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
@@ -77,6 +78,10 @@ urlpatterns = [
     path("ledger/<int:entry_id>/request-information/", request_ledger_information, name="pm-ledger-request-information"),
     path("document-library/checklist/", property_document_checklist, name="pm-document-checklist"),
     path("document-library/templates/", document_template_catalog, name="pm-document-template-catalog"),
+    path("document-builder/properties/<int:property_id>/", document_builder_bootstrap, name="pm-document-builder-bootstrap"),
+    path("document-builder/properties/<int:property_id>/templates/<str:template_id>/prefill/", document_builder_prefill, name="pm-document-builder-prefill"),
+    path("document-builder/properties/<int:property_id>/save/", document_builder_save, name="pm-document-builder-save"),
+    path("document-builder/packets/<int:packet_id>/finalize/", document_builder_finalize, name="pm-document-builder-finalize"),
     path("conversations/", pm_conversations, name="pm-conversations"),
     path("conversations/<int:conversation_id>/reply/", reply_conversation, name="pm-conversation-reply"),
     path("conversations/<int:conversation_id>/resolve/", resolve_conversation, name="pm-conversation-resolve"),
