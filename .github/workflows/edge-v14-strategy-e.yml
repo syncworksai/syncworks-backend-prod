@@ -1,0 +1,33 @@
+name: EDGE v1.4 Strategy E Dynamic Hedge
+
+on:
+  push:
+    branches:
+      - agent/edge-strategy-e-dynamic-hedge
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run Strategy E dynamic hedge discovery
+        env:
+          EDGE_DAYS: '120'
+        run: python scripts/edge_v14_strategy_e_dynamic_hedge.py | tee edge_v14_console.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v14-strategy-e-results
+          path: |
+            edge_v14_strategy_e_results.json
+            edge_v14_strategy_e_holdout_replays.json
+            edge_v14_console.txt
+          retention-days: 14
