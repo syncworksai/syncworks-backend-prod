@@ -23,7 +23,8 @@ def _fetch_schedule(day: date) -> list[dict[str, Any]]:
     try:
         r = requests.get(SCHEDULE_URL, params={"sportId": 1, "date": day.isoformat(), "hydrate": "linescore"}, timeout=8)
         r.raise_for_status()
-        return r.json().get("dates", [{}])[0].get("games", []) if r.json().get("dates") else []
+        payload = r.json()
+        return payload.get("dates", [{}])[0].get("games", []) if payload.get("dates") else []
     except requests.RequestException:
         return []
 
@@ -51,11 +52,8 @@ def _sample_game_states(feed: dict[str, Any]) -> list[dict[str, Any]]:
     outcome_away = int((final_linescore.get("teams", {}).get("away", {}) or {}).get("runs") or 0)
     outcome_home = int((final_linescore.get("teams", {}).get("home", {}) or {}).get("runs") or 0)
     rows: list[dict[str, Any]] = []
-    # Sample after every play. This preserves score, inning, outs, and base state
-    # without pretending we have an exchange price from the historical market.
     for play in plays:
         about = play.get("about", {})
-        result = play.get("result", {})
         if not about.get("isComplete"):
             continue
         inning = int(about.get("inning") or 0)
@@ -84,6 +82,24 @@ def _sample_game_states(feed: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _trailing_context(game: dict[str, Any]) -> tuple[str | None, int, int]:
+    away_score = int(game["away"]["score"])
+    home_score = int(game["home"]["score"])
+    inning = int(game["inning"])
+    half = str(game.get("inning_half") or "").lower()
+    diff = away_score - home_score
+    if diff == 0:
+        return None, 0, max(0, 9 - inning)
+    trailing = game["away"]["code"] if diff < 0 else game["home"]["code"]
+    deficit = abs(diff)
+    # Coarse "full innings remaining" bucket. Add the current half-inning when
+    # the trailing team has not yet batted in the current inning.
+    remaining = max(0, 9 - inning)
+    if half == "top" and trailing == game["home"]["code"]:
+        remaining += 1
+    return trailing, deficit, remaining
+
+
 def run_mlb_backtest(start: date, end: date, max_games: int = 250) -> dict[str, Any]:
     states: list[dict[str, Any]] = []
     games_seen = 0
@@ -96,58 +112,56 @@ def run_mlb_backtest(start: date, end: date, max_games: int = 250) -> dict[str, 
             feed = _fetch_feed(int(game_meta["gamePk"]))
             if not feed:
                 continue
-            rows = _sample_game_states(feed)
-            states.extend(rows)
+            states.extend(_sample_game_states(feed))
             games_seen += 1
         if games_seen >= max_games:
             break
 
-    # Use league-neutral strength for the first calibration pass. Team strength
-    # is deliberately excluded here so the UI can separately report the
-    # pure in-game comeback relationship without leakage from final outcomes.
     strengths: dict[str, float] = {}
-    buckets: dict[str, list[dict[str, float]]] = defaultdict(list)
+    comeback_buckets: dict[str, list[dict[str, float]]] = defaultdict(list)
+    calibration_rows: list[dict[str, float]] = []
     for row in states:
         game = row["game"]
         away_p, home_p, _ = _model_game(game, strengths)
-        actual = 1.0 if row["away_won"] else 0.0
-        score_diff = int(game["away"]["score"]) - int(game["home"]["score"])
-        inning = int(game["inning"])
-        key = f"{abs(score_diff)}-run / {inning}th"
-        buckets[key].append({"pred": away_p, "actual": actual})
+        trailing, deficit, remaining = _trailing_context(game)
+        if trailing is None:
+            continue
+        trailing_p = away_p if trailing == game["away"]["code"] else home_p
+        actual = 1.0 if ((trailing == game["away"]["code"]) == row["away_won"]) else 0.0
+        remaining_bucket = min(9, remaining)
+        key = f"down {deficit} / {remaining_bucket}+ innings"
+        comeback_buckets[key].append({"pred": trailing_p, "actual": actual})
+        calibration_rows.append({"pred": trailing_p, "actual": actual})
 
     bucket_rows = []
-    for key, values in sorted(buckets.items()):
+    for key, values in sorted(comeback_buckets.items()):
         n = len(values)
         predicted = sum(v["pred"] for v in values) / n
         actual = sum(v["actual"] for v in values) / n
         bucket_rows.append({
             "bucket": key,
             "samples": n,
-            "predicted_away_win_pct": round(predicted * 100, 1),
-            "actual_away_win_pct": round(actual * 100, 1),
+            "predicted_trailing_win_pct": round(predicted * 100, 1),
+            "actual_trailing_win_pct": round(actual * 100, 1),
             "calibration_gap_pct": round((actual - predicted) * 100, 1),
         })
 
     brier = None
-    if states:
-        # Recompute predictions for a simple overall Brier score.
-        errors = []
-        for row in states:
-            away_p, _, _ = _model_game(row["game"], strengths)
-            errors.append((away_p - (1.0 if row["away_won"] else 0.0)) ** 2)
-        brier = round(sum(errors) / len(errors), 5)
+    if calibration_rows:
+        brier = round(sum((v["pred"] - v["actual"]) ** 2 for v in calibration_rows) / len(calibration_rows), 5)
 
     return {
         "start": start.isoformat(),
         "end": end.isoformat(),
         "games": games_seen,
         "states": len(states),
+        "comeback_states": len(calibration_rows),
         "brier_score": brier,
         "buckets": bucket_rows,
         "limitations": [
             "Historical MLB game states are used; historical Kalshi prices are not included in this pass.",
-            "No strategy profitability claim is made until market-price history, fees, spreads, and execution assumptions are added.",
+            "The first calibration pass uses neutral team strength to isolate the in-game comeback relationship.",
+            "No strategy profitability claim is made until market-price history, fees, spreads, slippage, and executable timing are added.",
             "Model probabilities are experimental and should be calibrated on held-out data before any live use.",
         ],
     }
