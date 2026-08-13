@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from collections import defaultdict
-
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .models import EdgeAuditEvent, EdgePaperTrade
 from .portfolio_views import _strategy_boards
+from .strategy_e import FREEZE_VERSION, FROZEN_E_RULES
 
 BANKROLL_CENTS_PER_STRATEGY = 10000
 
@@ -16,29 +15,29 @@ STRATEGY_REGISTRY = {
         "name": "Strategy A",
         "family": "MLB comeback reversion",
         "live_adapter": True,
-        "status": "LIVE_PAPER",
-        "note": "Frozen production paper rule.",
+        "status": "FROZEN_FORWARD_PAPER",
+        "note": "Frozen rule. 55–65% pregame side, trailing 1–2, innings 4–6, >=18pt drop, >=5pt model edge, 20-minute exit.",
     },
     "B": {
         "name": "Strategy B",
         "family": "MLB coin-flip comeback",
         "live_adapter": True,
-        "status": "LIVE_PAPER",
-        "note": "Frozen production paper rule.",
+        "status": "FROZEN_FORWARD_PAPER",
+        "note": "Frozen rule. 45–55% pregame side, down 1, innings 4–6, >=10pt drop, >=3pt model edge, batting, 30-minute exit.",
     },
     "E1": {
         "name": "E1",
-        "family": "MLB E-family candidate",
-        "live_adapter": False,
-        "status": "RULE_RECOVERY_REQUIRED",
-        "note": "Reserved for the previously tested E1 rule. The exact frozen thresholds are not present in the production repository, so EDGE will not invent them.",
+        "family": "MLB favorite + dynamic opposite-side hedge",
+        "live_adapter": True,
+        "status": "FROZEN_FORWARD_PAPER",
+        "note": "Frozen v1.5 rule. Start pregame favorite, trigger opposite-side hedge at 80c by inning 5, 25% hedge size, exit hedge on +5c rebound; favorite holds to settlement.",
     },
     "E2": {
         "name": "E2 PRIME",
-        "family": "MLB E-family candidate",
-        "live_adapter": False,
-        "status": "RULE_RECOVERY_REQUIRED",
-        "note": "Reserved for the previously tested E2 PRIME rule. Exact frozen thresholds must be restored before live paper execution begins.",
+        "family": "MLB selective favorite + dynamic opposite-side hedge",
+        "live_adapter": True,
+        "status": "FROZEN_FORWARD_PAPER",
+        "note": "Frozen v1.5 winner. Only 50–55% pregame favorites, trigger hedge at 87c by inning 5, 10% hedge size, exit hedge on +5c rebound; favorite holds to settlement.",
     },
 }
 
@@ -68,6 +67,12 @@ def _historical_metadata():
             "historical_result": strategy.get("historical_result"),
             "rule": strategy.get("rule"),
         }
+    for code, rule in FROZEN_E_RULES.items():
+        out[code] = {
+            "historical_result": rule.get("historical"),
+            "rule": rule,
+            "freeze_version": FREEZE_VERSION,
+        }
     return out
 
 
@@ -81,12 +86,14 @@ def _summary_for(code, trades, registry, historical):
     losses = sum(1 for trade in closed if int(trade.pnl_cents or 0) < 0)
     flats = len(closed) - wins - losses
     roi = (100.0 * realized / risk_total) if risk_total else None
-    win_rate = (100.0 * wins / len(closed)) if closed else None
+    positive_rate = (100.0 * wins / len(closed)) if closed else None
     open_risk = sum(int(trade.risk_cents or 0) for trade in open_rows)
     bankroll = BANKROLL_CENTS_PER_STRATEGY + realized
     return {
         "code": code,
         **registry,
+        "rules_frozen": True,
+        "freeze_version": FREEZE_VERSION,
         "rank_eligible": bool(registry.get("live_adapter") and len(closed) > 0),
         "paper_bankroll_start_cents": BANKROLL_CENTS_PER_STRATEGY,
         "paper_equity_cents": bankroll,
@@ -99,7 +106,7 @@ def _summary_for(code, trades, registry, historical):
         "wins": wins,
         "losses": losses,
         "flats": flats,
-        "positive_trade_rate_pct": round(win_rate, 2) if win_rate is not None else None,
+        "positive_trade_rate_pct": round(positive_rate, 2) if positive_rate is not None else None,
         "historical": historical.get(code),
         "recent_trades": [
             {
@@ -114,6 +121,7 @@ def _summary_for(code, trades, registry, historical):
                 "closed_at": trade.closed_at,
                 "matchup": trade.signal.matchup if trade.signal else None,
                 "game_state": trade.signal.game_state if trade.signal else None,
+                "event_key": trade.signal.event_key if trade.signal else None,
             }
             for trade in rows[:10]
         ],
@@ -138,7 +146,12 @@ def strategy_scoreboard(request):
     for index, row in enumerate(ranked, start=1):
         row["rank"] = index
 
-    experiment_start = EdgeAuditEvent.objects.filter(
+    frozen_start = EdgeAuditEvent.objects.filter(
+        user=request.user,
+        event_type="PORTFOLIO_SERVER_TICK",
+        payload__rules_frozen=True,
+    ).order_by("created_at").first()
+    experiment_start = frozen_start or EdgeAuditEvent.objects.filter(
         user=request.user,
         event_type="PORTFOLIO_SERVER_TICK",
     ).order_by("created_at").first()
@@ -146,10 +159,13 @@ def strategy_scoreboard(request):
     return Response({
         "mode": "paper_only",
         "live_money_enabled": False,
+        "rules_frozen": True,
+        "freeze_version": FREEZE_VERSION,
         "experiment_start_at": experiment_start.created_at if experiment_start else None,
         "paper_bankroll_per_strategy_cents": BANKROLL_CENTS_PER_STRATEGY,
+        "daily_risk_cap_pct_per_strategy": 1.0,
         "ranking_method": "realized ROI first; closed-trade count breaks ties",
         "strategies": strategies,
         "leader": ranked[0]["code"] if ranked else None,
-        "research_note": "Each strategy is evaluated independently. E1/E2 are registered but intentionally cannot trade until their exact previously frozen rule definitions are restored.",
+        "research_note": "A, B, E1 and E2 PRIME are now frozen. Each receives an independent $100 shadow account and independent 1% daily risk budget. Forward results do not alter the rules.",
     })
