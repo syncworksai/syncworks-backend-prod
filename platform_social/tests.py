@@ -8,6 +8,7 @@ from rest_framework.test import APITestCase
 
 from .models import (
     Collection,
+    EventMemberResponse,
     GroupEventInvitation,
     GroupMembership,
     SocialEvent,
@@ -19,66 +20,18 @@ User = get_user_model()
 
 class SocialApiPermissionTests(APITestCase):
     def setUp(self):
-        self.owner = User.objects.create_user(
-            username="social-owner",
-            email="owner@example.com",
-            password="pass12345",
-        )
-        self.manager = User.objects.create_user(
-            username="social-manager",
-            email="manager@example.com",
-            password="pass12345",
-        )
-        self.member = User.objects.create_user(
-            username="social-member",
-            email="member@example.com",
-            password="pass12345",
-        )
-        self.organizer = User.objects.create_user(
-            username="social-organizer",
-            email="organizer@example.com",
-            password="pass12345",
-        )
+        self.owner = User.objects.create_user(username="social-owner", email="owner@example.com", password="pass12345")
+        self.manager = User.objects.create_user(username="social-manager", email="manager@example.com", password="pass12345")
+        self.member = User.objects.create_user(username="social-member", email="member@example.com", password="pass12345")
+        self.organizer = User.objects.create_user(username="social-organizer", email="organizer@example.com", password="pass12345")
 
-        self.team = SocialGroup.objects.create(
-            name="Test Team",
-            kind=SocialGroup.Kind.TEAM,
-            created_by=self.owner,
-        )
-        GroupMembership.objects.create(
-            group=self.team,
-            user=self.owner,
-            role=GroupMembership.Role.OWNER,
-            status=GroupMembership.Status.ACTIVE,
-            invited_by=self.owner,
-        )
-        GroupMembership.objects.create(
-            group=self.team,
-            user=self.manager,
-            role=GroupMembership.Role.MANAGER,
-            status=GroupMembership.Status.ACTIVE,
-            invited_by=self.owner,
-        )
-        GroupMembership.objects.create(
-            group=self.team,
-            user=self.member,
-            role=GroupMembership.Role.MEMBER,
-            status=GroupMembership.Status.ACTIVE,
-            invited_by=self.owner,
-        )
+        self.team = SocialGroup.objects.create(name="Test Team", kind=SocialGroup.Kind.TEAM, created_by=self.owner)
+        GroupMembership.objects.create(group=self.team, user=self.owner, role=GroupMembership.Role.OWNER, status=GroupMembership.Status.ACTIVE, invited_by=self.owner)
+        GroupMembership.objects.create(group=self.team, user=self.manager, role=GroupMembership.Role.MANAGER, status=GroupMembership.Status.ACTIVE, invited_by=self.owner)
+        GroupMembership.objects.create(group=self.team, user=self.member, role=GroupMembership.Role.MEMBER, status=GroupMembership.Status.ACTIVE, invited_by=self.owner)
 
-        self.organization = SocialGroup.objects.create(
-            name="Test Organization",
-            kind=SocialGroup.Kind.ORGANIZATION,
-            created_by=self.organizer,
-        )
-        GroupMembership.objects.create(
-            group=self.organization,
-            user=self.organizer,
-            role=GroupMembership.Role.OWNER,
-            status=GroupMembership.Status.ACTIVE,
-            invited_by=self.organizer,
-        )
+        self.organization = SocialGroup.objects.create(name="Test Organization", kind=SocialGroup.Kind.ORGANIZATION, created_by=self.organizer)
+        GroupMembership.objects.create(group=self.organization, user=self.organizer, role=GroupMembership.Role.OWNER, status=GroupMembership.Status.ACTIVE, invited_by=self.organizer)
         self.event = SocialEvent.objects.create(
             organizer_group=self.organization,
             created_by=self.organizer,
@@ -86,119 +39,90 @@ class SocialApiPermissionTests(APITestCase):
             start_at=timezone.now() + timedelta(days=10),
             status=SocialEvent.Status.PUBLISHED,
         )
-        self.invitation = GroupEventInvitation.objects.create(
-            event=self.event,
-            target_group=self.team,
-            invited_by=self.organizer,
-        )
-        self.collection = Collection.objects.create(
-            group=self.team,
-            created_by=self.owner,
-            title="Entry Fee",
-            total_amount_cents=40000,
-            status=Collection.Status.OPEN,
-        )
+        self.invitation = GroupEventInvitation.objects.create(event=self.event, target_group=self.team, invited_by=self.organizer)
+        self.collection = Collection.objects.create(group=self.team, created_by=self.owner, title="Entry Fee", total_amount_cents=40000, status=Collection.Status.OPEN)
 
     def authenticate(self, user):
         self.client.force_authenticate(user=user)
 
     def test_plain_member_cannot_patch_group_event_invitation(self):
         self.authenticate(self.member)
-        url = reverse(
-            "social-event-invitations-detail",
-            args=[self.invitation.pk],
-        )
+        url = reverse("social-event-invitations-detail", args=[self.invitation.pk])
         response = self.client.patch(url, {"status": "ACCEPTED"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
         self.invitation.refresh_from_db()
-        self.assertEqual(
-            self.invitation.status,
-            GroupEventInvitation.Status.PENDING,
-        )
+        self.assertEqual(self.invitation.status, GroupEventInvitation.Status.PENDING)
 
     def test_manager_can_accept_group_event_invitation(self):
         self.authenticate(self.manager)
-        url = reverse(
-            "social-event-invitations-accept",
-            args=[self.invitation.pk],
-        )
+        url = reverse("social-event-invitations-accept", args=[self.invitation.pk])
         response = self.client.post(url, {}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.invitation.refresh_from_db()
-        self.assertEqual(
-            self.invitation.status,
-            GroupEventInvitation.Status.ACCEPTED,
-        )
+        self.assertEqual(self.invitation.status, GroupEventInvitation.Status.ACCEPTED)
         self.assertEqual(self.invitation.responded_by_id, self.manager.id)
+
+    def test_accepting_group_event_seeds_pending_rsvp_for_every_active_member(self):
+        self.authenticate(self.manager)
+        response = self.client.post(reverse("social-event-invitations-accept", args=[self.invitation.pk]), {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rows = EventMemberResponse.objects.filter(event=self.event, group=self.team)
+        self.assertEqual(rows.count(), 3)
+        self.assertEqual(set(rows.values_list("response", flat=True)), {EventMemberResponse.Response.PENDING})
 
     def test_plain_member_cannot_edit_collection(self):
         self.authenticate(self.member)
         url = reverse("social-collections-detail", args=[self.collection.pk])
-        response = self.client.patch(
-            url,
-            {"total_amount_cents": 1},
-            format="json",
-        )
+        response = self.client.patch(url, {"total_amount_cents": 1}, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.collection.refresh_from_db()
         self.assertEqual(self.collection.total_amount_cents, 40000)
 
     def test_member_cannot_rsvp_until_group_accepts_event(self):
         self.authenticate(self.member)
-        url = reverse("social-event-responses-list")
-        response = self.client.post(
-            url,
-            {
-                "event": self.event.id,
-                "group": self.team.id,
-                "response": "YES",
-            },
-            format="json",
-        )
+        list_url = reverse("social-event-responses-list")
+        response = self.client.post(list_url, {"event": self.event.id, "group": self.team.id, "response": "YES"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-        self.invitation.status = GroupEventInvitation.Status.ACCEPTED
-        self.invitation.responded_by = self.manager
-        self.invitation.responded_at = timezone.now()
-        self.invitation.save(
-            update_fields=("status", "responded_by", "responded_at", "updated_at")
-        )
+        self.authenticate(self.manager)
+        accept_url = reverse("social-event-invitations-accept", args=[self.invitation.pk])
+        response = self.client.post(accept_url, {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-        response = self.client.post(
-            url,
-            {
-                "event": self.event.id,
-                "group": self.team.id,
-                "response": "YES",
-            },
-            format="json",
-        )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        seeded = EventMemberResponse.objects.get(event=self.event, group=self.team, user=self.member)
+        self.authenticate(self.member)
+        response = self.client.patch(reverse("social-event-responses-detail", args=[seeded.pk]), {"response": "YES"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["response"], "YES")
+
+    def test_new_active_member_gets_pending_rsvp_for_already_accepted_event(self):
+        self.authenticate(self.manager)
+        response = self.client.post(reverse("social-event-invitations-accept", args=[self.invitation.pk]), {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        late_member = User.objects.create_user(username="late-member", email="late@example.com", password="pass12345")
+        membership = GroupMembership.objects.create(
+            group=self.team,
+            user=late_member,
+            role=GroupMembership.Role.MEMBER,
+            status=GroupMembership.Status.INVITED,
+            invited_by=self.manager,
+        )
+        membership.status = GroupMembership.Status.ACTIVE
+        membership.save(update_fields=("status", "updated_at"))
+
+        self.assertTrue(EventMemberResponse.objects.filter(event=self.event, group=self.team, user=late_member, response=EventMemberResponse.Response.PENDING).exists())
 
     def test_member_cannot_create_child_group_under_group_they_do_not_manage(self):
         self.authenticate(self.member)
         url = reverse("social-groups-list")
-        response = self.client.post(
-            url,
-            {
-                "name": "Unauthorized Child",
-                "kind": "TEAM",
-                "visibility": "PRIVATE",
-                "parent": self.organization.id,
-            },
-            format="json",
-        )
+        response = self.client.post(url, {"name": "Unauthorized Child", "kind": "TEAM", "visibility": "PRIVATE", "parent": self.organization.id}, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_manager_can_update_collection_amount(self):
         self.authenticate(self.manager)
         url = reverse("social-collections-detail", args=[self.collection.pk])
-        response = self.client.patch(
-            url,
-            {"total_amount_cents": 45000},
-            format="json",
-        )
+        response = self.client.patch(url, {"total_amount_cents": 45000}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.collection.refresh_from_db()
         self.assertEqual(self.collection.total_amount_cents, 45000)
