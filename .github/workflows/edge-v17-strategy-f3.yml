@@ -1,0 +1,35 @@
+name: EDGE v1.7 Strategy F3
+
+on:
+  push:
+    branches:
+      - agent/edge-strategy-f3
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 105
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run Strategy F3 baseball-context backtest
+        shell: bash
+        env:
+          EDGE_DAYS: '60'
+        run: |
+          set -o pipefail
+          python scripts/edge_v17_strategy_f3.py | tee edge_v17_console.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v17-strategy-f3-results
+          path: |
+            edge_v17_strategy_f3_results.json
+            edge_v17_console.txt
+          retention-days: 14
