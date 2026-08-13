@@ -6,6 +6,8 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from personal_calendar.models import PersonalCalendarEvent
+
 from .models import (
     Collection,
     EventMemberResponse,
@@ -37,6 +39,10 @@ class SocialApiPermissionTests(APITestCase):
             created_by=self.organizer,
             title="Test Invitational",
             start_at=timezone.now() + timedelta(days=10),
+            venue_name="Original Park",
+            address_line1="100 First Ave",
+            city="Montgomery",
+            state="AL",
             status=SocialEvent.Status.PUBLISHED,
         )
         self.invitation = GroupEventInvitation.objects.create(event=self.event, target_group=self.team, invited_by=self.organizer)
@@ -44,6 +50,14 @@ class SocialApiPermissionTests(APITestCase):
 
     def authenticate(self, user):
         self.client.force_authenticate(user=user)
+
+    def social_calendar_rows(self, event=None):
+        event = event or self.event
+        return PersonalCalendarEvent.objects.filter(
+            source=PersonalCalendarEvent.Source.SYNC,
+            external_calendar_id="syncworks-social",
+            external_event_id=f"social:{event.id}",
+        )
 
     def test_plain_member_cannot_patch_group_event_invitation(self):
         self.authenticate(self.member)
@@ -70,6 +84,56 @@ class SocialApiPermissionTests(APITestCase):
         self.assertEqual(rows.count(), 3)
         self.assertEqual(set(rows.values_list("response", flat=True)), {EventMemberResponse.Response.PENDING})
 
+    def test_accepting_group_event_adds_one_calendar_entry_per_active_member(self):
+        self.authenticate(self.manager)
+        response = self.client.post(reverse("social-event-invitations-accept", args=[self.invitation.pk]), {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        rows = self.social_calendar_rows()
+        # Organizer already receives the organizer event; accepting the team adds its 3 active members.
+        self.assertEqual(rows.count(), 4)
+        self.assertEqual(set(rows.values_list("owner_id", flat=True)), {self.organizer.id, self.owner.id, self.manager.id, self.member.id})
+        self.assertTrue(all(row.created_by_sync for row in rows))
+
+    def test_social_event_edit_updates_linked_calendars_without_duplicates(self):
+        self.authenticate(self.manager)
+        self.client.post(reverse("social-event-invitations-accept", args=[self.invitation.pk]), {}, format="json")
+        original_count = self.social_calendar_rows().count()
+        new_start = self.event.start_at + timedelta(hours=2)
+
+        self.authenticate(self.organizer)
+        response = self.client.patch(
+            reverse("social-events-detail", args=[self.event.pk]),
+            {
+                "start_at": new_start.isoformat(),
+                "venue_name": "Updated Park",
+                "address_line1": "200 Second Ave",
+                "city": "Birmingham",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.social_calendar_rows().count(), original_count)
+        for row in self.social_calendar_rows():
+            self.assertEqual(row.title, "Test Invitational")
+            self.assertEqual(row.start_at, new_start)
+            self.assertEqual(row.location_name, "Updated Park")
+            self.assertEqual(row.address_line1, "200 Second Ave")
+            self.assertEqual(row.city, "Birmingham")
+            self.assertEqual(row.metadata.get("social_event_version"), 2)
+
+    def test_social_event_cancellation_cancels_all_linked_calendar_entries(self):
+        self.authenticate(self.manager)
+        self.client.post(reverse("social-event-invitations-accept", args=[self.invitation.pk]), {}, format="json")
+        original_count = self.social_calendar_rows().count()
+
+        self.authenticate(self.organizer)
+        response = self.client.delete(reverse("social-events-detail", args=[self.event.pk]))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(self.social_calendar_rows().count(), original_count)
+        self.assertFalse(self.social_calendar_rows().exclude(status=PersonalCalendarEvent.Status.CANCELLED).exists())
+        self.assertTrue(all(row.audit_entries.filter(action="CANCELLED").exists() for row in self.social_calendar_rows()))
+
     def test_plain_member_cannot_edit_collection(self):
         self.authenticate(self.member)
         url = reverse("social-collections-detail", args=[self.collection.pk])
@@ -95,7 +159,7 @@ class SocialApiPermissionTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["response"], "YES")
 
-    def test_new_active_member_gets_pending_rsvp_for_already_accepted_event(self):
+    def test_new_active_member_gets_pending_rsvp_and_calendar_for_already_accepted_event(self):
         self.authenticate(self.manager)
         response = self.client.post(reverse("social-event-invitations-accept", args=[self.invitation.pk]), {}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -112,6 +176,7 @@ class SocialApiPermissionTests(APITestCase):
         membership.save(update_fields=("status", "updated_at"))
 
         self.assertTrue(EventMemberResponse.objects.filter(event=self.event, group=self.team, user=late_member, response=EventMemberResponse.Response.PENDING).exists())
+        self.assertTrue(self.social_calendar_rows().filter(owner=late_member).exists())
 
     def test_member_cannot_create_child_group_under_group_they_do_not_manage(self):
         self.authenticate(self.member)
