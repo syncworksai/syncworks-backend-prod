@@ -1,0 +1,35 @@
+name: EDGE Frozen Forward CI
+
+on:
+  push:
+    branches:
+      - agent/edge-freeze-e1-e2-live
+    paths:
+      - "platform_edge/**"
+      - ".github/workflows/edge-frozen-forward-ci.yml"
+  pull_request:
+    paths:
+      - "platform_edge/**"
+      - ".github/workflows/edge-frozen-forward-ci.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DJANGO_DEBUG: "true"
+      DB_ENGINE: sqlite
+      DJANGO_SECRET_KEY: edge-forward-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Compile frozen EDGE modules
+        run: python -m py_compile platform_edge/server_paper.py platform_edge/strategy_e.py platform_edge/strategy_scoreboard.py
+      - name: Django system check
+        run: python manage.py check
+      - name: EDGE focused tests
+        run: python manage.py test platform_edge.test_portfolio_engine platform_edge.test_strategy_a --verbosity 1
