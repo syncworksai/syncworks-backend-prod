@@ -5,3 +5,6 @@ class PlatformSocialConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "platform_social"
     verbose_name = "SyncWorks Social"
+
+    def ready(self):
+        from . import signals  # noqa: F401
