@@ -30,6 +30,9 @@ class SocialCommunicationTests(APITestCase):
     def auth(self, user):
         self.client.force_authenticate(user=user)
 
+    def result_rows(self, response):
+        return response.data.get("results", []) if isinstance(response.data, dict) else response.data
+
     def test_active_members_share_one_group_feed(self):
         self.auth(self.member)
         created = self.client.post(reverse("social-room-feed"), {"group": self.team.id, "kind": "CHAT", "body": "Practice moved to 7."}, format="json")
@@ -37,16 +40,17 @@ class SocialCommunicationTests(APITestCase):
         self.auth(self.owner)
         feed = self.client.get(reverse("social-room-feed"), {"group": self.team.id, "event": "none"})
         self.assertEqual(feed.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(feed.data), 1)
-        self.assertEqual(feed.data[0]["body"], "Practice moved to 7.")
-        self.assertEqual(feed.data[0]["sender"], self.member.id)
+        rows = self.result_rows(feed)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["body"], "Practice moved to 7.")
+        self.assertEqual(rows[0]["sender"], self.member.id)
 
     def test_outsider_cannot_read_or_post(self):
         SocialMessage.objects.create(group=self.team, sender=self.member, body="Team only")
         self.auth(self.outsider)
         feed = self.client.get(reverse("social-room-feed"), {"group": self.team.id})
         self.assertEqual(feed.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(feed.data), 0)
+        self.assertEqual(len(self.result_rows(feed)), 0)
         created = self.client.post(reverse("social-room-feed"), {"group": self.team.id, "body": "Hello"}, format="json")
         self.assertEqual(created.status_code, status.HTTP_400_BAD_REQUEST)
 
