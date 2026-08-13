@@ -27,6 +27,7 @@ from .record_views import (
     unified_inbox,
     update_tenant_case,
 )
+from .tenant_profile_views import correct_tenant_profile
 from .views import PMProjectViewSet, PMPropertyViewSet, PMTenantInvitationViewSet, PMTenantViewSet, PMWorkspaceViewSet
 from .workflow_close_views import close_occupancy_workflow
 from .workflow_views import email_conversation, evict_occupancy, make_ready_board, update_make_ready
@@ -53,6 +54,7 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/complete-internally/", complete_tenant_onboarding_internally, name="pm-tenant-complete-internally"),
     path("tenants/<int:tenant_id>/complete-internally", complete_tenant_onboarding_internally, name="pm-tenant-complete-internally-no-slash"),
     path("tenants/<int:tenant_id>/complete_internal/", complete_tenant_onboarding_internally, name="pm-tenant-complete-internal-compat"),
+    path("tenants/<int:tenant_id>/correct-profile/", correct_tenant_profile, name="pm-tenant-correct-profile"),
     path("properties/<int:property_id>/profile/", property_profile, name="pm-property-detail-profile"),
     path("properties/<int:property_id>/inventory/", property_inventory, name="pm-property-inventory"),
     path("properties/<int:property_id>/inventory/<int:item_id>/", property_inventory_item, name="pm-property-inventory-item"),
