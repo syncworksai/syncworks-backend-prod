@@ -99,10 +99,11 @@ def generate_installment_late_fees(request, tenant_id):
     anchor = _date(profile.get("installment_anchor_date")); amount = _money(profile.get("installment_amount")); fee = _money(profile.get("installment_late_fee_amount"))
     if not anchor or amount <= 0 or fee <= 0: return Response({"detail": "Add the first installment due date, installment amount, and late fee."}, status=status.HTTP_400_BAD_REQUEST)
     through = _date(request.data.get("through_date")) or timezone.localdate(); grace = int(profile.get("installment_grace_days") or 0); step = 7 if str(profile.get("installment_frequency")).upper() == "WEEKLY" else 14; created=[]; due=anchor; installment_number=1
+    payment_window_start = anchor - timedelta(days=step)
     while due <= through:
         check_date = due + timedelta(days=grace)
         if check_date <= through:
-            required = amount * installment_number; paid = _tenant_payments_through(tenant, anchor - timedelta(days=31), check_date)
+            required = amount * installment_number; paid = _tenant_payments_through(tenant, payment_window_start, check_date)
             if paid < required:
                 ref = f"AUTO-INSTALLMENT-LATE-{tenant.id}-{due.isoformat()}"
                 if not tenant.ledger_entries.filter(reference=ref).exists(): created.append(PMLedgerEntry.objects.create(workspace=workspace, tenant=tenant, lease=_active_lease(tenant), entry_date=check_date + timedelta(days=1), entry_type=PMLedgerEntry.EntryType.CHARGE, amount=fee, category="LATE_FEE", reference=ref, memo=f"Late fee for tenant installment due {due.isoformat()}", created_by=request.user).id)
