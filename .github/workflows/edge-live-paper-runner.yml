@@ -1,6 +1,11 @@
 name: EDGE Live Paper Runner
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/edge-live-paper-runner.yml"
+      - "platform_edge/**"
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
