@@ -71,12 +71,12 @@ def rebuild_split_rent(request, tenant_id):
     if not lease or not lease.section8: return Response({"detail": "An active Section 8 lease is required."}, status=status.HTTP_400_BAD_REQUEST)
     tenant_portion = _money(lease.tenant_portion); housing_portion = _money(lease.assistance_portion); contract = _money(lease.monthly_rent)
     if tenant_portion + housing_portion != contract: return Response({"detail": f"Tenant plus housing portions must equal contract rent (${contract})."}, status=status.HTTP_400_BAD_REQUEST)
-    start = _date(request.data.get("start_date")) or lease.start_date; through = _date(request.data.get("through_date")) or timezone.localdate(); due_day = max(1, min(int(_profile(tenant).get("rent_due_day") or 1), 28))
+    selected_start = _date(request.data.get("start_date")) or lease.start_date; start = date(selected_start.year, selected_start.month, 1); through = _date(request.data.get("through_date")) or timezone.localdate(); due_day = max(1, min(int(_profile(tenant).get("rent_due_day") or 1), 28))
     generated = tenant.ledger_entries.filter(entry_date__gte=start, entry_date__lte=through, category__in=["RENT", "RENT_TENANT", "RENT_HOUSING"], reference__startswith="AUTO-"); removed = generated.count(); generated.delete(); created=[]
-    cursor = date(start.year, start.month, 1); end = date(through.year, through.month, 1)
+    cursor = start; end = date(through.year, through.month, 1)
     while cursor <= end:
         due = date(cursor.year, cursor.month, due_day)
-        if start <= due <= through:
+        if due <= through:
             if tenant_portion > 0: created.append(PMLedgerEntry.objects.create(workspace=workspace, tenant=tenant, lease=lease, entry_date=due, entry_type=PMLedgerEntry.EntryType.CHARGE, amount=tenant_portion, category="RENT_TENANT", reference=f"AUTO-SPLIT-RENT-T-{tenant.id}-{cursor:%Y-%m}", memo=f"Tenant rent portion for {cursor:%B %Y}", created_by=request.user).id)
             if housing_portion > 0: created.append(PMLedgerEntry.objects.create(workspace=workspace, tenant=tenant, lease=lease, entry_date=due, entry_type=PMLedgerEntry.EntryType.CHARGE, amount=housing_portion, category="RENT_HOUSING", reference=f"AUTO-SPLIT-RENT-H-{tenant.id}-{cursor:%Y-%m}", memo=f"Housing assistance portion for {cursor:%B %Y}", created_by=request.user).id)
         cursor = date(cursor.year + (1 if cursor.month == 12 else 0), 1 if cursor.month == 12 else cursor.month + 1, 1)
