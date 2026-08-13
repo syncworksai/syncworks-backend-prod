@@ -1,0 +1,32 @@
+name: EDGE v1.6 Strategy F
+
+on:
+  push:
+    branches:
+      - agent/edge-strategy-f
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 105
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run Strategy F game-state vs pitcher-aware backtest
+        env:
+          EDGE_DAYS: '60'
+        run: python scripts/edge_v16_strategy_f.py | tee edge_v16_console.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v16-strategy-f-results
+          path: |
+            edge_v16_strategy_f_results.json
+            edge_v16_console.txt
+          retention-days: 14
