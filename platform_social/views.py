@@ -30,19 +30,45 @@ from .serializers import (
 )
 
 User = get_user_model()
-MANAGEMENT_ROLES = (GroupMembership.Role.OWNER, GroupMembership.Role.DIRECTOR, GroupMembership.Role.MANAGER)
+MANAGEMENT_ROLES = (
+    GroupMembership.Role.OWNER,
+    GroupMembership.Role.DIRECTOR,
+    GroupMembership.Role.MANAGER,
+)
 
 
 def active_group_ids(user):
-    return GroupMembership.objects.filter(user=user, status=GroupMembership.Status.ACTIVE).values_list("group_id", flat=True)
+    return GroupMembership.objects.filter(
+        user=user,
+        status=GroupMembership.Status.ACTIVE,
+    ).values_list("group_id", flat=True)
 
 
 def managed_group_ids(user):
-    return GroupMembership.objects.filter(user=user, status=GroupMembership.Status.ACTIVE, role__in=MANAGEMENT_ROLES).values_list("group_id", flat=True)
+    return GroupMembership.objects.filter(
+        user=user,
+        status=GroupMembership.Status.ACTIVE,
+        role__in=MANAGEMENT_ROLES,
+    ).values_list("group_id", flat=True)
 
 
 def can_manage_group(user, group_id):
-    return GroupMembership.objects.filter(user=user, group_id=group_id, status=GroupMembership.Status.ACTIVE, role__in=MANAGEMENT_ROLES).exists()
+    return GroupMembership.objects.filter(
+        user=user,
+        group_id=group_id,
+        status=GroupMembership.Status.ACTIVE,
+        role__in=MANAGEMENT_ROLES,
+    ).exists()
+
+
+def event_is_for_group(event, group_id):
+    if event.organizer_group_id == group_id:
+        return True
+    return GroupEventInvitation.objects.filter(
+        event=event,
+        target_group_id=group_id,
+        status=GroupEventInvitation.Status.ACCEPTED,
+    ).exists()
 
 
 class PeopleViewSet(viewsets.ReadOnlyModelViewSet):
@@ -50,7 +76,9 @@ class PeopleViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        queryset = User.objects.exclude(pk=self.request.user.pk).order_by("first_name", "last_name", "id")
+        queryset = User.objects.exclude(pk=self.request.user.pk).order_by(
+            "first_name", "last_name", "id"
+        )
         search = str(self.request.query_params.get("search", "")).strip()
         if search:
             queryset = queryset.filter(
@@ -66,20 +94,36 @@ class PeopleViewSet(viewsets.ReadOnlyModelViewSet):
 class ConnectionViewSet(viewsets.ModelViewSet):
     serializer_class = ConnectionSerializer
     permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "head", "options"]
 
     def get_queryset(self):
-        return Connection.objects.filter(Q(sender=self.request.user) | Q(recipient=self.request.user)).select_related("sender", "recipient")
+        return Connection.objects.filter(
+            Q(sender=self.request.user) | Q(recipient=self.request.user)
+        ).select_related("sender", "recipient")
 
     def perform_create(self, serializer):
         recipient = serializer.validated_data["recipient"]
-        if Connection.objects.filter(Q(sender=self.request.user, recipient=recipient) | Q(sender=recipient, recipient=self.request.user)).exclude(status=Connection.Status.DECLINED).exists():
-            raise serializers.ValidationError("A connection request already exists between these users.")
+        if Connection.objects.filter(
+            Q(sender=self.request.user, recipient=recipient)
+            | Q(sender=recipient, recipient=self.request.user)
+        ).exclude(status=Connection.Status.DECLINED).exists():
+            raise serializers.ValidationError(
+                "A connection request already exists between these users."
+            )
         serializer.save(sender=self.request.user)
 
     def _respond(self, request, value):
         connection = self.get_object()
         if connection.recipient_id != request.user.id:
-            return Response({"detail": "Only the recipient can respond to this request."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"detail": "Only the recipient can respond to this request."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if connection.status != Connection.Status.PENDING:
+            return Response(
+                {"detail": "This connection request has already been resolved."},
+                status=status.HTTP_409_CONFLICT,
+            )
         connection.status = value
         connection.responded_at = timezone.now()
         connection.save(update_fields=("status", "responded_at", "updated_at"))
@@ -100,16 +144,37 @@ class SocialGroupViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         member_ids = active_group_ids(self.request.user)
-        return SocialGroup.objects.filter(Q(id__in=member_ids) | Q(created_by=self.request.user) | Q(visibility=SocialGroup.Visibility.PUBLIC), is_active=True).distinct().prefetch_related("memberships")
+        return SocialGroup.objects.filter(
+            Q(id__in=member_ids)
+            | Q(created_by=self.request.user)
+            | Q(visibility=SocialGroup.Visibility.PUBLIC),
+            is_active=True,
+        ).distinct().prefetch_related("memberships")
 
     def perform_create(self, serializer):
+        parent = serializer.validated_data.get("parent")
+        if parent and not can_manage_group(self.request.user, parent.id):
+            raise serializers.ValidationError(
+                "You must manage the parent group to create a child group."
+            )
         with transaction.atomic():
             group = serializer.save(created_by=self.request.user)
-            GroupMembership.objects.create(group=group, user=self.request.user, role=GroupMembership.Role.OWNER, status=GroupMembership.Status.ACTIVE, invited_by=self.request.user)
+            GroupMembership.objects.create(
+                group=group,
+                user=self.request.user,
+                role=GroupMembership.Role.OWNER,
+                status=GroupMembership.Status.ACTIVE,
+                invited_by=self.request.user,
+            )
 
     def perform_update(self, serializer):
         if not can_manage_group(self.request.user, self.get_object().id):
             raise serializers.ValidationError("You do not manage this group.")
+        parent = serializer.validated_data.get("parent")
+        if parent and not can_manage_group(self.request.user, parent.id):
+            raise serializers.ValidationError(
+                "You must manage the parent group to move this group there."
+            )
         serializer.save()
 
     def perform_destroy(self, instance):
@@ -122,21 +187,36 @@ class SocialGroupViewSet(viewsets.ModelViewSet):
 class GroupMembershipViewSet(viewsets.ModelViewSet):
     serializer_class = GroupMembershipSerializer
     permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "head", "options"]
 
     def get_queryset(self):
-        return GroupMembership.objects.filter(Q(user=self.request.user) | Q(group_id__in=managed_group_ids(self.request.user))).select_related("user", "group").distinct()
+        return GroupMembership.objects.filter(
+            Q(user=self.request.user)
+            | Q(group_id__in=managed_group_ids(self.request.user))
+        ).select_related("user", "group").distinct()
 
     def perform_create(self, serializer):
         group = serializer.validated_data["group"]
         if not can_manage_group(self.request.user, group.id):
             raise serializers.ValidationError("You do not manage this group.")
-        serializer.save(invited_by=self.request.user)
+        serializer.save(
+            invited_by=self.request.user,
+            status=GroupMembership.Status.INVITED,
+        )
 
     @action(detail=True, methods=["post"])
     def accept(self, request, pk=None):
         membership = self.get_object()
         if membership.user_id != request.user.id:
-            return Response({"detail": "Only the invited member can accept."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"detail": "Only the invited member can accept."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if membership.status != GroupMembership.Status.INVITED:
+            return Response(
+                {"detail": "This membership invitation is no longer pending."},
+                status=status.HTTP_409_CONFLICT,
+            )
         membership.status = GroupMembership.Status.ACTIVE
         membership.save(update_fields=("status", "updated_at"))
         return Response(self.get_serializer(membership).data)
@@ -145,7 +225,15 @@ class GroupMembershipViewSet(viewsets.ModelViewSet):
     def decline(self, request, pk=None):
         membership = self.get_object()
         if membership.user_id != request.user.id:
-            return Response({"detail": "Only the invited member can decline."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"detail": "Only the invited member can decline."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if membership.status != GroupMembership.Status.INVITED:
+            return Response(
+                {"detail": "This membership invitation is no longer pending."},
+                status=status.HTTP_409_CONFLICT,
+            )
         membership.status = GroupMembership.Status.DECLINED
         membership.save(update_fields=("status", "updated_at"))
         return Response(self.get_serializer(membership).data)
@@ -157,51 +245,94 @@ class SocialEventViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         group_ids = active_group_ids(self.request.user)
-        return SocialEvent.objects.filter(Q(created_by=self.request.user) | Q(organizer_group_id__in=group_ids) | Q(group_invitations__target_group_id__in=group_ids)).distinct().prefetch_related("group_invitations")
+        return SocialEvent.objects.filter(
+            Q(created_by=self.request.user)
+            | Q(organizer_group_id__in=group_ids)
+            | Q(group_invitations__target_group_id__in=group_ids)
+        ).distinct().prefetch_related("group_invitations")
 
     def perform_create(self, serializer):
         group = serializer.validated_data.get("organizer_group")
         if group and not can_manage_group(self.request.user, group.id):
-            raise serializers.ValidationError("You do not manage the organizer group.")
+            raise serializers.ValidationError(
+                "You do not manage the organizer group."
+            )
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
         event = self.get_object()
-        if event.organizer_group_id:
-            allowed = can_manage_group(self.request.user, event.organizer_group_id)
-        else:
-            allowed = event.created_by_id == self.request.user.id
+        allowed = (
+            can_manage_group(self.request.user, event.organizer_group_id)
+            if event.organizer_group_id
+            else event.created_by_id == self.request.user.id
+        )
         if not allowed:
             raise serializers.ValidationError("You do not manage this event.")
         serializer.save(version=event.version + 1)
+
+    def perform_destroy(self, instance):
+        allowed = (
+            can_manage_group(self.request.user, instance.organizer_group_id)
+            if instance.organizer_group_id
+            else instance.created_by_id == self.request.user.id
+        )
+        if not allowed:
+            raise serializers.ValidationError("You do not manage this event.")
+        instance.status = SocialEvent.Status.CANCELLED
+        instance.version += 1
+        instance.save(update_fields=("status", "version", "updated_at"))
 
 
 class GroupEventInvitationViewSet(viewsets.ModelViewSet):
     serializer_class = GroupEventInvitationSerializer
     permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "head", "options"]
 
     def get_queryset(self):
         group_ids = active_group_ids(self.request.user)
-        return GroupEventInvitation.objects.filter(Q(invited_by=self.request.user) | Q(target_group_id__in=group_ids)).select_related("event", "target_group").distinct()
+        return GroupEventInvitation.objects.filter(
+            Q(invited_by=self.request.user) | Q(target_group_id__in=group_ids)
+        ).select_related("event", "target_group").distinct()
 
     def perform_create(self, serializer):
         event = serializer.validated_data["event"]
-        if event.organizer_group_id:
-            allowed = can_manage_group(self.request.user, event.organizer_group_id)
-        else:
-            allowed = event.created_by_id == self.request.user.id
+        target_group = serializer.validated_data["target_group"]
+        allowed = (
+            can_manage_group(self.request.user, event.organizer_group_id)
+            if event.organizer_group_id
+            else event.created_by_id == self.request.user.id
+        )
         if not allowed:
             raise serializers.ValidationError("You do not manage this event.")
+        if event.organizer_group_id == target_group.id:
+            raise serializers.ValidationError(
+                "The organizer group is already part of this event."
+            )
         serializer.save(invited_by=self.request.user)
 
     def _respond(self, request, value):
         invitation = self.get_object()
         if not can_manage_group(request.user, invitation.target_group_id):
-            return Response({"detail": "A group owner, director or manager must respond."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"detail": "A group owner, director or manager must respond."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if invitation.status != GroupEventInvitation.Status.PENDING:
+            return Response(
+                {"detail": "This group invitation has already been resolved."},
+                status=status.HTTP_409_CONFLICT,
+            )
         invitation.status = value
         invitation.responded_by = request.user
         invitation.responded_at = timezone.now()
-        invitation.save(update_fields=("status", "responded_by", "responded_at", "updated_at"))
+        invitation.save(
+            update_fields=(
+                "status",
+                "responded_by",
+                "responded_at",
+                "updated_at",
+            )
+        )
         return Response(self.get_serializer(invitation).data)
 
     @action(detail=True, methods=["post"])
@@ -216,20 +347,37 @@ class GroupEventInvitationViewSet(viewsets.ModelViewSet):
 class EventMemberResponseViewSet(viewsets.ModelViewSet):
     serializer_class = EventMemberResponseSerializer
     permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_queryset(self):
-        return EventMemberResponse.objects.filter(Q(user=self.request.user) | Q(group_id__in=managed_group_ids(self.request.user))).distinct()
+        return EventMemberResponse.objects.filter(
+            Q(user=self.request.user)
+            | Q(group_id__in=managed_group_ids(self.request.user))
+        ).distinct()
 
     def perform_create(self, serializer):
         group = serializer.validated_data["group"]
-        if not GroupMembership.objects.filter(group=group, user=self.request.user, status=GroupMembership.Status.ACTIVE).exists():
-            raise serializers.ValidationError("You are not an active member of this group.")
+        event = serializer.validated_data["event"]
+        if not GroupMembership.objects.filter(
+            group=group,
+            user=self.request.user,
+            status=GroupMembership.Status.ACTIVE,
+        ).exists():
+            raise serializers.ValidationError(
+                "You are not an active member of this group."
+            )
+        if not event_is_for_group(event, group.id):
+            raise serializers.ValidationError(
+                "This event has not been accepted by your group."
+            )
         serializer.save(user=self.request.user, responded_at=timezone.now())
 
     def perform_update(self, serializer):
         response = self.get_object()
         if response.user_id != self.request.user.id:
-            raise serializers.ValidationError("Only the member can change this response.")
+            raise serializers.ValidationError(
+                "Only the member can change this response."
+            )
         serializer.save(responded_at=timezone.now())
 
 
@@ -239,24 +387,76 @@ class CollectionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         group_ids = active_group_ids(self.request.user)
-        return Collection.objects.filter(Q(group_id__in=group_ids) | Q(shares__user=self.request.user)).distinct().prefetch_related("shares__user")
+        return Collection.objects.filter(
+            Q(group_id__in=group_ids) | Q(shares__user=self.request.user)
+        ).distinct().prefetch_related("shares__user")
 
     def perform_create(self, serializer):
         group = serializer.validated_data["group"]
+        event = serializer.validated_data.get("event")
         if not can_manage_group(self.request.user, group.id):
             raise serializers.ValidationError("You do not manage this group.")
+        if event and not event_is_for_group(event, group.id):
+            raise serializers.ValidationError(
+                "This event is not associated with the collection group."
+            )
         serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        collection = self.get_object()
+        if not can_manage_group(self.request.user, collection.group_id):
+            raise serializers.ValidationError("You do not manage this collection.")
+        new_group = serializer.validated_data.get("group", collection.group)
+        new_event = serializer.validated_data.get("event", collection.event)
+        if new_group.id != collection.group_id and not can_manage_group(
+            self.request.user, new_group.id
+        ):
+            raise serializers.ValidationError("You do not manage the new group.")
+        if new_event and not event_is_for_group(new_event, new_group.id):
+            raise serializers.ValidationError(
+                "This event is not associated with the collection group."
+            )
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not can_manage_group(self.request.user, instance.group_id):
+            raise serializers.ValidationError("You do not manage this collection.")
+        instance.status = Collection.Status.CANCELLED
+        instance.save(update_fields=("status", "updated_at"))
 
 
 class CollectionShareViewSet(viewsets.ModelViewSet):
     serializer_class = CollectionShareSerializer
     permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
     def get_queryset(self):
-        return CollectionShare.objects.filter(Q(user=self.request.user) | Q(collection__group_id__in=managed_group_ids(self.request.user))).select_related("user", "collection").distinct()
+        return CollectionShare.objects.filter(
+            Q(user=self.request.user)
+            | Q(collection__group_id__in=managed_group_ids(self.request.user))
+        ).select_related("user", "collection").distinct()
 
     def perform_create(self, serializer):
         collection = serializer.validated_data["collection"]
         if not can_manage_group(self.request.user, collection.group_id):
-            raise serializers.ValidationError("You do not manage this collection's group.")
+            raise serializers.ValidationError(
+                "You do not manage this collection's group."
+            )
         serializer.save()
+
+    def perform_update(self, serializer):
+        share = self.get_object()
+        if not can_manage_group(self.request.user, share.collection.group_id):
+            raise serializers.ValidationError(
+                "Only group management can edit collection shares."
+            )
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not can_manage_group(
+            self.request.user, instance.collection.group_id
+        ):
+            raise serializers.ValidationError(
+                "Only group management can remove collection shares."
+            )
+        instance.delete()
