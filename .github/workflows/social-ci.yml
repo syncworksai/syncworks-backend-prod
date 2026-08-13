@@ -1,0 +1,42 @@
+name: SyncWorks Social CI
+
+on:
+  pull_request:
+    paths:
+      - "platform_social/**"
+      - "syncworksv7/settings_pm.py"
+      - "syncworksv7/urls.py"
+      - ".github/workflows/social-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  social-checks:
+    runs-on: ubuntu-latest
+    env:
+      DJANGO_DEBUG: "true"
+      DB_ENGINE: sqlite
+      DJANGO_SECRET_KEY: ci-social-secret
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Django system check
+        run: python manage.py check
+
+      - name: Verify Social migrations
+        run: python manage.py makemigrations platform_social --check --dry-run
+
+      - name: Apply migrations
+        run: python manage.py migrate --noinput
+
+      - name: Run Social API tests
+        run: python manage.py test platform_social --verbosity 2
