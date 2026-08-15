@@ -1,6 +1,5 @@
 from decimal import Decimal
 
-from django.urls import reverse
 from rest_framework.test import APITestCase
 
 from user_accounts.models import User
@@ -9,7 +8,11 @@ from user_accounts.models.personal_finance import FinanceAccount, FinanceLiabili
 
 class PersonalFinanceFoundationTests(APITestCase):
     def setUp(self):
-        self.user = User.objects.create_user(email="finance-test@example.com", password="test-password-123")
+        self.user = User.objects.create_user(
+            username="finance-test",
+            email="finance-test@example.com",
+            password="test-password-123",
+        )
         self.client.force_authenticate(self.user)
 
     def test_dashboard_combines_connected_and_manual_finance_records(self):
@@ -52,7 +55,11 @@ class PersonalFinanceFoundationTests(APITestCase):
         self.assertEqual(response.data["credit"]["utilization_percent"], 20.0)
 
     def test_user_cannot_see_another_users_accounts(self):
-        other = User.objects.create_user(email="other-finance@example.com", password="test-password-123")
+        other = User.objects.create_user(
+            username="other-finance",
+            email="other-finance@example.com",
+            password="test-password-123",
+        )
         FinanceAccount.objects.create(user=other, name="Private", kind=FinanceAccount.Kind.CHECKING)
         response = self.client.get("/api/v1/personal-finance/accounts/")
         self.assertEqual(response.status_code, 200)
