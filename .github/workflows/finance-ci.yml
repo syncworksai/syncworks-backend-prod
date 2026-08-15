@@ -31,9 +31,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pytest
+        run: pip install -r requirements.txt
       - name: Django system check
         run: python manage.py check
       - name: Verify finance migrations
@@ -41,4 +39,4 @@ jobs:
       - name: Apply migrations
         run: python manage.py migrate --noinput
       - name: Run finance tests
-        run: python -m pytest user_accounts/tests/test_personal_finance.py -q
+        run: python manage.py test user_accounts.tests.test_personal_finance -v 2
