@@ -151,7 +151,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(model_name="financeconnection", constraint=models.UniqueConstraint(fields=("user", "provider", "provider_item_id"), name="uniq_user_finance_provider_item")),
         migrations.AddConstraint(model_name="financeaccount", constraint=models.UniqueConstraint(condition=~models.Q(("provider_account_id", "")), fields=("user", "provider_account_id"), name="uniq_user_finance_provider_account")),
-        migrations.AddIndex(model_name="financetransaction", index=models.Index(fields=["user", "-date"], name="user_accoun_user_id_05cf5f_idx")),
-        migrations.AddIndex(model_name="financetransaction", index=models.Index(fields=["user", "category_primary"], name="user_accoun_user_id_f7347c_idx")),
+        migrations.AddIndex(model_name="financetransaction", index=models.Index(fields=["user", "-date"], name="user_accoun_user_id_74b808_idx")),
+        migrations.AddIndex(model_name="financetransaction", index=models.Index(fields=["user", "category_primary"], name="user_accoun_user_id_4e38cf_idx")),
         migrations.AddConstraint(model_name="financetransaction", constraint=models.UniqueConstraint(condition=~models.Q(("provider_transaction_id", "")), fields=("user", "provider_transaction_id"), name="uniq_user_finance_provider_transaction")),
     ]
