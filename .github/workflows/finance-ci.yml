@@ -46,7 +46,11 @@ jobs:
           code=$?
           cat /tmp/finance-test.log
           if [ "$code" -ne 0 ]; then
-            message=$(tail -n 100 /tmp/finance-test.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g' | cut -c1-7000)
+            failure=$(awk 'BEGIN{show=0} /^={20,}/{show=1} show{print}' /tmp/finance-test.log | tail -n 80)
+            if [ -z "$failure" ]; then
+              failure=$(grep -E -A12 -B4 'FAIL:|ERROR:|Traceback|AssertionError|FAILED|Error' /tmp/finance-test.log | tail -n 80)
+            fi
+            message=$(printf '%s' "$failure" | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g' | cut -c1-7000)
             echo "::error title=Finance tests failed::$message"
             exit "$code"
           fi
