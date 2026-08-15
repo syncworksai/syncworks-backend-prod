@@ -1,0 +1,23 @@
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+
+from user_accounts.viewsets.personal_finance import (
+    FinanceAccountViewSet,
+    FinanceConnectionViewSet,
+    FinanceDashboardViewSet,
+    FinanceGoalViewSet,
+    FinanceLiabilityViewSet,
+    FinanceObligationViewSet,
+    FinanceTransactionViewSet,
+)
+
+router = DefaultRouter()
+router.register(r"connections", FinanceConnectionViewSet, basename="finance-connections")
+router.register(r"accounts", FinanceAccountViewSet, basename="finance-accounts")
+router.register(r"liabilities", FinanceLiabilityViewSet, basename="finance-liabilities")
+router.register(r"obligations", FinanceObligationViewSet, basename="finance-obligations")
+router.register(r"transactions", FinanceTransactionViewSet, basename="finance-transactions")
+router.register(r"goals", FinanceGoalViewSet, basename="finance-goals")
+router.register(r"dashboard", FinanceDashboardViewSet, basename="finance-dashboard")
+
+urlpatterns = [path("", include(router.urls))]
