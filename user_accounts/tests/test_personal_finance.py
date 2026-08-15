@@ -1,9 +1,17 @@
+from datetime import timedelta
 from decimal import Decimal
 
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from user_accounts.models import User
-from user_accounts.models.personal_finance import FinanceAccount, FinanceLiability, FinanceObligation
+from user_accounts.models.personal_finance import (
+    FinanceAccount,
+    FinanceLiability,
+    FinanceObligation,
+    FinanceTransaction,
+)
+from user_accounts.services.finance_intelligence import infer_recurring_obligations
 
 
 class PersonalFinanceFoundationTests(APITestCase):
@@ -68,3 +76,48 @@ class PersonalFinanceFoundationTests(APITestCase):
         payload = response.data
         accounts = payload.get("results", []) if isinstance(payload, dict) else payload
         self.assertEqual(len(accounts), 0)
+
+    def test_recurring_transactions_create_inferred_obligation(self):
+        account = FinanceAccount.objects.create(
+            user=self.user,
+            name="Checking",
+            kind=FinanceAccount.Kind.CHECKING,
+            current_balance=Decimal("1500.00"),
+        )
+        today = timezone.localdate()
+        for index, days_ago in enumerate((60, 30, 0), start=1):
+            FinanceTransaction.objects.create(
+                user=self.user,
+                account=account,
+                provider_transaction_id=f"netflix-{index}",
+                merchant_name="Netflix",
+                description="Netflix subscription",
+                amount=Decimal("19.99"),
+                date=today - timedelta(days=days_ago),
+                category_primary="ENTERTAINMENT",
+            )
+
+        result = infer_recurring_obligations(self.user)
+
+        self.assertEqual(result["created"], 1)
+        obligation = FinanceObligation.objects.get(user=self.user, provider_stream_id__startswith="SYNC-INFERRED:")
+        self.assertEqual(obligation.name, "Netflix")
+        self.assertEqual(obligation.cadence, "MONTHLY")
+        self.assertEqual(obligation.expected_amount, Decimal("19.99"))
+        self.assertFalse(obligation.is_manual)
+
+    def test_finance_automation_briefing_is_available_for_sync_assist(self):
+        FinanceAccount.objects.create(
+            user=self.user,
+            name="Checking",
+            kind=FinanceAccount.Kind.CHECKING,
+            current_balance=Decimal("3200.00"),
+        )
+
+        response = self.client.get("/api/v1/personal-finance/automation/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("summary", response.data)
+        self.assertIn("alerts", response.data)
+        self.assertIn("recommendations", response.data)
+        self.assertEqual(Decimal(response.data["summary"]["available_cash"]), Decimal("3200.00"))
