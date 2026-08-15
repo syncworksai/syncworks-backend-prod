@@ -39,4 +39,14 @@ jobs:
       - name: Apply migrations
         run: python manage.py migrate --noinput
       - name: Run finance tests
-        run: python manage.py test user_accounts.tests.test_personal_finance -v 2
+        shell: bash
+        run: |
+          set +e
+          python manage.py test user_accounts.tests.test_personal_finance -v 2 > /tmp/finance-test.log 2>&1
+          code=$?
+          cat /tmp/finance-test.log
+          if [ "$code" -ne 0 ]; then
+            message=$(tail -n 100 /tmp/finance-test.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g' | cut -c1-7000)
+            echo "::error title=Finance tests failed::$message"
+            exit "$code"
+          fi
