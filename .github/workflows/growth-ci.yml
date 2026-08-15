@@ -16,6 +16,7 @@ jobs:
       DJANGO_DEBUG: "true"
       DB_ENGINE: sqlite
       DJANGO_SECRET_KEY: ci-growth-secret
+      DJANGO_SETTINGS_MODULE: syncworksv7.settings_pm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,7 +28,9 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-django
 
       - name: Django system check
         run: python manage.py check
