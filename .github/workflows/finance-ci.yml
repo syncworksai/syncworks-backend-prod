@@ -1,0 +1,56 @@
+name: SyncWorks Finance CI
+
+on:
+  pull_request:
+    paths:
+      - "user_accounts/models/personal_finance.py"
+      - "user_accounts/serializers/personal_finance.py"
+      - "user_accounts/services/plaid_finance.py"
+      - "user_accounts/viewsets/personal_finance.py"
+      - "user_accounts/personal_finance_urls.py"
+      - "user_accounts/tests/test_personal_finance.py"
+      - "user_accounts/migrations/**"
+      - "syncworksv7/urls.py"
+      - ".github/workflows/finance-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  finance-checks:
+    runs-on: ubuntu-latest
+    env:
+      DJANGO_DEBUG: "true"
+      DB_ENGINE: sqlite
+      DJANGO_SECRET_KEY: ci-finance-secret
+      DJANGO_SETTINGS_MODULE: syncworksv7.settings_pm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Django system check
+        run: python manage.py check
+      - name: Verify finance migrations
+        run: python manage.py makemigrations user_accounts --check --dry-run
+      - name: Apply migrations
+        run: python manage.py migrate --noinput
+      - name: Run finance tests
+        shell: bash
+        run: |
+          set +e
+          python manage.py test user_accounts.tests.test_personal_finance -v 2 > /tmp/finance-test.log 2>&1
+          code=$?
+          cat /tmp/finance-test.log
+          if [ "$code" -ne 0 ]; then
+            failure=$(awk 'BEGIN{show=0} /^={20,}/{show=1} show{print}' /tmp/finance-test.log | tail -n 80)
+            if [ -z "$failure" ]; then
+              failure=$(grep -E -A12 -B4 'FAIL:|ERROR:|Traceback|AssertionError|FAILED|Error' /tmp/finance-test.log | tail -n 80)
+            fi
+            message=$(printf '%s' "$failure" | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g' | cut -c1-7000)
+            echo "::error title=Finance tests failed::$message"
+            exit "$code"
+          fi
