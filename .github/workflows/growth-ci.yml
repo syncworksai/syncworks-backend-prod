@@ -1,0 +1,45 @@
+name: SyncWorks Growth CI
+
+on:
+  pull_request:
+    paths:
+      - "platform_growth/**"
+      - "syncworksv7/settings_pm.py"
+      - "syncworksv7/urls.py"
+      - ".github/workflows/growth-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  growth-checks:
+    runs-on: ubuntu-latest
+    env:
+      DJANGO_DEBUG: "true"
+      DB_ENGINE: sqlite
+      DJANGO_SECRET_KEY: ci-growth-secret
+      DJANGO_SETTINGS_MODULE: syncworksv7.settings_pm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Django system check
+        run: python manage.py check
+
+      - name: Verify Growth migrations
+        run: python manage.py makemigrations platform_growth --check --dry-run
+
+      - name: Apply migrations
+        run: python manage.py migrate --noinput
+
+      - name: Run Growth tests
+        run: python -m pytest platform_growth/tests -q
