@@ -61,6 +61,10 @@ class PersonalFinanceFoundationTests(APITestCase):
             password="test-password-123",
         )
         FinanceAccount.objects.create(user=other, name="Private", kind=FinanceAccount.Kind.CHECKING)
+
         response = self.client.get("/api/v1/personal-finance/accounts/")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 0)
+
+        payload = response.data
+        accounts = payload.get("results", []) if isinstance(payload, dict) else payload
+        self.assertEqual(len(accounts), 0)
