@@ -1,6 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from user_accounts.viewsets.finance_automation import FinanceAutomationViewSet
 from user_accounts.viewsets.personal_finance import (
     FinanceAccountViewSet,
     FinanceConnectionViewSet,
@@ -19,5 +20,6 @@ router.register(r"obligations", FinanceObligationViewSet, basename="finance-obli
 router.register(r"transactions", FinanceTransactionViewSet, basename="finance-transactions")
 router.register(r"goals", FinanceGoalViewSet, basename="finance-goals")
 router.register(r"dashboard", FinanceDashboardViewSet, basename="finance-dashboard")
+router.register(r"automation", FinanceAutomationViewSet, basename="finance-automation")
 
 urlpatterns = [path("", include(router.urls))]

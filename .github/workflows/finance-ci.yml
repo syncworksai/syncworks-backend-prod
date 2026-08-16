@@ -6,8 +6,11 @@ on:
       - "user_accounts/models/personal_finance.py"
       - "user_accounts/serializers/personal_finance.py"
       - "user_accounts/services/plaid_finance.py"
+      - "user_accounts/services/finance_intelligence.py"
       - "user_accounts/viewsets/personal_finance.py"
+      - "user_accounts/viewsets/finance_automation.py"
       - "user_accounts/personal_finance_urls.py"
+      - "user_accounts/management/commands/run_finance_runtime.py"
       - "user_accounts/tests/test_personal_finance.py"
       - "user_accounts/migrations/**"
       - "syncworksv7/urls.py"
@@ -36,8 +39,6 @@ jobs:
         run: python manage.py check
       - name: Verify finance migrations
         run: python manage.py makemigrations user_accounts --check --dry-run
-      - name: Apply migrations
-        run: python manage.py migrate --noinput
       - name: Run finance tests
         shell: bash
         run: |
