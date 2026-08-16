@@ -13,6 +13,9 @@ on:
       - "user_accounts/management/commands/run_finance_runtime.py"
       - "user_accounts/tests/test_personal_finance.py"
       - "user_accounts/migrations/**"
+      - "sync_ai/context.py"
+      - "sync_ai/snapshot.py"
+      - "sync_ai/tests.py"
       - "syncworksv7/urls.py"
       - ".github/workflows/finance-ci.yml"
   workflow_dispatch:
@@ -39,19 +42,19 @@ jobs:
         run: python manage.py check
       - name: Verify finance migrations
         run: python manage.py makemigrations user_accounts --check --dry-run
-      - name: Run finance tests
+      - name: Run finance and SYNC integration tests
         shell: bash
         run: |
           set +e
-          python manage.py test user_accounts.tests.test_personal_finance -v 2 > /tmp/finance-test.log 2>&1
+          python manage.py test user_accounts.tests.test_personal_finance sync_ai.tests -v 2 > /tmp/finance-test.log 2>&1
           code=$?
           cat /tmp/finance-test.log
           if [ "$code" -ne 0 ]; then
-            failure=$(awk 'BEGIN{show=0} /^={20,}/{show=1} show{print}' /tmp/finance-test.log | tail -n 80)
+            failure=$(awk 'BEGIN{show=0} /^={20,}/{show=1} show{print}' /tmp/finance-test.log | tail -n 100)
             if [ -z "$failure" ]; then
-              failure=$(grep -E -A12 -B4 'FAIL:|ERROR:|Traceback|AssertionError|FAILED|Error' /tmp/finance-test.log | tail -n 80)
+              failure=$(grep -E -A12 -B4 'FAIL:|ERROR:|Traceback|AssertionError|FAILED|Error' /tmp/finance-test.log | tail -n 100)
             fi
             message=$(printf '%s' "$failure" | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g' | cut -c1-7000)
-            echo "::error title=Finance tests failed::$message"
+            echo "::error title=Finance/SYNC tests failed::$message"
             exit "$code"
           fi
