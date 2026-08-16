@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from user_accounts.models.personal_finance import (
     FinanceAccount,
+    FinanceBudget,
     FinanceConnection,
     FinanceGoal,
     FinanceLiability,
@@ -48,5 +49,12 @@ class FinanceTransactionSerializer(serializers.ModelSerializer):
 class FinanceGoalSerializer(serializers.ModelSerializer):
     class Meta:
         model = FinanceGoal
+        fields = "__all__"
+        read_only_fields = ["user", "created_at", "updated_at"]
+
+
+class FinanceBudgetSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FinanceBudget
         fields = "__all__"
         read_only_fields = ["user", "created_at", "updated_at"]
