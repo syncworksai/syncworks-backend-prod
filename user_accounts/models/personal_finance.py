@@ -32,9 +32,7 @@ class FinanceConnection(models.Model):
 
     class Meta:
         ordering = ["-updated_at"]
-        constraints = [
-            models.UniqueConstraint(fields=["user", "provider", "provider_item_id"], name="uniq_user_finance_provider_item"),
-        ]
+        constraints = [models.UniqueConstraint(fields=["user", "provider", "provider_item_id"], name="uniq_user_finance_provider_item")]
 
 
 class FinanceAccount(models.Model):
@@ -68,9 +66,7 @@ class FinanceAccount(models.Model):
 
     class Meta:
         ordering = ["kind", "name"]
-        constraints = [
-            models.UniqueConstraint(fields=["user", "provider_account_id"], condition=~models.Q(provider_account_id=""), name="uniq_user_finance_provider_account"),
-        ]
+        constraints = [models.UniqueConstraint(fields=["user", "provider_account_id"], condition=~models.Q(provider_account_id=""), name="uniq_user_finance_provider_account")]
 
 
 class FinanceLiability(models.Model):
@@ -167,9 +163,7 @@ class FinanceTransaction(models.Model):
     class Meta:
         ordering = ["-date", "-id"]
         indexes = [models.Index(fields=["user", "-date"]), models.Index(fields=["user", "category_primary"])]
-        constraints = [
-            models.UniqueConstraint(fields=["user", "provider_transaction_id"], condition=~models.Q(provider_transaction_id=""), name="uniq_user_finance_provider_transaction"),
-        ]
+        constraints = [models.UniqueConstraint(fields=["user", "provider_transaction_id"], condition=~models.Q(provider_transaction_id=""), name="uniq_user_finance_provider_transaction")]
 
 
 class FinanceGoal(models.Model):
@@ -195,3 +189,19 @@ class FinanceGoal(models.Model):
 
     class Meta:
         ordering = ["priority", "target_date", "name"]
+
+
+class FinanceBudget(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="finance_budgets")
+    name = models.CharField(max_length=180)
+    category = models.CharField(max_length=100)
+    monthly_limit = models.DecimalField(max_digits=14, decimal_places=2)
+    active = models.BooleanField(default=True)
+    priority = models.PositiveSmallIntegerField(default=1)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["priority", "category", "name"]
+        constraints = [models.UniqueConstraint(fields=["user", "category"], name="uniq_user_finance_budget_category")]

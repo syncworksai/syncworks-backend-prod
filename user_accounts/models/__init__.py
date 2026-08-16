@@ -14,52 +14,21 @@ Import models like:
 from __future__ import annotations
 
 from .user import User, EmailVerificationChallenge
-from .profiles import (
-    CustomerProfile,
-    SmallBusinessOwnerProfile,
-    SubcontractorProfile,
-)
-
+from .profiles import CustomerProfile, SmallBusinessOwnerProfile, SubcontractorProfile
 from .audit import AuditLog
 from .notifications import Notification, PlatformNewsItem
-
 from .categories import ServiceCategory
-from .business import (
-    Business,
-    BusinessMember,
-    BusinessCategory,
-    BusinessMemberRole,
-)
+from .business import Business, BusinessMember, BusinessCategory, BusinessMemberRole
 from .service_catalog import ServiceCatalogItem
 from .business_customers import BusinessCustomer
 from .data_imports import BusinessDataImport
 from .projects import BusinessProject
-from .partner_network import (
-    BusinessPartnerInvitation,
-    BusinessPartnerRelationship,
-)
+from .partner_network import BusinessPartnerInvitation, BusinessPartnerRelationship
 from .partner_work_tickets import PartnerWorkTicket
-from .partner_financials import (
-    PartnerWorkChangeOrder,
-    PartnerWorkEstimate,
-)
-from .partner_billing import (
-    PartnerInvoice,
-    PartnerPayment,
-    PartnerPaymentAllocation,
-)
-
-from .service_requests import (
-    ServiceRequest,
-    ServiceRequestPhoto,
-)
-from .tickets import (
-    Ticket,
-    TicketMessage,
-    TicketAttachment,
-    TicketQuote,
-    TicketViewEvent,
-)
+from .partner_financials import PartnerWorkChangeOrder, PartnerWorkEstimate
+from .partner_billing import PartnerInvoice, PartnerPayment, PartnerPaymentAllocation
+from .service_requests import ServiceRequest, ServiceRequestPhoto
+from .tickets import Ticket, TicketMessage, TicketAttachment, TicketQuote, TicketViewEvent
 from .billing import Invoice, InvoiceLineItem
 from .cash_fee_invoice import CashFeeInvoice
 from .connections import Connection
@@ -77,26 +46,10 @@ from .resources import BusinessResource, ResourceAssignment, ResourceMovement
 from .workflow import TicketDependency, TicketRequirement
 from .operations import OperationalAlert, OperationalEvent, TicketETA
 from .automation import AutomationExecution, AutomationRule
-from .inventory import (
-    InventoryItem,
-    InventoryLocation,
-    InventoryStock,
-    PurchaseOrder,
-    PurchaseOrderLine,
-    PurchaseReceipt,
-    StockMovement,
-    Vendor,
-)
+from .inventory import InventoryItem, InventoryLocation, InventoryStock, PurchaseOrder, PurchaseOrderLine, PurchaseReceipt, StockMovement, Vendor
 from .calendar_sync import CalendarAccount, TicketCalendarEvent
 from .finance_ops import FinanceSnapshot, FinancePlan
-from .personal_finance import (
-    FinanceAccount,
-    FinanceConnection,
-    FinanceGoal,
-    FinanceLiability,
-    FinanceObligation,
-    FinanceTransaction,
-)
+from .personal_finance import FinanceAccount, FinanceBudget, FinanceConnection, FinanceGoal, FinanceLiability, FinanceObligation, FinanceTransaction
 from .favorites import FavoriteBusiness
 from .stripe_connect import StripeConnectProfile
 from .support_requests import SupportRequest
@@ -161,7 +114,7 @@ __all__ = [
     "OperationalAlert", "AutomationRule", "AutomationExecution", "Vendor", "StockMovement", "PurchaseReceipt",
     "PurchaseOrderLine", "PurchaseOrder", "InventoryStock", "InventoryLocation", "InventoryItem", "CalendarAccount",
     "TicketCalendarEvent", "FinanceSnapshot", "FinancePlan", "FinanceConnection", "FinanceAccount", "FinanceLiability",
-    "FinanceObligation", "FinanceTransaction", "FinanceGoal", "FavoriteBusiness", "StripeConnectProfile",
+    "FinanceObligation", "FinanceTransaction", "FinanceGoal", "FinanceBudget", "FavoriteBusiness", "StripeConnectProfile",
     "SupportRequest", "BusinessAccessControl", "PMProperty", "PMUnit", "PMTenant", "PMInvite", "PMDocument",
     "PMSection8Case", "PMBillingSettings", "PMRentCharge", "PMRentPayment", "PMRentPaymentAllocation", "PMEmployee",
     "PMEmployeeInvite", "PMInvestor", "PMPropertyInvestor", "PMInboxThread", "PMInboxMessage", "PMNotification",
