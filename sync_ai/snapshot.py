@@ -9,29 +9,18 @@ from django.utils import timezone
 from customer_health.models import CustomerHealthProfile
 from user_accounts.models import (
     BusinessPartnerInvitation,
-    FinancePlan,
-    FinanceSnapshot,
     Prospect,
     ServiceRequest,
     Ticket,
     TicketMessage,
 )
+from user_accounts.services.finance_intelligence import build_finance_briefing
 
 
 ACTIVE_TICKET_STATUSES = [
-    "NEW",
-    "ASSIGNED",
-    "ACCEPTED",
-    "SCHEDULED",
-    "EN_ROUTE",
-    "ON_SITE",
-    "IN_PROGRESS",
-    "NEEDS_QUOTE",
-    "QUOTED",
-    "APPROVED",
-    "AWAITING_APPROVAL",
+    "NEW", "ASSIGNED", "ACCEPTED", "SCHEDULED", "EN_ROUTE", "ON_SITE",
+    "IN_PROGRESS", "NEEDS_QUOTE", "QUOTED", "APPROVED", "AWAITING_APPROVAL",
 ]
-
 CLOSED_LEAD_STAGES = ["WON", "LOST", "CLOSED", "ARCHIVED", "CONVERTED"]
 
 
@@ -50,24 +39,63 @@ def _latest_titles(queryset, field: str, limit: int = 5) -> list[str]:
         return []
 
 
+def _money(value) -> float:
+    try:
+        return round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _finance_summary(user) -> dict[str, Any]:
+    """Expose the same Finance decision engine to SYNC without leaking raw transactions."""
+    try:
+        briefing = build_finance_briefing(user)
+    except Exception:
+        return {"available": False}
+
+    summary = briefing.get("summary") or {}
+    debt = briefing.get("debt_strategy") or {}
+    avalanche = debt.get("avalanche") or []
+    top_target = avalanche[0] if avalanche else None
+    return {
+        "available": True,
+        "as_of": str(briefing.get("as_of") or ""),
+        "safe_to_spend_now": _money(summary.get("safe_to_spend_now")),
+        "available_cash": _money(summary.get("available_cash")),
+        "known_30_day_obligations": _money(summary.get("known_30_day_obligations")),
+        "month_cash_flow": _money(summary.get("month_cash_flow")),
+        "total_debt": _money(summary.get("total_debt")),
+        "credit_utilization_percent": summary.get("credit_utilization_percent"),
+        "budget_headroom_remaining": _money(summary.get("budget_headroom_remaining")),
+        "active_budget_count": (briefing.get("counts") or {}).get("active_budgets", 0),
+        "alerts": [
+            {"severity": item.get("severity"), "code": item.get("code"), "message": item.get("message")}
+            for item in (briefing.get("alerts") or [])[:5]
+        ],
+        "recommended_actions": [
+            {"priority": item.get("priority"), "code": item.get("code"), "title": item.get("title"), "detail": item.get("detail")}
+            for item in (briefing.get("actions") or [])[:5]
+        ],
+        "debt_strategy": {
+            "recommended_method": debt.get("recommended_method"),
+            "top_target": ({
+                "name": top_target.get("name"),
+                "balance": _money(top_target.get("balance")),
+                "apr": _money(top_target.get("apr")) if top_target.get("apr") is not None else None,
+                "minimum_payment": _money(top_target.get("minimum_payment")),
+            } if top_target else None),
+        },
+    }
+
+
 def personal_snapshot(user) -> dict[str, Any]:
     now = timezone.now()
-
     requests = ServiceRequest.objects.filter(customer=user)
     active_requests = requests.exclude(status__in=["CANCELLED", "CLOSED"])
-
     customer_tickets = Ticket.objects.filter(customer=user)
     active_tickets = customer_tickets.filter(status__in=ACTIVE_TICKET_STATUSES)
-
-    recent_messages = TicketMessage.objects.filter(
-        ticket__customer=user,
-        created_at__gte=now - timedelta(days=14),
-    )
-
+    recent_messages = TicketMessage.objects.filter(ticket__customer=user, created_at__gte=now - timedelta(days=14))
     health = CustomerHealthProfile.objects.filter(user=user).first()
-    finance_snapshot = FinanceSnapshot.objects.filter(user=user).first()
-    finance_plans = FinancePlan.objects.filter(user=user)
-    active_finance_plans = finance_plans.filter(status="ACTIVE")
 
     health_summary = {
         "profile_available": bool(health),
@@ -78,84 +106,39 @@ def personal_snapshot(user) -> dict[str, Any]:
         "snapshot_available": bool((health.snapshot_json or {}) if health else False),
     }
 
-    finance_payload = finance_snapshot.payload if finance_snapshot else {}
-    finance_summary = {
-        "snapshot_available": bool(finance_snapshot),
-        "snapshot_updated_at": (
-            finance_snapshot.created_at.isoformat()
-            if finance_snapshot and finance_snapshot.created_at
-            else None
-        ),
-        "active_plan_count": _safe_count(active_finance_plans),
-        "plan_count": _safe_count(finance_plans),
-        "cash_on_hand_recorded": "cash_on_hand" in finance_payload,
-        "monthly_income_recorded": "monthly_income" in finance_payload,
-        "debt_count": len(finance_payload.get("debts") or []),
-        "fixed_obligation_count": len(finance_payload.get("fixed_obligations") or []),
-    }
-
     return {
         "service_requests": {
             "total": _safe_count(requests),
             "active": _safe_count(active_requests),
-            "recent_titles": _latest_titles(
-                active_requests.order_by("-created_at"),
-                "title",
-            ),
+            "recent_titles": _latest_titles(active_requests.order_by("-created_at"), "title"),
         },
         "tickets": {
             "total": _safe_count(customer_tickets),
             "active": _safe_count(active_tickets),
-            "awaiting_approval": _safe_count(
-                customer_tickets.filter(status="AWAITING_APPROVAL")
-            ),
+            "awaiting_approval": _safe_count(customer_tickets.filter(status="AWAITING_APPROVAL")),
             "scheduled": _safe_count(customer_tickets.filter(status="SCHEDULED")),
         },
-        "inbox": {
-            "recent_ticket_messages_14d": _safe_count(recent_messages),
-        },
+        "inbox": {"recent_ticket_messages_14d": _safe_count(recent_messages)},
         "health": health_summary,
-        "finance": finance_summary,
+        "finance": _finance_summary(user),
     }
 
 
 def business_snapshot(user, business) -> dict[str, Any]:
     now = timezone.now()
-
-    tickets = Ticket.objects.filter(
-        Q(assigned_business=business) | Q(payer_business=business)
-    ).distinct()
+    tickets = Ticket.objects.filter(Q(assigned_business=business) | Q(payer_business=business)).distinct()
     active = tickets.filter(status__in=ACTIVE_TICKET_STATUSES)
     blocked = active.filter(status__in=["BLOCKED", "WAITING", "ON_HOLD"])
-    overdue = active.filter(
-        scheduled_at__isnull=False,
-        scheduled_at__lt=now,
-    ).exclude(status__in=["COMPLETED", "CLOSED", "CANCELLED", "PAID"])
+    overdue = active.filter(scheduled_at__isnull=False, scheduled_at__lt=now).exclude(status__in=["COMPLETED", "CLOSED", "CANCELLED", "PAID"])
     unassigned = active.filter(assigned_member__isnull=True)
-
     leads = Prospect.objects.filter(pipeline__business=business)
     open_leads = leads.exclude(stage__name__in=CLOSED_LEAD_STAGES)
-    follow_up_due = open_leads.filter(
-        next_follow_up_at__isnull=False,
-        next_follow_up_at__lte=now,
-    )
+    follow_up_due = open_leads.filter(next_follow_up_at__isnull=False, next_follow_up_at__lte=now)
+    invitations = BusinessPartnerInvitation.objects.filter(Q(inviting_business=business) | Q(target_business=business))
+    recent_messages = TicketMessage.objects.filter(ticket__assigned_business=business, created_at__gte=now - timedelta(days=14))
 
-    invitations = BusinessPartnerInvitation.objects.filter(
-        Q(inviting_business=business) | Q(target_business=business)
-    )
-    pending_invitations = invitations.filter(status="PENDING")
-
-    recent_messages = TicketMessage.objects.filter(
-        ticket__assigned_business=business,
-        created_at__gte=now - timedelta(days=14),
-    )
-
-    gross_open_cents = 0
     try:
-        gross_open_cents = sum(
-            int(value or 0)
-            for value in active.values_list("total_amount_cents", flat=True)
-        )
+        gross_open_cents = sum(int(value or 0) for value in active.values_list("total_amount_cents", flat=True))
     except Exception:
         gross_open_cents = 0
 
@@ -165,33 +148,16 @@ def business_snapshot(user, business) -> dict[str, Any]:
             "blocked_or_waiting": _safe_count(blocked),
             "overdue_scheduled": _safe_count(overdue),
             "unassigned": _safe_count(unassigned),
-            "in_progress": _safe_count(
-                active.filter(status__in=["EN_ROUTE", "ON_SITE", "IN_PROGRESS"])
-            ),
-            "awaiting_approval": _safe_count(
-                tickets.filter(status="AWAITING_APPROVAL")
-            ),
+            "in_progress": _safe_count(active.filter(status__in=["EN_ROUTE", "ON_SITE", "IN_PROGRESS"])),
+            "awaiting_approval": _safe_count(tickets.filter(status="AWAITING_APPROVAL")),
             "open_job_value_cents": gross_open_cents,
-            "recent_job_titles": _latest_titles(
-                active.order_by("-created_at"),
-                "work_title",
-            ),
+            "recent_job_titles": _latest_titles(active.order_by("-created_at"), "work_title"),
         },
-        "leads": {
-            "open": _safe_count(open_leads),
-            "follow_up_due": _safe_count(follow_up_due),
-            "total": _safe_count(leads),
-        },
-        "partners": {
-            "pending_invitations": _safe_count(pending_invitations),
-        },
-        "inbox": {
-            "recent_ticket_messages_14d": _safe_count(recent_messages),
-        },
+        "leads": {"open": _safe_count(open_leads), "follow_up_due": _safe_count(follow_up_due), "total": _safe_count(leads)},
+        "partners": {"pending_invitations": _safe_count(invitations.filter(status="PENDING"))},
+        "inbox": {"recent_ticket_messages_14d": _safe_count(recent_messages)},
         "business_profile": {
-            "accepts_marketplace_tickets": bool(
-                business.accepts_marketplace_tickets
-            ),
+            "accepts_marketplace_tickets": bool(business.accepts_marketplace_tickets),
             "service_radius_miles": business.effective_service_radius_miles(),
             "service_count": _safe_count(business.services_offered.all()),
         },
