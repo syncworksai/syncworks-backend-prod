@@ -2,6 +2,8 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from platform_growth.connection_views import EasyOAuthMetaCallbackAPIView, EasyOAuthMetaStartAPIView
+from platform_growth.runtime_views import GrowthRuntimeAPIView
 from platform_growth.story_views import GrowthStoryDraftAPIView
 from platform_growth.views import (
     GrowthAutomationRecipeViewSet,
@@ -21,8 +23,6 @@ from platform_growth.views import (
     PlatformLeadViewSet,
     PlatformAutomationRuleViewSet,
     PlatformAutomationExecutionViewSet,
-    OAuthMetaStartAPIView,
-    OAuthMetaCallbackAPIView,
 )
 
 router = DefaultRouter()
@@ -45,8 +45,9 @@ router.register(r"growth/scheduled-jobs", GrowthScheduledPostJobViewSet, basenam
 urlpatterns = [
     path("dashboard/", PlatformGrowthDashboardAPIView.as_view(), name="platform-growth-dashboard"),
     path("growth/story-drafts/", GrowthStoryDraftAPIView.as_view(), name="platform-growth-story-drafts"),
-    path("growth/oauth/meta/start/", OAuthMetaStartAPIView.as_view(), name="platform-growth-meta-oauth-start"),
-    path("growth/oauth/meta/callback/", OAuthMetaCallbackAPIView.as_view(), name="platform-growth-meta-oauth-callback"),
+    path("growth/oauth/meta/start/", EasyOAuthMetaStartAPIView.as_view(), name="platform-growth-meta-oauth-start"),
+    path("growth/oauth/meta/callback/", EasyOAuthMetaCallbackAPIView.as_view(), name="platform-growth-meta-oauth-callback"),
+    path("growth/runtime/run/", GrowthRuntimeAPIView.as_view(), name="platform-growth-runtime-run"),
     path("meta/webhook/", MetaWebhookEventAPIView.as_view(), name="platform-growth-meta-webhook"),
     path("meta/webhook/verify/", MetaWebhookVerificationAPIView.as_view(), name="platform-growth-meta-webhook-verify"),
     path("", include(router.urls)),

@@ -1,0 +1,30 @@
+name: SyncWorks Growth Runtime
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  run-growth-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger protected production Growth runtime
+        env:
+          GROWTH_RUNTIME_SECRET: ${{ secrets.GROWTH_RUNTIME_SECRET }}
+          GROWTH_RUNTIME_URL: ${{ secrets.GROWTH_RUNTIME_URL }}
+        shell: bash
+        run: |
+          if [ -z "$GROWTH_RUNTIME_SECRET" ]; then
+            echo "GROWTH_RUNTIME_SECRET is not configured; runtime trigger remains safely inactive."
+            exit 0
+          fi
+          url="${GROWTH_RUNTIME_URL:-https://syncworks-api.onrender.com/api/v1/platform-growth/growth/runtime/run/}"
+          curl --fail-with-body --silent --show-error \
+            --retry 2 \
+            --retry-delay 5 \
+            --max-time 50 \
+            -X POST \
+            -H "X-SyncWorks-Runtime-Secret: ${GROWTH_RUNTIME_SECRET}" \
+            -H "Content-Type: application/json" \
+            "$url"
