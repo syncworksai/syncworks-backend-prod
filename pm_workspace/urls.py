@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .advanced_billing_views import advanced_tenant_billing, collections_statement_preview, generate_advanced_late_fees
+from .billing_policy_views import apply_company_billing_template, company_billing_template, rent_allocation
 from .billing_views import generate_tenant_charges, my_tenant_account, portfolio_billing_summary, tenant_billing_profile
 from .communication_views import bulk_delete_ledger, investor_ledger, my_conversations, pm_conversations, reply_conversation, request_ledger_information, requester_reply, resolve_conversation
 from .deposit_views import apply_deposit, deposit_status
@@ -55,6 +56,9 @@ urlpatterns = [
     path("make-ready/<int:work_order_id>/", update_make_ready),
     path("tenant-portal/communications/", tenant_portal_communications),
     path("billing/summary/", portfolio_billing_summary),
+    path("billing/company-template/", company_billing_template),
+    path("billing/tenants/<int:tenant_id>/apply-company-template/", apply_company_billing_template),
+    path("billing/tenants/<int:tenant_id>/rent-allocation/", rent_allocation),
     path("billing/tenants/<int:tenant_id>/", tenant_billing_profile),
     path("billing/tenants/<int:tenant_id>/advanced/", advanced_tenant_billing),
     path("billing/tenants/<int:tenant_id>/payer-profile/", payer_profile),
