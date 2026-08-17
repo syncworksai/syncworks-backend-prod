@@ -20,6 +20,29 @@ from platform_growth.services.runtime import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolate_growth_runtime_rows():
+    """The repo's pytest harness shares one Django DB across the session.
+
+    Keep runtime fixtures from leaking READY jobs, OAuth tokens, or Meta account
+    ids into other Growth/OAuth tests. Cleanup runs before and after every test
+    in this module so failures cannot contaminate the next test.
+    """
+    GrowthScheduledPostJob.objects.all().delete()
+    GrowthContentQueueItem.objects.all().delete()
+    GrowthOAuthToken.objects.all().delete()
+    GrowthContentDraft.objects.all().delete()
+    GrowthChannelConnection.objects.all().delete()
+    GrowthAutomationRecipe.objects.all().delete()
+    yield
+    GrowthScheduledPostJob.objects.all().delete()
+    GrowthContentQueueItem.objects.all().delete()
+    GrowthOAuthToken.objects.all().delete()
+    GrowthContentDraft.objects.all().delete()
+    GrowthChannelConnection.objects.all().delete()
+    GrowthAutomationRecipe.objects.all().delete()
+
+
 @pytest.mark.django_db
 def test_content_calendar_bot_creates_draft_without_sending():
     recipe = GrowthAutomationRecipe.objects.create(
@@ -45,7 +68,7 @@ def test_content_calendar_bot_creates_draft_without_sending():
 def test_scheduled_post_does_not_become_ready_without_approval():
     connection = GrowthChannelConnection.objects.create(
         provider=GrowthChannelConnection.Provider.META,
-        external_account_id="acct-1",
+        external_account_id="runtime-acct-1",
         status=GrowthChannelConnection.Status.CONNECTED,
     )
     draft = GrowthContentDraft.objects.create(
@@ -76,7 +99,7 @@ def test_scheduled_post_does_not_become_ready_without_approval():
 def test_approved_post_with_connected_channel_becomes_ready_not_published():
     connection = GrowthChannelConnection.objects.create(
         provider=GrowthChannelConnection.Provider.META,
-        external_account_id="acct-2",
+        external_account_id="runtime-acct-2",
         status=GrowthChannelConnection.Status.CONNECTED,
     )
     draft = GrowthContentDraft.objects.create(
@@ -109,7 +132,7 @@ def test_approved_post_with_connected_channel_becomes_ready_not_published():
 def test_ready_approved_post_publishes_and_records_provider_id():
     connection = GrowthChannelConnection.objects.create(
         provider=GrowthChannelConnection.Provider.META,
-        external_account_id="page-123",
+        external_account_id="runtime-page-publish",
         status=GrowthChannelConnection.Status.CONNECTED,
         metadata={"account_kind": "facebook_page"},
     )
@@ -138,7 +161,7 @@ def test_ready_approved_post_publishes_and_records_provider_id():
 
     with patch(
         "platform_growth.services.runtime.publish_social_post",
-        return_value=PublishResult(provider="META", external_post_id="page-123_456", raw={"id": "page-123_456"}),
+        return_value=PublishResult(provider="META", external_post_id="runtime-page-publish_456", raw={"id": "runtime-page-publish_456"}),
     ):
         counts = publish_ready_scheduled_posts()
 
@@ -146,9 +169,9 @@ def test_ready_approved_post_publishes_and_records_provider_id():
     item.refresh_from_db()
     assert counts["published"] == 1
     assert job.status == GrowthScheduledPostJob.Status.COMPLETED
-    assert job.metadata["external_post_id"] == "page-123_456"
+    assert job.metadata["external_post_id"] == "runtime-page-publish_456"
     assert item.status == GrowthContentQueueItem.Status.POSTED
-    assert item.metadata["external_post_id"] == "page-123_456"
+    assert item.metadata["external_post_id"] == "runtime-page-publish_456"
     assert item.posted_at is not None
 
 
@@ -156,7 +179,7 @@ def test_ready_approved_post_publishes_and_records_provider_id():
 def test_publish_failure_is_audited_without_marking_job_complete():
     connection = GrowthChannelConnection.objects.create(
         provider=GrowthChannelConnection.Provider.META,
-        external_account_id="page-456",
+        external_account_id="runtime-page-failure",
         status=GrowthChannelConnection.Status.CONNECTED,
         metadata={"account_kind": "facebook_page"},
     )
@@ -195,7 +218,7 @@ def test_publish_failure_is_audited_without_marking_job_complete():
 def test_publisher_never_sends_pending_job_even_when_draft_is_approved():
     connection = GrowthChannelConnection.objects.create(
         provider=GrowthChannelConnection.Provider.META,
-        external_account_id="page-789",
+        external_account_id="runtime-page-pending",
         status=GrowthChannelConnection.Status.CONNECTED,
     )
     draft = GrowthContentDraft.objects.create(
