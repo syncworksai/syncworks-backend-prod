@@ -12,9 +12,11 @@ from platform_growth.models import (
     GrowthAutomationRecipe,
     GrowthChannelConnection,
     GrowthContentDraft,
+    GrowthContentQueueItem,
     GrowthScheduledPostJob,
     PlatformLead,
 )
+from platform_growth.services.posting import SocialPublishError, publish_social_post
 
 
 @dataclass(frozen=True)
@@ -138,7 +140,7 @@ def run_recipe(recipe: GrowthAutomationRecipe, *, force=False, now=None) -> Runt
     else:
         try:
             result = handler(recipe)
-        except Exception as exc:  # command must continue processing other recipes
+        except Exception as exc:
             result = RuntimeResult("FAILED", str(exc), {})
 
     metadata = dict(recipe.metadata or {})
@@ -158,11 +160,7 @@ def run_recipe(recipe: GrowthAutomationRecipe, *, force=False, now=None) -> Runt
 
 
 def prepare_due_scheduled_posts(*, limit=50, now=None) -> dict:
-    """Move due, approved, connected post jobs to READY.
-
-    This deliberately does not publish. Provider-specific posting remains a separate
-    adapter/gate so an unattended runtime cannot bypass content approval.
-    """
+    """Move due jobs to READY only after explicit approval and channel validation."""
     now = now or timezone.now()
     counts = {"ready": 0, "skipped": 0}
     ids = list(
@@ -205,6 +203,86 @@ def prepare_due_scheduled_posts(*, limit=50, now=None) -> dict:
             job.last_error = ""
             job.save(update_fields=["status", "last_error", "updated_at"])
             counts["ready"] += 1
+
+    return counts
+
+
+def publish_ready_scheduled_posts(*, limit=25, now=None) -> dict:
+    """Publish READY jobs through provider adapters and record auditable outcomes.
+
+    READY is the hard approval boundary. This function never considers PENDING jobs,
+    so unattended publishing cannot bypass the approval gate in prepare_due_scheduled_posts.
+    """
+    now = now or timezone.now()
+    counts = {"published": 0, "failed": 0, "skipped": 0}
+    ids = list(
+        GrowthScheduledPostJob.objects.filter(status=GrowthScheduledPostJob.Status.READY)
+        .order_by("run_at", "id")
+        .values_list("id", flat=True)[:limit]
+    )
+
+    for job_id in ids:
+        with transaction.atomic():
+            job = (
+                GrowthScheduledPostJob.objects.select_for_update()
+                .select_related("queue_item__draft", "queue_item__channel_connection")
+                .get(id=job_id)
+            )
+            if job.status != GrowthScheduledPostJob.Status.READY:
+                counts["skipped"] += 1
+                continue
+
+            item = job.queue_item
+            draft = item.draft
+            connection = item.channel_connection
+            if draft.status != GrowthContentDraft.Status.APPROVED or connection.status != GrowthChannelConnection.Status.CONNECTED:
+                job.attempts += 1
+                job.last_attempt_at = now
+                job.last_error = "Approval or connection changed before publish."
+                job.save(update_fields=["attempts", "last_attempt_at", "last_error", "updated_at"])
+                counts["failed"] += 1
+                continue
+
+            job.attempts += 1
+            job.last_attempt_at = now
+            try:
+                result = publish_social_post(connection=connection, message=draft.body)
+            except SocialPublishError as exc:
+                job.last_error = str(exc)
+                metadata = dict(job.metadata or {})
+                metadata.update({"last_publish_status": "FAILED", "last_publish_at": now.isoformat()})
+                job.metadata = metadata
+                job.save(update_fields=["attempts", "last_attempt_at", "last_error", "metadata", "updated_at"])
+                item.status = GrowthContentQueueItem.Status.FAILED
+                item.fail_reason = str(exc)
+                item.save(update_fields=["status", "fail_reason", "updated_at"])
+                counts["failed"] += 1
+                continue
+
+            item.status = GrowthContentQueueItem.Status.POSTED
+            item.posted_at = now
+            item.fail_reason = ""
+            item_metadata = dict(item.metadata or {})
+            item_metadata.update({
+                "provider": result.provider,
+                "external_post_id": result.external_post_id,
+                "published_at": now.isoformat(),
+            })
+            item.metadata = item_metadata
+            item.save(update_fields=["status", "posted_at", "fail_reason", "metadata", "updated_at"])
+
+            job.status = GrowthScheduledPostJob.Status.COMPLETED
+            job.last_error = ""
+            job_metadata = dict(job.metadata or {})
+            job_metadata.update({
+                "publish_status": "COMPLETED",
+                "provider": result.provider,
+                "external_post_id": result.external_post_id,
+                "published_at": now.isoformat(),
+            })
+            job.metadata = job_metadata
+            job.save(update_fields=["status", "attempts", "last_attempt_at", "last_error", "metadata", "updated_at"])
+            counts["published"] += 1
 
     return counts
 
