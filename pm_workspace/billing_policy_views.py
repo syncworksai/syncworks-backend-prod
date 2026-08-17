@@ -9,12 +9,25 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .advanced_billing_views import ADVANCED_DEFAULTS, _normalize_rules, _workspace
+from .advanced_billing_views import _normalize_rules, _workspace
 from .billing_views import _active_lease, _profile_packet
 from .models import PMDocumentPacket, PMTenant
 
 TEMPLATE_PACKET_TYPE = "BILLING_POLICY_TEMPLATE"
 AUDIT_PACKET_TYPE = "RENT_CHANGE_AUDIT"
+TEMPLATE_DEFAULTS = {
+    "late_fee_rules": [],
+    "payment_arrangement_frequency": "BIWEEKLY",
+    "pause_late_fees_during_arrangement": True,
+    "collection_monthly_late_fee_cap": "0.00",
+    "stop_late_fees_after_eviction": False,
+    "payer_split_enabled": False,
+    "installment_schedule_enabled": False,
+    "installment_frequency": "BIWEEKLY",
+    "installment_grace_days": 0,
+    "installment_late_fee_amount": "50.00",
+}
+TEMPLATE_KEYS = tuple(TEMPLATE_DEFAULTS.keys())
 
 
 def _money(value, default="0.00"):
@@ -42,9 +55,11 @@ def _company_packet(workspace, create=False):
 
 
 def _template_data(packet):
-    data = dict(ADVANCED_DEFAULTS)
+    data = dict(TEMPLATE_DEFAULTS)
     if packet and isinstance(packet.field_data, dict):
-        data.update(packet.field_data)
+        for key in TEMPLATE_KEYS:
+            if key in packet.field_data:
+                data[key] = packet.field_data[key]
     data["late_fee_rules"] = _normalize_rules(data.get("late_fee_rules", []))
     return data
 
@@ -59,18 +74,12 @@ def company_billing_template(request):
 
     incoming = request.data or {}
     data = dict(packet.field_data or {})
-    keys = [
-        "payment_arrangement_frequency", "pause_late_fees_during_arrangement",
-        "collection_monthly_late_fee_cap", "stop_late_fees_after_eviction",
-        "payer_split_enabled", "installment_schedule_enabled", "installment_frequency",
-        "installment_grace_days", "installment_late_fee_amount",
-    ]
-    for key in keys:
-        if key in incoming:
+    for key in TEMPLATE_KEYS:
+        if key in incoming and key != "late_fee_rules":
             data[key] = incoming[key]
     if "late_fee_rules" in incoming:
         data["late_fee_rules"] = _normalize_rules(incoming.get("late_fee_rules"))
-    packet.field_data = data
+    packet.field_data = {key: data[key] for key in TEMPLATE_KEYS if key in data}
     packet.template_version = str(int(packet.template_version or "0") + 1)
     packet.save(update_fields=["field_data", "template_version", "updated_at"])
     return Response({"detail": "Company billing template saved.", "template": _template_data(packet), "updated_at": packet.updated_at})
@@ -89,14 +98,12 @@ def apply_company_billing_template(request, tenant_id):
     profile_packet = _profile_packet(tenant, create=True)
     current = dict(profile_packet.field_data or {})
     template = _template_data(packet)
-    for key, value in template.items():
-        if key in {"tenant_id", "tenant_name", "property_name", "unit_label"}:
-            continue
-        current[key] = value
+    for key in TEMPLATE_KEYS:
+        current[key] = template[key]
     profile_packet.field_data = current
     profile_packet.lease = _active_lease(tenant)
     profile_packet.save(update_fields=["field_data", "lease", "updated_at"])
-    return Response({"detail": "Company billing template applied to this tenant.", "profile": current})
+    return Response({"detail": "Company billing template applied to this tenant without changing tenant-specific balances, deposits, or case status.", "profile": current})
 
 
 @api_view(["GET", "PATCH"])
@@ -149,8 +156,7 @@ def rent_allocation(request, tenant_id):
         "housing_portion": str(lease.assistance_portion or Decimal("0.00")),
     }
     new = {"contract_rent": str(contract), "tenant_portion": str(tenant_portion), "housing_portion": str(housing_portion)}
-    changed = old != new
-    if not changed:
+    if old == new:
         return Response({"detail": "No rent allocation changes were detected.", "allocation": new})
 
     supporting_document_id = incoming.get("supporting_document_id") or None
