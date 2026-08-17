@@ -8,6 +8,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from platform_growth.services.engagement import refresh_posted_engagement
 from platform_growth.services.github_oidc import GitHubOIDCError, verify_growth_runtime_token
 from platform_growth.services.runtime import (
     prepare_due_scheduled_posts,
@@ -26,7 +27,6 @@ def _authorized_runtime_request(request) -> tuple[bool, str]:
             return False, "oidc"
         return True, f"github:{claims.get('run_id') or 'scheduled'}"
 
-    # Keep a shared-secret fallback for emergency/manual operations.
     expected = str(os.getenv("GROWTH_RUNTIME_SECRET") or "").strip()
     supplied = str(
         request.headers.get("X-SyncWorks-Runtime-Secret")
@@ -53,6 +53,7 @@ class GrowthRuntimeAPIView(APIView):
         recipe_results = run_due_recipes(limit=100, now=now)
         prepared = prepare_due_scheduled_posts(limit=50, now=now)
         published = publish_ready_scheduled_posts(limit=25, now=now)
+        engagement = refresh_posted_engagement(limit=50, now=now)
 
         recipe_counts = {"completed": 0, "failed": 0, "skipped": 0}
         for _, result in recipe_results:
@@ -68,5 +69,6 @@ class GrowthRuntimeAPIView(APIView):
                 "recipes": {"due": len(recipe_results), **recipe_counts},
                 "scheduled_posts": prepared,
                 "publishing": published,
+                "engagement": engagement,
             }
         )
