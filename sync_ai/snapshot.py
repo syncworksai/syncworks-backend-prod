@@ -15,6 +15,7 @@ from user_accounts.models import (
 )
 from user_accounts.services.finance_intelligence import build_finance_briefing
 
+from .calendar_context import build_sync_calendar_context
 from .health_context import build_sync_health_context
 
 
@@ -48,7 +49,6 @@ def _money(value) -> float:
 
 
 def _finance_summary(user) -> dict[str, Any]:
-    """Expose the same Finance decision engine to SYNC without leaking raw transactions."""
     try:
         briefing = build_finance_briefing(user)
     except Exception:
@@ -110,6 +110,7 @@ def personal_snapshot(user) -> dict[str, Any]:
             "scheduled": _safe_count(customer_tickets.filter(status="SCHEDULED")),
         },
         "inbox": {"recent_ticket_messages_14d": _safe_count(recent_messages)},
+        "calendar": build_sync_calendar_context(user),
         "health": build_sync_health_context(user),
         "finance": _finance_summary(user),
     }
