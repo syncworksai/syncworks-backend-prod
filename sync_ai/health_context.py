@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import date
 from typing import Any
+
+from django.utils import timezone
 
 from customer_health.models import CustomerHealthProfile
 
@@ -19,6 +20,14 @@ def _number(value: Any) -> float | None:
         return round(float(value), 2)
     except (TypeError, ValueError):
         return None
+
+
+def _bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "completed", "done"}
 
 
 def _remaining(current: Any, goal: Any) -> float | None:
@@ -50,7 +59,7 @@ def _today_plan(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(week_plan, list):
         return None
 
-    today = date.today().isoformat()
+    today = timezone.localdate().isoformat()
     for item in week_plan:
         if not isinstance(item, dict) or _text(item.get("ymd"), 20) != today:
             continue
@@ -70,17 +79,9 @@ def _recent_workouts(history: list[Any], limit: int = 3) -> list[dict[str, Any]]
         if not isinstance(item, dict):
             continue
         row = {
-            "workout_name": _text(
-                item.get("workout_name") or item.get("name") or item.get("title"),
-                120,
-            ),
-            "completed_at": _text(
-                item.get("completed_at") or item.get("ended_at") or item.get("date"),
-                40,
-            ),
-            "duration_minutes": _number(
-                item.get("duration_minutes") or item.get("active_minutes")
-            ),
+            "workout_name": _text(item.get("workout_name") or item.get("name") or item.get("title"), 120),
+            "completed_at": _text(item.get("completed_at") or item.get("ended_at") or item.get("date"), 40),
+            "duration_minutes": _number(item.get("duration_minutes") or item.get("active_minutes")),
             "rpe": _number(item.get("rpe") or item.get("average_rpe")),
         }
         if any(value not in (None, "") for value in row.values()):
@@ -158,7 +159,7 @@ def build_sync_health_context(user) -> dict[str, Any]:
         },
         "today": {
             "planned_workout": _today_plan(snapshot),
-            "workout_completed": bool(snapshot.get("workout_completed_today")),
+            "workout_completed": _bool(snapshot.get("workout_completed_today")),
             "time_available": _text(snapshot.get("time_available"), 80),
             "equipment": _text(snapshot.get("equipment"), 100),
             "steps": _number(steps_now),
@@ -174,9 +175,7 @@ def build_sync_health_context(user) -> dict[str, Any]:
             "meals_logged": _number(snapshot.get("meals_logged_today")),
         },
         "weekly": {
-            "completed_workouts": _number(
-                _coalesce(snapshot, "weekly_completed", "completed_workouts")
-            ),
+            "completed_workouts": _number(_coalesce(snapshot, "weekly_completed", "completed_workouts")),
             "planned_workouts": _number(snapshot.get("planned_workouts")),
         },
         "recent_workouts": _recent_workouts(history),
