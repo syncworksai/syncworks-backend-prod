@@ -1,0 +1,36 @@
+name: SyncWorks SYNC AI CI
+
+on:
+  pull_request:
+    paths:
+      - "sync_ai/**"
+      - "customer_health/models.py"
+      - "user_accounts/services/finance_intelligence.py"
+      - "syncworksv7/urls.py"
+      - ".github/workflows/sync-ai-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  sync-ai-checks:
+    runs-on: ubuntu-latest
+    env:
+      DJANGO_DEBUG: "true"
+      DB_ENGINE: sqlite
+      DJANGO_SECRET_KEY: ci-sync-ai-secret
+      DJANGO_SETTINGS_MODULE: syncworksv7.settings_pm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Django system check
+        run: python manage.py check
+      - name: Verify migrations
+        run: python manage.py makemigrations --check --dry-run
+      - name: Run SYNC integration tests
+        run: python manage.py test sync_ai -v 2
