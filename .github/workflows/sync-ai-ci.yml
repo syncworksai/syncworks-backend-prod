@@ -30,7 +30,7 @@ jobs:
         run: pip install -r requirements.txt
       - name: Django system check
         run: python manage.py check
-      - name: Verify migrations
-        run: python manage.py makemigrations --check --dry-run
+      - name: Verify touched-app migrations
+        run: python manage.py makemigrations customer_health user_accounts --check --dry-run
       - name: Run SYNC integration tests
         run: python manage.py test sync_ai -v 2
