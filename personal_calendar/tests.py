@@ -13,7 +13,11 @@ User = get_user_model()
 
 class PersonalCalendarApiTests(APITestCase):
     def make_user(self, email):
-        user = User.objects.create_user(email=email, password="test-password-123")
+        user = User.objects.create_user(
+            username=email.split("@", 1)[0],
+            email=email,
+            password="test-password-123",
+        )
         token, _ = Token.objects.get_or_create(user=user)
         return user, token
 
