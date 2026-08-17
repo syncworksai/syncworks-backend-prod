@@ -59,6 +59,8 @@ def _create_social_draft(recipe: GrowthAutomationRecipe) -> RuntimeResult:
             "automation_recipe_id": recipe.id,
             "bot_key": config.get("bot_key", "content_calendar"),
             "requires_approval": True,
+            "target_platform": str(config.get("target_platform") or "facebook").lower(),
+            "media_url": str(template.get("media_url") or "").strip(),
         },
     )
     return RuntimeResult(
@@ -207,6 +209,23 @@ def prepare_due_scheduled_posts(*, limit=50, now=None) -> dict:
     return counts
 
 
+def _publish_target(item: GrowthContentQueueItem) -> tuple[str, str]:
+    draft_metadata = item.draft.metadata or {}
+    item_metadata = item.metadata or {}
+    target_platform = str(
+        item_metadata.get("target_platform")
+        or draft_metadata.get("target_platform")
+        or "facebook"
+    ).strip().lower()
+    media_url = str(
+        item_metadata.get("media_url")
+        or draft_metadata.get("media_url")
+        or draft_metadata.get("image_url")
+        or ""
+    ).strip()
+    return target_platform, media_url
+
+
 def publish_ready_scheduled_posts(*, limit=25, now=None) -> dict:
     """Publish READY jobs through provider adapters and record auditable outcomes.
 
@@ -243,14 +262,24 @@ def publish_ready_scheduled_posts(*, limit=25, now=None) -> dict:
                 counts["failed"] += 1
                 continue
 
+            target_platform, media_url = _publish_target(item)
             job.attempts += 1
             job.last_attempt_at = now
             try:
-                result = publish_social_post(connection=connection, message=draft.body)
+                result = publish_social_post(
+                    connection=connection,
+                    message=draft.body,
+                    target_platform=target_platform,
+                    media_url=media_url,
+                )
             except SocialPublishError as exc:
                 job.last_error = str(exc)
                 metadata = dict(job.metadata or {})
-                metadata.update({"last_publish_status": "FAILED", "last_publish_at": now.isoformat()})
+                metadata.update({
+                    "last_publish_status": "FAILED",
+                    "last_publish_at": now.isoformat(),
+                    "target_platform": target_platform,
+                })
                 job.metadata = metadata
                 job.save(update_fields=["attempts", "last_attempt_at", "last_error", "metadata", "updated_at"])
                 item.status = GrowthContentQueueItem.Status.FAILED
@@ -265,6 +294,7 @@ def publish_ready_scheduled_posts(*, limit=25, now=None) -> dict:
             item_metadata = dict(item.metadata or {})
             item_metadata.update({
                 "provider": result.provider,
+                "target_platform": target_platform,
                 "external_post_id": result.external_post_id,
                 "published_at": now.isoformat(),
             })
@@ -277,6 +307,7 @@ def publish_ready_scheduled_posts(*, limit=25, now=None) -> dict:
             job_metadata.update({
                 "publish_status": "COMPLETED",
                 "provider": result.provider,
+                "target_platform": target_platform,
                 "external_post_id": result.external_post_id,
                 "published_at": now.isoformat(),
             })
