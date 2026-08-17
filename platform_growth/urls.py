@@ -3,6 +3,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from platform_growth.connection_views import EasyOAuthMetaCallbackAPIView, EasyOAuthMetaStartAPIView
+from platform_growth.intelligence_views import GrowthIntelligenceAPIView
 from platform_growth.runtime_views import GrowthRuntimeAPIView
 from platform_growth.story_views import GrowthStoryDraftAPIView
 from platform_growth.views import (
@@ -44,6 +45,7 @@ router.register(r"growth/scheduled-jobs", GrowthScheduledPostJobViewSet, basenam
 
 urlpatterns = [
     path("dashboard/", PlatformGrowthDashboardAPIView.as_view(), name="platform-growth-dashboard"),
+    path("growth/intelligence/", GrowthIntelligenceAPIView.as_view(), name="platform-growth-intelligence"),
     path("growth/story-drafts/", GrowthStoryDraftAPIView.as_view(), name="platform-growth-story-drafts"),
     path("growth/oauth/meta/start/", EasyOAuthMetaStartAPIView.as_view(), name="platform-growth-meta-oauth-start"),
     path("growth/oauth/meta/callback/", EasyOAuthMetaCallbackAPIView.as_view(), name="platform-growth-meta-oauth-callback"),
