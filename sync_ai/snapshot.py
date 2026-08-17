@@ -6,7 +6,6 @@ from typing import Any
 from django.db.models import Q
 from django.utils import timezone
 
-from customer_health.models import CustomerHealthProfile
 from user_accounts.models import (
     BusinessPartnerInvitation,
     Prospect,
@@ -15,6 +14,8 @@ from user_accounts.models import (
     TicketMessage,
 )
 from user_accounts.services.finance_intelligence import build_finance_briefing
+
+from .health_context import build_sync_health_context
 
 
 ACTIVE_TICKET_STATUSES = [
@@ -95,16 +96,6 @@ def personal_snapshot(user) -> dict[str, Any]:
     customer_tickets = Ticket.objects.filter(customer=user)
     active_tickets = customer_tickets.filter(status__in=ACTIVE_TICKET_STATUSES)
     recent_messages = TicketMessage.objects.filter(ticket__customer=user, created_at__gte=now - timedelta(days=14))
-    health = CustomerHealthProfile.objects.filter(user=user).first()
-
-    health_summary = {
-        "profile_available": bool(health),
-        "updated_at": health.updated_at.isoformat() if health else None,
-        "saved_workout_count": len(health.workouts_json or []) if health else 0,
-        "history_entry_count": len(health.history_json or []) if health else 0,
-        "progress_entry_count": len(health.progress_json or []) if health else 0,
-        "snapshot_available": bool((health.snapshot_json or {}) if health else False),
-    }
 
     return {
         "service_requests": {
@@ -119,7 +110,7 @@ def personal_snapshot(user) -> dict[str, Any]:
             "scheduled": _safe_count(customer_tickets.filter(status="SCHEDULED")),
         },
         "inbox": {"recent_ticket_messages_14d": _safe_count(recent_messages)},
-        "health": health_summary,
+        "health": build_sync_health_context(user),
         "finance": _finance_summary(user),
     }
 

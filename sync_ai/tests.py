@@ -3,9 +3,11 @@ from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import override_settings
+from django.utils import timezone
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
+from customer_health.models import CustomerHealthProfile
 from sync_ai.context import resolve_workspace
 from user_accounts.models import AuditLog, Business, FinanceAccount, FinanceBudget, FinanceLiability, FinanceObligation, ServiceRequest, Ticket, TicketMessage
 
@@ -100,7 +102,7 @@ class SyncAITests(APITestCase):
 
     def test_personal_snapshot_exposes_finance_decisions_not_raw_transactions(self):
         FinanceAccount.objects.create(user=self.user, name="Checking", kind="CHECKING", current_balance=Decimal("2500.00"), is_manual=True)
-        FinanceObligation.objects.create(user=self.user, name="Mortgage", category="HOUSING", expected_amount=Decimal("1000.00"), next_due_date=__import__("django").utils.timezone.localdate(), recurring=True, active=True, is_manual=True)
+        FinanceObligation.objects.create(user=self.user, name="Mortgage", category="HOUSING", expected_amount=Decimal("1000.00"), next_due_date=timezone.localdate(), recurring=True, active=True, is_manual=True)
         FinanceLiability.objects.create(user=self.user, name="Visa", kind="CREDIT_CARD", outstanding_balance=Decimal("3000.00"), minimum_payment=Decimal("90.00"), apr=Decimal("24.99"), is_manual=True)
         FinanceBudget.objects.create(user=self.user, name="Dining", category="DINING", monthly_limit=Decimal("300.00"))
         context = resolve_workspace(user=self.user, workspace="personal", business_id=None)
@@ -110,6 +112,54 @@ class SyncAITests(APITestCase):
         self.assertEqual(finance["debt_strategy"]["top_target"]["name"], "Visa")
         self.assertEqual(finance["active_budget_count"], 1)
         self.assertNotIn("transactions", finance)
+
+    def test_personal_snapshot_exposes_health_decision_signals_not_raw_payload(self):
+        today = timezone.localdate().isoformat()
+        CustomerHealthProfile.objects.create(
+            user=self.user,
+            profile_json={
+                "primary_goal": "Strength",
+                "nutrition_focus": "Protein and consistency",
+                "training_days": "4",
+                "private_note": "do not expose this raw field",
+            },
+            snapshot_json={
+                "readiness": "Moderate",
+                "steps": "6200",
+                "step_goal": "8000",
+                "protein_today": "92",
+                "protein_goal": "150",
+                "water": "64",
+                "water_goal": "100",
+                "last_sleep_hours": "6.5",
+                "soreness_areas": ["hips"],
+                "week_plan": [{"ymd": today, "workout_name": "Upper Body", "time": "18:00", "status": "Planned"}],
+                "secret_blob": {"raw": "should not pass through"},
+            },
+            workouts_json=[{"id": "w1", "name": "Upper Body", "exercises": [{"name": "Bench Press"}]}],
+            history_json=[{"workout_name": "Push Day", "completed_at": "2026-08-15T18:00:00Z", "duration_minutes": 45, "rpe": 8, "raw_sets": [1, 2, 3]}],
+            progress_json=[{"weight": 210, "note": "private progress detail"}],
+        )
+        context = resolve_workspace(user=self.user, workspace="personal", business_id=None)
+        health = context.data["health"]
+        self.assertTrue(health["available"])
+        self.assertEqual(health["goals"]["primary_goal"], "Strength")
+        self.assertEqual(health["today"]["protein_grams"], 92.0)
+        self.assertEqual(health["today"]["protein_goal_grams"], 150.0)
+        self.assertEqual(health["today"]["planned_workout"]["workout_name"], "Upper Body")
+        self.assertEqual(health["readiness"]["sleep_hours"], 6.5)
+        self.assertIn({"code": "PROTEIN_REMAINING", "remaining": 58.0}, health["attention"])
+        self.assertNotIn("profile_json", health)
+        self.assertNotIn("snapshot_json", health)
+        self.assertNotIn("secret_blob", str(health))
+        self.assertNotIn("raw_sets", str(health))
+
+    def test_personal_health_context_is_user_scoped(self):
+        other = get_user_model().objects.create_user(username="health-other", email="health-other@example.com", password="password-123")
+        CustomerHealthProfile.objects.create(user=other, profile_json={"primary_goal": "Other User Goal"}, snapshot_json={"protein_today": 10, "protein_goal": 100})
+        context = resolve_workspace(user=self.user, workspace="personal", business_id=None)
+        self.assertFalse(context.data["health"]["available"])
+        self.assertNotIn("Other User Goal", str(context.data))
 
     def test_business_snapshot_is_scoped_to_active_business(self):
         business = Business.objects.create(owner=self.user, name="SYNC Test Services")
