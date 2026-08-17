@@ -4,7 +4,6 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 from django.http import HttpResponseRedirect
-from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
 
@@ -49,16 +48,14 @@ class EasyOAuthMetaStartAPIView(OAuthMetaStartAPIView):
 
 
 class EasyOAuthMetaCallbackAPIView(OAuthMetaCallbackAPIView):
-    """Complete OAuth using the one-time state as callback authentication.
+    """Complete Meta OAuth with one-time state authentication.
 
-    Meta redirects directly to this endpoint and cannot attach the SyncWorks API
-    token. We therefore validate the high-entropy, pending, unexpired OAuth state,
-    bind the request to that state's owner, and then reuse the existing callback
-    implementation. The existing callback consumes the state so it cannot be
-    replayed.
+    A normal Meta redirect cannot attach the SyncWorks API token, so an anonymous
+    callback may prove ownership with its pending, unexpired OAuth state. If the
+    caller *is* authenticated, however, it must match the state owner. This keeps
+    the original cross-user protection while enabling the real browser redirect.
     """
 
-    authentication_classes = []
     permission_classes = []
 
     def get(self, request):
@@ -78,6 +75,11 @@ class EasyOAuthMetaCallbackAPIView(OAuthMetaCallbackAPIView):
             return Response({"detail": "OAuth state has expired."}, status=status.HTTP_400_BAD_REQUEST)
         if state_obj.created_by is None:
             return Response({"detail": "OAuth state owner is missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+        caller = getattr(request, "user", None)
+        if caller is not None and getattr(caller, "is_authenticated", False):
+            if getattr(caller, "id", None) != state_obj.created_by_id:
+                return Response({"detail": "OAuth state does not belong to this user."}, status=status.HTTP_403_FORBIDDEN)
 
         request.user = state_obj.created_by
         response = super().get(request)
