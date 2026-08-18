@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - health-workout-history-persistence
+  pull_request:
+    paths:
+      - "customer_health/workout_views.py"
+      - "customer_health/test_workout_persistence.py"
+      - "customer_health/urls.py"
+      - ".github/workflows/health-workout-persistence-ci.yml"
 
 permissions:
   contents: read
