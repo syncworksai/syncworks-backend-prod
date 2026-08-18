@@ -7,8 +7,10 @@ on:
       - "customer_health/models.py"
       - "user_accounts/services/finance_intelligence.py"
       - "user_accounts/services/sync_alerts.py"
+      - "user_accounts/services/sync_alert_operational_sources.py"
       - "user_accounts/viewsets/notifications.py"
       - "user_accounts/tests/test_sync_alerts.py"
+      - "user_accounts/tests/test_sync_alert_operational_sources.py"
       - "personal_calendar/runtime_views.py"
       - "syncworksv7/urls.py"
       - ".github/workflows/sync-ai-ci.yml"
@@ -38,4 +40,4 @@ jobs:
       - name: Verify touched-app migrations
         run: python manage.py makemigrations customer_health user_accounts --check --dry-run
       - name: Run SYNC integration and alert tests
-        run: python manage.py test sync_ai user_accounts.tests.test_sync_alerts -v 2
+        run: python manage.py test sync_ai user_accounts.tests.test_sync_alerts user_accounts.tests.test_sync_alert_operational_sources -v 2
