@@ -8,6 +8,7 @@ from .communication_views import bulk_delete_ledger, investor_ledger, my_convers
 from .deposit_views import apply_deposit, deposit_status
 from .document_builder_views import document_builder_bootstrap, document_builder_finalize, document_builder_prefill, document_builder_save
 from .document_views import PMPropertyDocumentViewSet, document_template_catalog, property_document_checklist
+from .lead_views import lead_convert_to_tenant, lead_detail, lead_note, lead_reply_email, leads
 from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeaseViewSet, PMProspectViewSet, PMUnitViewSet
 from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
 from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_internally
@@ -52,6 +53,11 @@ urlpatterns = [
     path("messages/", unified_inbox),
     path("messages/<int:conversation_id>/reply/", inbox_reply),
     path("messages/<int:conversation_id>/email/", email_conversation),
+    path("leads/", leads),
+    path("leads/<int:lead_id>/", lead_detail),
+    path("leads/<int:lead_id>/note/", lead_note),
+    path("leads/<int:lead_id>/reply-email/", lead_reply_email),
+    path("leads/<int:lead_id>/convert-to-tenant/", lead_convert_to_tenant),
     path("make-ready/", make_ready_board),
     path("make-ready/<int:work_order_id>/", update_make_ready),
     path("tenant-portal/communications/", tenant_portal_communications),
