@@ -234,3 +234,7 @@ class CollectionShare(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=("collection", "user"), name="social_unique_collection_share")]
         indexes = [models.Index(fields=("collection", "status"), name="social_share_status")]
+
+
+# Imported here so Django registers the shared communication model with this app.
+from .communication_models import SocialMessage  # noqa: E402,F401

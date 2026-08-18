@@ -6,12 +6,19 @@ from django.contrib import admin
 from django.urls import include, path, re_path
 from django.views.static import serve
 
+from platform_social.communication_views import SocialMessageViewSet
+
+social_room_feed = SocialMessageViewSet.as_view({"get": "list", "post": "create"})
+social_room_item = SocialMessageViewSet.as_view({"get": "retrieve", "patch": "partial_update"})
+
 urlpatterns = [
     path("api/v1/health/", include("health_profiles.urls")),
     path("api/v1/sync-ai/", include("sync_ai.urls")),
     path("api/v1/personal-calendar/", include("personal_calendar.urls")),
     path("api/v1/personal-finance/", include("user_accounts.personal_finance_urls")),
     path("api/v1/social/", include("platform_social.urls")),
+    path("api/v1/social/room-feed/", social_room_feed, name="social-room-feed"),
+    path("api/v1/social/room-feed/<int:pk>/", social_room_item, name="social-room-feed-item"),
     path("api/v1/pm-hub/", include("pm_workspace.urls")),
     path("api/v1/edge/", include("platform_edge.urls")),
     path("admin/", admin.site.urls),
