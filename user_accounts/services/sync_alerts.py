@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import time
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
-from django.db import transaction
 from django.utils import timezone
 
 from sync_ai.calendar_context import build_sync_calendar_context
@@ -48,6 +47,10 @@ def _personal_preference(user) -> CommunicationPreference:
             "timezone": "America/Chicago",
         },
     )
+    # Django model defaults for TimeField are currently declared as HH:MM strings.
+    # Reload so a just-created preference has the same typed datetime.time values as
+    # an existing row before quiet-hour comparisons are performed.
+    preference.refresh_from_db()
     return preference
 
 
@@ -142,18 +145,19 @@ def _calendar_candidates(user) -> list[AlertCandidate]:
         event_id = item.get("event_id") or item.get("first_event_id") or ""
         suffix = str(event_id or timezone.localdate().isoformat())
         if code == "CALENDAR_CONFLICT":
-            output.append(_candidate("CALENDAR", code, "HIGH", "Calendar conflict", f"SYNC found {item.get('count', 1)} calendar conflict(s).", "/customer/calendar", suffix=suffix))
+            output.append(_candidate("CALENDAR", code, "HIGH", "Calendar conflict", f"SYNC found {item.get('count', 1)} calendar conflict(s).", "/calendar", suffix=suffix))
         elif code == "UPCOMING_EVENT":
             minutes = item.get("minutes_until")
-            output.append(_candidate("CALENDAR", code, "MEDIUM", "Upcoming event", f"{item.get('title') or 'Your next event'} starts in about {minutes} minutes.", "/customer/calendar", suffix=f"{suffix}:{minutes // 30 if isinstance(minutes, int) else ''}"))
+            bucket = minutes // 30 if isinstance(minutes, int) else ""
+            output.append(_candidate("CALENDAR", code, "MEDIUM", "Upcoming event", f"{item.get('title') or 'Your next event'} starts in about {minutes} minutes.", "/calendar", suffix=f"{suffix}:{bucket}"))
         elif code in {"TRAVEL_CHANGE", "TRAVEL_ALERT", "WEATHER_RISK"}:
             body = item.get("message") or item.get("detail") or "Travel or weather conditions changed for an upcoming event."
-            output.append(_candidate("TRAVEL", code, "HIGH", "Travel plan changed", body, "/customer/calendar", suffix=suffix, payload=item))
+            output.append(_candidate("TRAVEL", code, "HIGH", "Travel plan changed", body, "/calendar", suffix=suffix, payload=item))
     next_event = context.get("next_event") or {}
     travel = next_event.get("travel") or context.get("travel_time") or {}
     alert = travel.get("alert") if isinstance(travel, dict) else None
     if isinstance(alert, dict) and alert.get("message"):
-        output.append(_candidate("TRAVEL", "TRAVEL_CHANGE", alert.get("severity") or "HIGH", "Travel plan changed", alert["message"], "/customer/calendar", suffix=str(next_event.get("id") or "next"), payload=alert))
+        output.append(_candidate("TRAVEL", "TRAVEL_CHANGE", alert.get("severity") or "HIGH", "Travel plan changed", alert["message"], "/calendar", suffix=str(next_event.get("id") or "next"), payload=alert))
     return output
 
 
