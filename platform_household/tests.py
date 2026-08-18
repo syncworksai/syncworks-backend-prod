@@ -55,6 +55,31 @@ def test_household_creation_defaults_finance_sharing_off():
 
 
 @pytest.mark.django_db
+def test_late_accepted_member_gets_own_private_settings_on_first_load():
+    owner = user("late-owner@example.com")
+    member = user("late-member@example.com")
+    group = group_for(owner)
+    household = HouseholdProfile.objects.create(group=group, created_by=owner)
+    HouseholdMemberSettings.objects.create(household=household, user=owner)
+    GroupMembership.objects.create(
+        group=group,
+        user=member,
+        role=GroupMembership.Role.MEMBER,
+        status=GroupMembership.Status.ACTIVE,
+        invited_by=owner,
+    )
+
+    response = client_for(member).get("/api/v1/household/member-settings/")
+
+    assert response.status_code == 200
+    member_settings = HouseholdMemberSettings.objects.get(household=household, user=member)
+    assert member_settings.share_calendar is True
+    assert member_settings.share_finance_summary is False
+    assert member_settings.share_finance_accounts is False
+    assert member_settings.share_finance_transactions is False
+
+
+@pytest.mark.django_db
 def test_member_cannot_enable_someone_elses_finance_sharing():
     owner = user("finance-owner@example.com")
     member = user("finance-member@example.com")
