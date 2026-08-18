@@ -1,12 +1,13 @@
 from django.db import transaction
 from django.utils.dateparse import parse_datetime
-from rest_framework import status, viewsets
+from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .models import PersonalCalendarEvent, PersonalCalendarEventAudit
 from .serializers import PersonalCalendarEventSerializer
+from .travel_assist import TravelAssistError, build_travel_plan
 
 
 class PersonalCalendarEventViewSet(viewsets.ModelViewSet):
@@ -111,3 +112,30 @@ class PersonalCalendarEventViewSet(viewsets.ModelViewSet):
                 changes={"status": PersonalCalendarEvent.Status.ACTIVE},
             )
         return Response(self.get_serializer(event).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="travel-plan")
+    def travel_plan(self, request, pk=None):
+        event = self.get_object()
+        latitude = request.data.get("latitude")
+        longitude = request.data.get("longitude")
+        try:
+            plan = build_travel_plan(event, latitude, longitude)
+        except TravelAssistError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+
+        metadata = dict(event.metadata or {})
+        metadata["travel_assist"] = plan
+        with transaction.atomic():
+            event.metadata = metadata
+            event.save(update_fields=("metadata", "updated_at"))
+            PersonalCalendarEventAudit.objects.create(
+                event=event,
+                actor=request.user,
+                action=PersonalCalendarEventAudit.Action.UPDATED,
+                changes={
+                    "fields": ["metadata.travel_assist"],
+                    "travel_provider": plan.get("route", {}).get("provider"),
+                    "weather_provider": plan.get("weather", {}).get("provider"),
+                },
+            )
+        return Response(plan, status=status.HTTP_200_OK)
