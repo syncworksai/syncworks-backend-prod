@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone as dt_timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from django.db.models import Q, Sum
+from django.db.models import Q
 from django.utils import timezone
 
 from customer_health.models import CustomerHealthProfile
@@ -66,8 +66,8 @@ def _calendar_state(user, profile: dict, now_local, live_enabled: bool):
         PersonalCalendarEvent.objects.filter(
             owner=user,
             status="ACTIVE",
-            start_at__gte=start_local.astimezone(timezone.utc),
-            start_at__lt=end_local.astimezone(timezone.utc),
+            start_at__gte=start_local.astimezone(dt_timezone.utc),
+            start_at__lt=end_local.astimezone(dt_timezone.utc),
         ).order_by("start_at")[:20]
     )
     live = profile.get("live") or {}
