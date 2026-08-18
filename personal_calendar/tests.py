@@ -13,7 +13,8 @@ User = get_user_model()
 
 class PersonalCalendarApiTests(APITestCase):
     def make_user(self, email):
-        user = User.objects.create_user(email=email, password="test-password-123")
+        username = email.split("@", 1)[0]
+        user = User.objects.create_user(username=username, email=email, password="test-password-123")
         token, _ = Token.objects.get_or_create(user=user)
         return user, token
 
@@ -54,11 +55,7 @@ class PersonalCalendarApiTests(APITestCase):
     def test_events_are_strictly_owner_scoped(self):
         first_user, _ = self.make_user("first@example.com")
         _, second_token = self.make_user("second@example.com")
-        event = PersonalCalendarEvent.objects.create(
-            owner=first_user,
-            title="Private event",
-            start_at=timezone.now() + timedelta(days=1),
-        )
+        event = PersonalCalendarEvent.objects.create(owner=first_user, title="Private event", start_at=timezone.now() + timedelta(days=1))
         self.authenticate(second_token)
         response = self.client.get("/api/v1/personal-calendar/events/")
         self.assertEqual(response.data["count"], 0)
@@ -71,10 +68,7 @@ class PersonalCalendarApiTests(APITestCase):
         start = timezone.now() + timedelta(days=2)
         response = self.client.post(
             "/api/v1/personal-calendar/events/",
-            self.event_payload(
-                start_at=start.isoformat(),
-                end_at=(start - timedelta(hours=1)).isoformat(),
-            ),
+            self.event_payload(start_at=start.isoformat(), end_at=(start - timedelta(hours=1)).isoformat()),
             format="json",
         )
         self.assertEqual(response.status_code, 400)
@@ -82,22 +76,14 @@ class PersonalCalendarApiTests(APITestCase):
 
     def test_archive_cancel_and_restore_are_audited(self):
         user, token = self.make_user("event-actions@example.com")
-        event = PersonalCalendarEvent.objects.create(
-            owner=user,
-            title="Appointment",
-            start_at=timezone.now() + timedelta(days=1),
-        )
+        event = PersonalCalendarEvent.objects.create(owner=user, title="Appointment", start_at=timezone.now() + timedelta(days=1))
         self.authenticate(token)
         for action, expected in (
             ("cancel", PersonalCalendarEvent.Status.CANCELLED),
             ("restore", PersonalCalendarEvent.Status.ACTIVE),
             ("archive", PersonalCalendarEvent.Status.ARCHIVED),
         ):
-            response = self.client.post(
-                f"/api/v1/personal-calendar/events/{event.id}/{action}/",
-                {},
-                format="json",
-            )
+            response = self.client.post(f"/api/v1/personal-calendar/events/{event.id}/{action}/", {}, format="json")
             self.assertEqual(response.status_code, 200)
             event.refresh_from_db()
             self.assertEqual(event.status, expected)
@@ -107,20 +93,11 @@ class PersonalCalendarApiTests(APITestCase):
         user, token = self.make_user("filters@example.com")
         now = timezone.now()
         PersonalCalendarEvent.objects.create(owner=user, title="Soon", start_at=now + timedelta(days=1))
-        PersonalCalendarEvent.objects.create(
-            owner=user,
-            title="Later",
-            start_at=now + timedelta(days=30),
-            status=PersonalCalendarEvent.Status.ARCHIVED,
-        )
+        PersonalCalendarEvent.objects.create(owner=user, title="Later", start_at=now + timedelta(days=30), status=PersonalCalendarEvent.Status.ARCHIVED)
         self.authenticate(token)
         response = self.client.get(
             "/api/v1/personal-calendar/events/",
-            {
-                "start": now.isoformat(),
-                "end": (now + timedelta(days=7)).isoformat(),
-                "status": "ACTIVE",
-            },
+            {"start": now.isoformat(), "end": (now + timedelta(days=7)).isoformat(), "status": "ACTIVE"},
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["count"], 1)
