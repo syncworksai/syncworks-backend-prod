@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from django.utils import timezone
 
@@ -9,6 +9,11 @@ from user_accounts.models import Notification
 
 from .jarvis_product import live_access, load_profile
 from .live_travel import leave_plan, route_minutes
+
+
+def _clock(value):
+    local = timezone.localtime(value)
+    return local.strftime("%I:%M %p").lstrip("0")
 
 
 def process_departure_reminders() -> dict:
@@ -46,15 +51,15 @@ def process_departure_reminders() -> dict:
         if not departure.get("available"):
             skipped += 1
             continue
-        remind_at = timezone.datetime.fromisoformat(departure["remind_at"])
-        leave_by = timezone.datetime.fromisoformat(departure["leave_by"])
+        remind_at = datetime.fromisoformat(departure["remind_at"])
+        leave_by = datetime.fromisoformat(departure["leave_by"])
         if remind_at <= now <= event.start_at:
             location = event.location_name or event.address_line1 or "your event"
             Notification.objects.create(
                 recipient=event.owner,
                 type=Notification.TYPE_REMINDER,
                 title=f"Time to leave soon: {event.title}",
-                body=f"Plan to leave by {timezone.localtime(leave_by).strftime('%-I:%M %p')} for {location}. Estimated drive time is {departure.get('travel_minutes')} minutes.",
+                body=f"Plan to leave by {_clock(leave_by)} for {location}. Estimated drive time is {departure.get('travel_minutes')} minutes.",
                 data={
                     "kind": "SYNC_ASSISTANT_DEPARTURE",
                     "event_id": event.id,
