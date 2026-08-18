@@ -5,13 +5,15 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from user_accounts.services.sync_alerts import refresh_sync_alerts
+
 from .github_oidc import CalendarOIDCError, verify_calendar_runtime_token
 from .sync_runner import sync_due_connections
 from .travel_monitor import refresh_due_trip_monitors
 
 
 class CalendarRuntimeAPIView(APIView):
-    """GitHub-OIDC protected entry point for unattended calendar + trip intelligence."""
+    """GitHub-OIDC protected entry point for unattended calendar, travel and SYNC alerts."""
 
     authentication_classes = []
     permission_classes = []
@@ -29,6 +31,7 @@ class CalendarRuntimeAPIView(APIView):
 
         calendar_result = sync_due_connections()
         travel_result = refresh_due_trip_monitors()
+        alert_result = refresh_sync_alerts()
         return Response(
             {
                 "ok": True,
@@ -36,5 +39,6 @@ class CalendarRuntimeAPIView(APIView):
                 "identity": f"github:{claims.get('run_id') or 'scheduled'}",
                 **calendar_result,
                 "travel_monitoring": travel_result,
+                "sync_alerts": alert_result,
             }
         )

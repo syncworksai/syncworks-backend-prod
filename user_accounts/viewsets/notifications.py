@@ -9,18 +9,11 @@ from rest_framework.response import Response
 
 from user_accounts.models import Notification, PlatformNewsItem
 from user_accounts.serializers.notifications import NotificationSerializer, PlatformNewsItemSerializer
+from user_accounts.services.sync_alerts import sync_alerts_for_user
 
 
 class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
-    """
-    Inbox endpoints.
-
-    Supports query params:
-      - type=SYSTEM|TICKET|BROADCAST|BILLING|MESSAGE|REMINDER|PROMO
-      - unread=true|false
-      - archived=true|false
-      - q=search text across title/body
-    """
+    """User-scoped internal Inbox + central SYNC Alert Center."""
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
 
@@ -31,48 +24,46 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         unread = (self.request.query_params.get("unread") or "").strip().lower()
         archived = (self.request.query_params.get("archived") or "").strip().lower()
         q = (self.request.query_params.get("q") or "").strip()
+        source = (self.request.query_params.get("source") or "").strip().upper()
+        severity = (self.request.query_params.get("severity") or "").strip().upper()
+        sync_only = (self.request.query_params.get("sync_alerts") or "").strip().lower()
 
         if n_type:
             qs = qs.filter(type=n_type)
-
         if unread in ("1", "true", "yes"):
             qs = qs.filter(is_read=False)
         elif unread in ("0", "false", "no"):
             qs = qs.filter(is_read=True)
-
         if archived in ("1", "true", "yes"):
             qs = qs.filter(archived_at__isnull=False)
         elif archived in ("0", "false", "no"):
             qs = qs.filter(archived_at__isnull=True)
-
         if q:
             qs = qs.filter(Q(title__icontains=q) | Q(body__icontains=q))
-
+        if source:
+            qs = qs.filter(data__source=source)
+        if severity:
+            qs = qs.filter(data__severity=severity)
+        if sync_only in ("1", "true", "yes"):
+            qs = qs.filter(data__sync_alert=True)
         return qs
 
     @action(detail=True, methods=["post"], url_path="read")
     def mark_read(self, request, pk=None):
         n = self.get_object()
-        if not n.is_read:
-            n.is_read = True
-            n.read_at = timezone.now()
-            n.save(update_fields=["is_read", "read_at"])
+        n.mark_read()
         return Response(NotificationSerializer(n).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="archive")
     def archive(self, request, pk=None):
         n = self.get_object()
-        if not n.archived_at:
-            n.archived_at = timezone.now()
-            n.save(update_fields=["archived_at"])
+        n.archive()
         return Response(NotificationSerializer(n).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="unarchive")
     def unarchive(self, request, pk=None):
         n = self.get_object()
-        if n.archived_at:
-            n.archived_at = None
-            n.save(update_fields=["archived_at"])
+        n.unarchive()
         return Response(NotificationSerializer(n).data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=["post"], url_path="mark-all-read")
@@ -84,7 +75,33 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=["get"], url_path="unread-count")
     def unread_count(self, request):
         c = Notification.objects.filter(recipient=request.user, is_read=False, archived_at__isnull=True).count()
-        return Response({"unread": c}, status=status.HTTP_200_OK)
+        sync_count = Notification.objects.filter(recipient=request.user, is_read=False, archived_at__isnull=True, data__sync_alert=True).count()
+        return Response({"unread": c, "sync_alerts": sync_count}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="summary")
+    def summary(self, request):
+        qs = Notification.objects.filter(recipient=request.user, archived_at__isnull=True, data__sync_alert=True)
+        by_source = {}
+        by_severity = {}
+        for source in ("FINANCE", "HEALTH", "CALENDAR", "TRAVEL", "SOCIAL", "PM", "SYSTEM"):
+            count = qs.filter(data__source=source).count()
+            if count:
+                by_source[source] = count
+        for severity in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+            count = qs.filter(data__severity=severity).count()
+            if count:
+                by_severity[severity] = count
+        return Response({
+            "total": qs.count(),
+            "unread": qs.filter(is_read=False).count(),
+            "by_source": by_source,
+            "by_severity": by_severity,
+        })
+
+    @action(detail=False, methods=["post"], url_path="refresh-sync-alerts")
+    def refresh_sync_alerts(self, request):
+        result = sync_alerts_for_user(request.user, send_email=False)
+        return Response({"ok": True, **result}, status=status.HTTP_200_OK)
 
 
 class MeNewsReelViewSet(viewsets.ReadOnlyModelViewSet):
@@ -111,19 +128,15 @@ class MeNewsReelViewSet(viewsets.ReadOnlyModelViewSet):
         now = timezone.now()
         user_zip = self._get_user_zip()
         user_scope = self._get_user_scope()
-
         qs = (
             PlatformNewsItem.objects.filter(is_active=True)
             .filter(Q(starts_at__isnull=True) | Q(starts_at__lte=now))
             .filter(Q(ends_at__isnull=True) | Q(ends_at__gte=now))
             .order_by("-created_at")
         )
-
         qs = qs.filter(Q(target_scope="ALL") | Q(target_scope=user_scope))
-
         if user_zip:
             qs = qs.filter(Q(target_zip_codes=[]) | Q(target_zip_codes__contains=[user_zip]))
         else:
             qs = qs.filter(target_zip_codes=[])
-
         return qs

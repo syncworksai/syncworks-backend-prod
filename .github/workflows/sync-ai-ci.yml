@@ -6,6 +6,10 @@ on:
       - "sync_ai/**"
       - "customer_health/models.py"
       - "user_accounts/services/finance_intelligence.py"
+      - "user_accounts/services/sync_alerts.py"
+      - "user_accounts/viewsets/notifications.py"
+      - "user_accounts/tests/test_sync_alerts.py"
+      - "personal_calendar/runtime_views.py"
       - "syncworksv7/urls.py"
       - ".github/workflows/sync-ai-ci.yml"
   workflow_dispatch:
@@ -18,6 +22,7 @@ jobs:
       DB_ENGINE: sqlite
       DJANGO_SECRET_KEY: ci-sync-ai-secret
       DJANGO_SETTINGS_MODULE: syncworksv7.settings_pm
+      EMAIL_BACKEND: django.core.mail.backends.locmem.EmailBackend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,5 +37,5 @@ jobs:
         run: python manage.py check
       - name: Verify touched-app migrations
         run: python manage.py makemigrations customer_health user_accounts --check --dry-run
-      - name: Run SYNC integration tests
-        run: python manage.py test sync_ai -v 2
+      - name: Run SYNC integration and alert tests
+        run: python manage.py test sync_ai user_accounts.tests.test_sync_alerts -v 2
