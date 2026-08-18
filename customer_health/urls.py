@@ -17,6 +17,10 @@ from .voice_views import (
     HealthVoiceOptionsView,
     HealthVoiceSpeakView,
 )
+from .workout_views import (
+    HealthActiveWorkoutView,
+    HealthWorkoutSessionsView,
+)
 
 app_name = "customer_health"
 
@@ -75,5 +79,15 @@ urlpatterns = [
         "voice/speak/",
         HealthVoiceSpeakView.as_view(),
         name="voice-speak",
+    ),
+    path(
+        "workout-sessions/",
+        HealthWorkoutSessionsView.as_view(),
+        name="workout-sessions",
+    ),
+    path(
+        "workout-sessions/active/",
+        HealthActiveWorkoutView.as_view(),
+        name="active-workout",
     ),
 ]
