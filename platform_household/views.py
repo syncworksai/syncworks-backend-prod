@@ -76,7 +76,10 @@ class HouseholdMemberSettingsViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "patch", "head", "options"]
 
     def get_queryset(self):
-        return HouseholdMemberSettings.objects.filter(household_id__in=active_household_ids(self.request.user)).select_related("user", "household__group")
+        household_ids = list(active_household_ids(self.request.user))
+        for household in HouseholdProfile.objects.filter(id__in=household_ids):
+            HouseholdMemberSettings.objects.get_or_create(household=household, user=self.request.user)
+        return HouseholdMemberSettings.objects.filter(household_id__in=household_ids).select_related("user", "household__group")
 
     def perform_update(self, serializer):
         instance = self.get_object()
