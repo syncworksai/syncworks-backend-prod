@@ -22,6 +22,12 @@ class HouseholdPrivacyTests(APITestCase):
         client.force_authenticate(actor)
         return client
 
+    def items(self, response):
+        data = response.json()
+        if isinstance(data, list):
+            return data
+        return data.get("results", [])
+
     def group_for(self, owner, *, name="Family", kind=SocialGroup.Kind.HOUSEHOLD):
         group = SocialGroup.objects.create(
             name=name,
@@ -153,8 +159,10 @@ class HouseholdPrivacyTests(APITestCase):
             format="json",
         )
         self.assertEqual(created.status_code, 201)
-        self.assertEqual(self.client_for(owner).get("/api/v1/household/tasks/").json()[0]["title"], "Call insurance")
-        self.assertEqual(self.client_for(outsider).get("/api/v1/household/tasks/").json(), [])
+        owner_tasks = self.items(self.client_for(owner).get("/api/v1/household/tasks/"))
+        outsider_tasks = self.items(self.client_for(outsider).get("/api/v1/household/tasks/"))
+        self.assertEqual(owner_tasks[0]["title"], "Call insurance")
+        self.assertEqual(outsider_tasks, [])
 
     def test_shopping_and_goals_are_household_scoped(self):
         owner = self.user("shopping-owner@example.com")
@@ -177,8 +185,8 @@ class HouseholdPrivacyTests(APITestCase):
         self.assertEqual(item.status_code, 201)
         self.assertEqual(goal.status_code, 201)
         outsider_client = self.client_for(outsider)
-        self.assertEqual(outsider_client.get("/api/v1/household/shopping/").json(), [])
-        self.assertEqual(outsider_client.get("/api/v1/household/goals/").json(), [])
+        self.assertEqual(self.items(outsider_client.get("/api/v1/household/shopping/")), [])
+        self.assertEqual(self.items(outsider_client.get("/api/v1/household/goals/")), [])
 
     def test_weather_recurring_task_syncs_to_shared_calendars_and_respects_opt_out(self):
         owner = self.user("yard-owner@example.com")
