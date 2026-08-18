@@ -1,9 +1,11 @@
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 
+from personal_calendar.models import PersonalCalendarEvent
 from platform_social.models import GroupMembership, SocialGroup
 
-from .models import HouseholdMemberSettings, HouseholdProfile
+from .models import HouseholdMemberSettings, HouseholdProfile, SharedTask
 
 User = get_user_model()
 
@@ -62,6 +64,10 @@ class HouseholdPrivacyTests(APITestCase):
         self.assertEqual(response.status_code, 201)
         settings = HouseholdMemberSettings.objects.get(user=owner)
         self.assertTrue(settings.share_calendar)
+        self.assertTrue(settings.share_tasks)
+        self.assertTrue(settings.share_shopping)
+        self.assertTrue(settings.share_meals)
+        self.assertTrue(settings.share_goals)
         self.assertFalse(settings.share_finance_summary)
         self.assertFalse(settings.share_finance_accounts)
         self.assertFalse(settings.share_finance_bills)
@@ -88,6 +94,7 @@ class HouseholdPrivacyTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         member_settings = HouseholdMemberSettings.objects.get(household=household, user=member)
         self.assertTrue(member_settings.share_calendar)
+        self.assertTrue(member_settings.share_tasks)
         self.assertFalse(member_settings.share_finance_summary)
         self.assertFalse(member_settings.share_finance_accounts)
         self.assertFalse(member_settings.share_finance_transactions)
@@ -170,3 +177,72 @@ class HouseholdPrivacyTests(APITestCase):
         outsider_client = self.client_for(outsider)
         self.assertEqual(outsider_client.get("/api/v1/household/shopping/").json(), [])
         self.assertEqual(outsider_client.get("/api/v1/household/goals/").json(), [])
+
+    def test_weather_recurring_task_syncs_to_shared_calendars_and_respects_opt_out(self):
+        owner = self.user("yard-owner@example.com")
+        spouse = self.user("yard-spouse@example.com")
+        group = self.group_for(owner)
+        GroupMembership.objects.create(
+            group=group,
+            user=spouse,
+            role=GroupMembership.Role.MEMBER,
+            status=GroupMembership.Status.ACTIVE,
+            invited_by=owner,
+        )
+        household = HouseholdProfile.objects.create(
+            group=group,
+            created_by=owner,
+            address_line1="100 Main St",
+            city="Montgomery",
+            state="AL",
+            postal_code="36104",
+        )
+        HouseholdMemberSettings.objects.create(household=household, user=owner)
+        spouse_settings = HouseholdMemberSettings.objects.create(household=household, user=spouse)
+        due = timezone.now() + timezone.timedelta(days=1)
+
+        created = self.client_for(owner).post(
+            "/api/v1/household/tasks/",
+            {
+                "household": household.id,
+                "title": "Mow the yard",
+                "notes": "Front and back yard",
+                "due_at": due.isoformat(),
+                "estimated_minutes": 60,
+                "recurrence": "WEEKLY",
+                "recurrence_interval": 1,
+                "weather_dependent": True,
+            },
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201)
+        task_id = created.json()["id"]
+        calendar_rows = PersonalCalendarEvent.objects.filter(metadata__household_task_id=task_id)
+        self.assertEqual(calendar_rows.count(), 2)
+        self.assertTrue(all(row.recurrence_rule == "RRULE:FREQ=WEEKLY;INTERVAL=1" for row in calendar_rows))
+        self.assertTrue(all("Weather permitting" in row.description for row in calendar_rows))
+        self.assertTrue(all(row.metadata.get("weather_dependent") is True for row in calendar_rows))
+
+        opted_out = self.client_for(spouse).patch(
+            f"/api/v1/household/member-settings/{spouse_settings.id}/",
+            {"share_tasks": False},
+            format="json",
+        )
+        self.assertEqual(opted_out.status_code, 200)
+        spouse_calendar = PersonalCalendarEvent.objects.get(owner=spouse, metadata__household_task_id=task_id)
+        self.assertEqual(spouse_calendar.status, PersonalCalendarEvent.Status.ARCHIVED)
+        owner_calendar = PersonalCalendarEvent.objects.get(owner=owner, metadata__household_task_id=task_id)
+        self.assertEqual(owner_calendar.status, PersonalCalendarEvent.Status.ACTIVE)
+
+        completed = self.client_for(owner).patch(
+            f"/api/v1/household/tasks/{task_id}/",
+            {"status": "DONE"},
+            format="json",
+        )
+        self.assertEqual(completed.status_code, 200)
+        original = SharedTask.objects.get(id=task_id)
+        self.assertEqual(original.status, SharedTask.Status.DONE)
+        next_task = SharedTask.objects.exclude(id=task_id).get(household=household, title="Mow the yard")
+        self.assertEqual(next_task.status, SharedTask.Status.OPEN)
+        self.assertEqual(next_task.recurrence, SharedTask.Recurrence.WEEKLY)
+        self.assertGreater(next_task.due_at, original.due_at)
