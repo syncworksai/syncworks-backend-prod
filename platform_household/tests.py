@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
@@ -199,7 +201,7 @@ class HouseholdPrivacyTests(APITestCase):
         )
         HouseholdMemberSettings.objects.create(household=household, user=owner)
         spouse_settings = HouseholdMemberSettings.objects.create(household=household, user=spouse)
-        due = timezone.now() + timezone.timedelta(days=1)
+        due = timezone.now() + timedelta(days=1)
 
         created = self.client_for(owner).post(
             "/api/v1/household/tasks/",
