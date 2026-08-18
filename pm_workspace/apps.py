@@ -14,7 +14,7 @@ class PMWorkspaceConfig(AppConfig):
         from rest_framework.exceptions import ValidationError
         from rest_framework.response import Response
 
-        from . import communication_models, document_models, lifecycle_models, owner_models, property_profile_models, workorder_models  # noqa: F401
+        from . import communication_models, document_models, lead_models, lifecycle_models, owner_models, property_profile_models, workorder_models  # noqa: F401
         from .lifecycle_models import PMOccupancy
         from .models import PMLedgerEntry, PMProperty, PMTenant, PMUnit
         from .serializers import PMProjectSerializer, PMPropertySerializer, PMTenantSerializer

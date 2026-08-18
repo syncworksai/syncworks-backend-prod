@@ -3,7 +3,7 @@ from urllib.parse import urlencode
 
 import requests
 
-SCOPES = "openid email profile offline_access User.Read Calendars.ReadWrite"
+SCOPES = "openid email profile offline_access User.Read Calendars.ReadWrite Mail.Read Mail.Send"
 
 
 def tenant():

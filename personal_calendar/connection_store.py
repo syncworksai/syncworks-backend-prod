@@ -63,6 +63,10 @@ def save_connections(user, rows: list[dict]) -> list[dict]:
 def public_connection(row: dict) -> dict:
     data = {k: v for k, v in row.items() if k != "credential_data"}
     data["connected"] = bool(row.get("credential_data")) and bool(row.get("enabled", True))
+    data.setdefault("mail_enabled", False)
+    data.setdefault("mail_destinations", [])
+    data.setdefault("pm_workspace_ids", [])
+    data.setdefault("mail_categories", ["LEADS", "TENANTS", "OWNERS", "MAINTENANCE", "SECTION8", "COLLECTIONS", "VENDORS"])
     return data
 
 
@@ -83,6 +87,12 @@ def upsert_connection(user, *, provider: str, external_account_id: str, email: s
             "last_synced_at": None,
             "next_sync_at": now,
             "last_error": "",
+            "mail_enabled": False,
+            "mail_destinations": [],
+            "pm_workspace_ids": [],
+            "mail_categories": ["LEADS", "TENANTS", "OWNERS", "MAINTENANCE", "SECTION8", "COLLECTIONS", "VENDORS"],
+            "mail_last_synced_at": None,
+            "mail_last_error": "",
             "created_at": now,
         }
         rows.append(existing)
@@ -104,7 +114,10 @@ def find_connection(user, connection_id: str):
 
 
 def update_connection(user, connection_id: str, changes: dict):
-    allowed = {"sync_mode", "sync_cadence", "enabled", "calendars", "last_synced_at", "next_sync_at", "last_error", "credential_data"}
+    allowed = {
+        "sync_mode", "sync_cadence", "enabled", "calendars", "last_synced_at", "next_sync_at", "last_error", "credential_data",
+        "mail_enabled", "mail_destinations", "pm_workspace_ids", "mail_categories", "mail_last_synced_at", "mail_last_error",
+    }
     rows = list_connections(user)
     target = next((r for r in rows if r.get("id") == connection_id), None)
     if target is None:

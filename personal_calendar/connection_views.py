@@ -27,6 +27,8 @@ from .sync_service import sync_connection
 User = get_user_model()
 STATE_SALT = "syncworks.calendar.oauth"
 ALLOWED_CADENCES = {"LIVE", "FIVE_MIN", "FIFTEEN_MIN", "HOURLY", "DAILY", "MANUAL"}
+ALLOWED_MAIL_DESTINATIONS = {"PERSONAL", "FINANCE", "PM", "BUSINESS"}
+ALLOWED_MAIL_CATEGORIES = {"LEADS", "TENANTS", "OWNERS", "MAINTENANCE", "SECTION8", "COLLECTIONS", "VENDORS", "OTHER_PM"}
 
 
 def _state(user, provider, return_to):
@@ -51,26 +53,12 @@ def _normalize_calendars(provider, rows):
             calendar_id = row.get("id")
             if not calendar_id:
                 continue
-            output.append({
-                "id": calendar_id,
-                "name": row.get("summary") or "Calendar",
-                "timezone": row.get("timeZone") or "",
-                "color": row.get("backgroundColor") or "",
-                "primary": bool(row.get("primary")),
-                "selected": bool(row.get("selected", True)),
-            })
+            output.append({"id": calendar_id, "name": row.get("summary") or "Calendar", "timezone": row.get("timeZone") or "", "color": row.get("backgroundColor") or "", "primary": bool(row.get("primary")), "selected": bool(row.get("selected", True))})
         else:
             calendar_id = row.get("id")
             if not calendar_id:
                 continue
-            output.append({
-                "id": calendar_id,
-                "name": row.get("name") or "Calendar",
-                "timezone": "",
-                "color": row.get("color") or "",
-                "primary": bool(row.get("isDefaultCalendar")),
-                "selected": True,
-            })
+            output.append({"id": calendar_id, "name": row.get("name") or "Calendar", "timezone": "", "color": row.get("color") or "", "primary": bool(row.get("isDefaultCalendar")), "selected": True})
     return output
 
 
@@ -83,6 +71,7 @@ class CalendarConnectionListView(APIView):
             "providers": {
                 "google": bool(os.getenv("GOOGLE_CALENDAR_CLIENT_ID")),
                 "microsoft": bool(os.getenv("MICROSOFT_CALENDAR_CLIENT_ID")),
+                "microsoft_mail": bool(os.getenv("MICROSOFT_CALENDAR_CLIENT_ID")),
                 "apple": False,
             },
         })
@@ -128,21 +117,8 @@ class CalendarOAuthCallbackView(APIView):
             profile = helper.profile(access_token)
             calendars = _normalize_calendars(provider, helper.calendars(access_token))
             expires_in = int(tokens.get("expires_in") or 3600)
-            credentials = {
-                "access_token": access_token,
-                "refresh_token": tokens.get("refresh_token") or "",
-                "expires_at": (timezone.now() + timedelta(seconds=max(60, expires_in - 60))).isoformat(),
-                "scope": tokens.get("scope") or "",
-            }
-            connection = upsert_connection(
-                user,
-                provider=provider,
-                external_account_id=str(profile.get("id") or profile.get("email") or "unknown"),
-                email=profile.get("email") or "",
-                display_name=profile.get("name") or profile.get("email") or provider.title(),
-                credentials=credentials,
-                calendars=calendars,
-            )
+            credentials = {"access_token": access_token, "refresh_token": tokens.get("refresh_token") or "", "expires_at": (timezone.now() + timedelta(seconds=max(60, expires_in - 60))).isoformat(), "scope": tokens.get("scope") or ""}
+            connection = upsert_connection(user, provider=provider, external_account_id=str(profile.get("id") or profile.get("email") or "unknown"), email=profile.get("email") or "", display_name=profile.get("name") or profile.get("email") or provider.title(), credentials=credentials, calendars=calendars)
             update_connection(user, connection["id"], {"next_sync_at": timezone.now().isoformat()})
             return HttpResponseRedirect(_frontend_redirect(state.get("return_to"), "connected", provider))
         except Exception:
@@ -163,7 +139,7 @@ class CalendarConnectionDetailView(APIView):
     def patch(self, request, connection_id):
         connection = find_connection(request.user, connection_id)
         if not connection:
-            return Response({"detail": "Calendar connection not found."}, status=404)
+            return Response({"detail": "Connected account not found."}, status=404)
         changes = {}
         if "enabled" in request.data:
             changes["enabled"] = bool(request.data.get("enabled"))
@@ -184,12 +160,25 @@ class CalendarConnectionDetailView(APIView):
                 merged["selected"] = bool(row.get("selected", original.get("selected", True)))
                 calendars.append(merged)
             changes["calendars"] = calendars
+        if "mail_enabled" in request.data:
+            if connection.get("provider") != "MICROSOFT" and bool(request.data.get("mail_enabled")):
+                return Response({"detail": "Email processing is currently available for Microsoft/Outlook accounts first."}, status=400)
+            changes["mail_enabled"] = bool(request.data.get("mail_enabled"))
+        if "mail_destinations" in request.data:
+            raw = request.data.get("mail_destinations") if isinstance(request.data.get("mail_destinations"), list) else []
+            changes["mail_destinations"] = [str(v).upper() for v in raw if str(v).upper() in ALLOWED_MAIL_DESTINATIONS]
+        if "pm_workspace_ids" in request.data:
+            raw = request.data.get("pm_workspace_ids") if isinstance(request.data.get("pm_workspace_ids"), list) else []
+            changes["pm_workspace_ids"] = [int(v) for v in raw if str(v).isdigit()]
+        if "mail_categories" in request.data:
+            raw = request.data.get("mail_categories") if isinstance(request.data.get("mail_categories"), list) else []
+            changes["mail_categories"] = [str(v).upper() for v in raw if str(v).upper() in ALLOWED_MAIL_CATEGORIES]
         updated = update_connection(request.user, connection_id, changes)
         return Response(public_connection(updated))
 
     def delete(self, request, connection_id):
         if not delete_connection(request.user, connection_id):
-            return Response({"detail": "Calendar connection not found."}, status=404)
+            return Response({"detail": "Connected account not found."}, status=404)
         return Response(status=204)
 
 
@@ -199,5 +188,5 @@ class CalendarConnectionSyncView(APIView):
     def post(self, request, connection_id):
         connection = find_connection(request.user, connection_id)
         if not connection:
-            return Response({"detail": "Calendar connection not found."}, status=404)
+            return Response({"detail": "Connected account not found."}, status=404)
         return Response(sync_connection(request.user, connection))
