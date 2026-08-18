@@ -5,6 +5,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from user_accounts.services.sync_alert_operational_sources import refresh_operational_sync_alerts
 from user_accounts.services.sync_alerts import refresh_sync_alerts
 
 from .github_oidc import CalendarOIDCError, verify_calendar_runtime_token
@@ -32,6 +33,7 @@ class CalendarRuntimeAPIView(APIView):
         calendar_result = sync_due_connections()
         travel_result = refresh_due_trip_monitors()
         alert_result = refresh_sync_alerts()
+        operational_alert_result = refresh_operational_sync_alerts()
         return Response(
             {
                 "ok": True,
@@ -40,5 +42,6 @@ class CalendarRuntimeAPIView(APIView):
                 **calendar_result,
                 "travel_monitoring": travel_result,
                 "sync_alerts": alert_result,
+                "sync_operational_alerts": operational_alert_result,
             }
         )
