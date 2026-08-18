@@ -10,7 +10,8 @@ User = get_user_model()
 
 class HouseholdPrivacyTests(APITestCase):
     def user(self, email):
-        return User.objects.create_user(email=email, password="test-pass-123")
+        username = email.split("@", 1)[0]
+        return User.objects.create_user(username=username, email=email, password="test-pass-123")
 
     def client_for(self, actor):
         client = APIClient()
