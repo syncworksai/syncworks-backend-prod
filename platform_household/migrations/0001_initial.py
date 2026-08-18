@@ -1,0 +1,132 @@
+from django.conf import settings
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+    initial = True
+
+    dependencies = [
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+        ("platform_social", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="HouseholdProfile",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("address_line1", models.CharField(blank=True, max_length=220)),
+                ("address_line2", models.CharField(blank=True, max_length=220)),
+                ("city", models.CharField(blank=True, max_length=100)),
+                ("state", models.CharField(blank=True, max_length=80)),
+                ("postal_code", models.CharField(blank=True, max_length=20)),
+                ("country", models.CharField(default="US", max_length=2)),
+                ("timezone", models.CharField(default="America/Chicago", max_length=64)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("created_by", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="households_created", to=settings.AUTH_USER_MODEL)),
+                ("group", models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name="household_profile", to="platform_social.socialgroup")),
+            ],
+        ),
+        migrations.CreateModel(
+            name="HouseholdMemberSettings",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("share_calendar", models.BooleanField(default=True)),
+                ("share_tasks", models.BooleanField(default=True)),
+                ("share_shopping", models.BooleanField(default=True)),
+                ("share_meals", models.BooleanField(default=True)),
+                ("share_goals", models.BooleanField(default=True)),
+                ("share_finance_summary", models.BooleanField(default=False)),
+                ("share_finance_accounts", models.BooleanField(default=False)),
+                ("share_finance_bills", models.BooleanField(default=False)),
+                ("share_finance_income", models.BooleanField(default=False)),
+                ("share_finance_transactions", models.BooleanField(default=False)),
+                ("share_finance_budgets", models.BooleanField(default=False)),
+                ("availability_status", models.CharField(default="AVAILABLE", max_length=20)),
+                ("phone_available", models.BooleanField(default=True)),
+                ("computer_available", models.BooleanField(default=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("household", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="member_settings", to="platform_household.householdprofile")),
+                ("user", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="household_settings", to=settings.AUTH_USER_MODEL)),
+            ],
+            options={"constraints": [models.UniqueConstraint(fields=("household", "user"), name="household_unique_member_settings")]},
+        ),
+        migrations.CreateModel(
+            name="SharedTask",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("title", models.CharField(max_length=180)),
+                ("notes", models.TextField(blank=True)),
+                ("due_at", models.DateTimeField(blank=True, null=True)),
+                ("estimated_minutes", models.PositiveSmallIntegerField(default=15)),
+                ("requires_phone", models.BooleanField(default=False)),
+                ("requires_computer", models.BooleanField(default=False)),
+                ("requires_focus", models.BooleanField(default=False)),
+                ("can_multitask", models.BooleanField(default=True)),
+                ("location_context", models.CharField(blank=True, max_length=40)),
+                ("status", models.CharField(choices=[("OPEN", "Open"), ("IN_PROGRESS", "In progress"), ("DONE", "Done"), ("SKIPPED", "Skipped")], default="OPEN", max_length=20)),
+                ("completed_at", models.DateTimeField(blank=True, null=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("assigned_to", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="household_tasks_assigned", to=settings.AUTH_USER_MODEL)),
+                ("created_by", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="household_tasks_created", to=settings.AUTH_USER_MODEL)),
+                ("household", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="tasks", to="platform_household.householdprofile")),
+            ],
+            options={"ordering": ("status", "due_at", "id")},
+        ),
+        migrations.CreateModel(
+            name="ShoppingItem",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("name", models.CharField(max_length=180)),
+                ("quantity", models.CharField(blank=True, max_length=40)),
+                ("category", models.CharField(choices=[("GROCERY", "Grocery"), ("HOUSEHOLD", "Household"), ("KIDS", "Kids"), ("HEALTH", "Health"), ("HOME", "Home"), ("GIFTS", "Gifts"), ("OTHER", "Other")], default="GROCERY", max_length=20)),
+                ("note", models.CharField(blank=True, max_length=240)),
+                ("is_checked", models.BooleanField(default=False)),
+                ("checked_at", models.DateTimeField(blank=True, null=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("added_by", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="household_shopping_added", to=settings.AUTH_USER_MODEL)),
+                ("checked_by", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="household_shopping_checked", to=settings.AUTH_USER_MODEL)),
+                ("household", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="shopping_items", to="platform_household.householdprofile")),
+            ],
+            options={"ordering": ("is_checked", "category", "name", "id")},
+        ),
+        migrations.CreateModel(
+            name="HouseholdGoal",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("title", models.CharField(max_length=180)),
+                ("cadence", models.CharField(choices=[("DAILY", "Daily"), ("WEEKLY", "Weekly"), ("MONTHLY", "Monthly")], default="WEEKLY", max_length=10)),
+                ("target_value", models.DecimalField(decimal_places=2, default=1, max_digits=12)),
+                ("current_value", models.DecimalField(decimal_places=2, default=0, max_digits=12)),
+                ("unit", models.CharField(blank=True, max_length=40)),
+                ("start_date", models.DateField(blank=True, null=True)),
+                ("end_date", models.DateField(blank=True, null=True)),
+                ("is_complete", models.BooleanField(default=False)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("assigned_to", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="household_goals_assigned", to=settings.AUTH_USER_MODEL)),
+                ("created_by", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="household_goals_created", to=settings.AUTH_USER_MODEL)),
+                ("household", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="goals", to="platform_household.householdprofile")),
+            ],
+        ),
+        migrations.CreateModel(
+            name="MealPlanEntry",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("date", models.DateField()),
+                ("meal_type", models.CharField(choices=[("BREAKFAST", "Breakfast"), ("LUNCH", "Lunch"), ("DINNER", "Dinner"), ("SNACK", "Snack")], max_length=12)),
+                ("title", models.CharField(max_length=180)),
+                ("notes", models.TextField(blank=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("assigned_to", models.ManyToManyField(blank=True, related_name="household_meal_assignments", to=settings.AUTH_USER_MODEL)),
+                ("created_by", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="household_meals_created", to=settings.AUTH_USER_MODEL)),
+                ("household", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="meal_plan", to="platform_household.householdprofile")),
+            ],
+            options={"ordering": ("date", "meal_type", "id")},
+        ),
+    ]
