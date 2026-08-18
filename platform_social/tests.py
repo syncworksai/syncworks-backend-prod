@@ -6,8 +6,11 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from personal_calendar.models import PersonalCalendarEvent
+
 from .models import (
     Collection,
+    EventMemberResponse,
     GroupEventInvitation,
     GroupMembership,
     SocialEvent,
@@ -130,6 +133,44 @@ class SocialApiPermissionTests(APITestCase):
             GroupEventInvitation.Status.ACCEPTED,
         )
         self.assertEqual(self.invitation.responded_by_id, self.manager.id)
+
+    def test_accepting_recurring_weather_event_creates_and_updates_member_calendar(self):
+        self.event.recurrence_rule = "RRULE:FREQ=WEEKLY;INTERVAL=1"
+        self.event.weather_dependent = True
+        self.event.weather_note = "Outdoor fields must be playable"
+        self.event.save(update_fields=("recurrence_rule", "weather_dependent", "weather_note", "updated_at"))
+
+        self.authenticate(self.manager)
+        response = self.client.post(
+            reverse("social-event-invitations-accept", args=[self.invitation.pk]),
+            {},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            EventMemberResponse.objects.filter(event=self.event, group=self.team).count(),
+            3,
+        )
+        member_calendar = PersonalCalendarEvent.objects.get(
+            owner=self.member,
+            metadata__social_event_id=self.event.id,
+        )
+        self.assertEqual(member_calendar.recurrence_rule, "RRULE:FREQ=WEEKLY;INTERVAL=1")
+        self.assertTrue(member_calendar.metadata["weather_dependent"])
+        self.assertIn("Weather permitting", member_calendar.description)
+
+        self.authenticate(self.organizer)
+        updated_start = self.event.start_at + timedelta(days=1)
+        update_response = self.client.patch(
+            reverse("social-events-detail", args=[self.event.pk]),
+            {"title": "Updated Invitational", "start_at": updated_start.isoformat()},
+            format="json",
+        )
+        self.assertEqual(update_response.status_code, status.HTTP_200_OK)
+        member_calendar.refresh_from_db()
+        self.assertEqual(member_calendar.title, "Updated Invitational")
+        self.assertEqual(member_calendar.start_at, updated_start)
+        self.assertEqual(PersonalCalendarEvent.objects.filter(owner=self.member, metadata__social_event_id=self.event.id).count(), 1)
 
     def test_plain_member_cannot_edit_collection(self):
         self.authenticate(self.member)
