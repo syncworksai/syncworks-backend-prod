@@ -75,9 +75,9 @@ class SocialEventSerializer(serializers.ModelSerializer):
         model = SocialEvent
         fields = (
             "id", "organizer_group", "created_by", "title", "description", "start_at", "end_at",
-            "timezone", "venue_name", "address_line1", "address_line2", "city", "state", "postal_code",
-            "country", "entry_amount_cents", "payment_due_at", "prizes", "rules", "flyer_url", "status",
-            "version", "invitation_count", "created_at", "updated_at",
+            "timezone", "recurrence_rule", "weather_dependent", "weather_note", "venue_name", "address_line1",
+            "address_line2", "city", "state", "postal_code", "country", "entry_amount_cents", "payment_due_at",
+            "prizes", "rules", "flyer_url", "status", "version", "invitation_count", "created_at", "updated_at",
         )
         read_only_fields = ("id", "created_by", "version", "invitation_count", "created_at", "updated_at")
 
