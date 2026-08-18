@@ -9,6 +9,7 @@ from .connection_views import (
     GoogleCalendarOAuthCallbackView,
     MicrosoftCalendarOAuthCallbackView,
 )
+from .runtime_views import CalendarRuntimeAPIView
 from .views import PersonalCalendarEventViewSet
 
 router = DefaultRouter()
@@ -21,4 +22,5 @@ urlpatterns = [
     path("connections/oauth/microsoft/callback/", MicrosoftCalendarOAuthCallbackView.as_view(), name="calendar-microsoft-callback"),
     path("connections/<str:connection_id>/", CalendarConnectionDetailView.as_view(), name="calendar-connection-detail"),
     path("connections/<str:connection_id>/sync/", CalendarConnectionSyncView.as_view(), name="calendar-connection-sync"),
+    path("runtime/run/", CalendarRuntimeAPIView.as_view(), name="calendar-runtime-run"),
 ] + router.urls
