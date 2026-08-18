@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone as dt_timezone
 
 import stripe
 from django.utils import timezone
@@ -196,6 +197,6 @@ class UserJarvisWebhookView(APIView):
                 billing.subscription_cancel_at_period_end = bool(obj.get("cancel_at_period_end"))
                 period_end = obj.get("current_period_end")
                 if period_end:
-                    billing.subscription_current_period_end = timezone.datetime.fromtimestamp(period_end, tz=timezone.utc)
+                    billing.subscription_current_period_end = datetime.fromtimestamp(period_end, tz=dt_timezone.utc)
                 billing.save()
         return Response({"received": True})
