@@ -105,6 +105,22 @@ class EventMemberResponseSerializer(serializers.ModelSerializer):
         fields = ("id", "event", "group", "user", "response", "responded_at", "created_at", "updated_at")
         read_only_fields = ("id", "user", "responded_at", "created_at", "updated_at")
 
+    def create(self, validated_data):
+        user = validated_data["user"]
+        event = validated_data["event"]
+        group = validated_data["group"]
+        defaults = {
+            "response": validated_data.get("response", EventMemberResponse.Response.PENDING),
+            "responded_at": validated_data.get("responded_at"),
+        }
+        instance, _ = EventMemberResponse.objects.update_or_create(
+            event=event,
+            group=group,
+            user=user,
+            defaults=defaults,
+        )
+        return instance
+
 
 class CollectionShareSerializer(serializers.ModelSerializer):
     user_detail = SocialUserSerializer(source="user", read_only=True)
