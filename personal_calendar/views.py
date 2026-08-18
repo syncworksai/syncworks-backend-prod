@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from .models import PersonalCalendarEvent, PersonalCalendarEventAudit
 from .serializers import PersonalCalendarEventSerializer
 from .travel_assist import TravelAssistError, build_travel_plan
+from .travel_monitor import disable_trip_monitoring, enable_trip_monitoring, refresh_monitored_trip
 
 
 class PersonalCalendarEventViewSet(viewsets.ModelViewSet):
@@ -139,3 +140,40 @@ class PersonalCalendarEventViewSet(viewsets.ModelViewSet):
                 },
             )
         return Response(plan, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="travel-monitor")
+    def travel_monitor(self, request, pk=None):
+        event = self.get_object()
+        enabled = bool(request.data.get("enabled", True))
+        try:
+            if enabled:
+                monitor = enable_trip_monitoring(
+                    event,
+                    request.data.get("latitude"),
+                    request.data.get("longitude"),
+                )
+                result = refresh_monitored_trip(event)
+            else:
+                monitor = disable_trip_monitoring(event)
+                result = {"status": "DISABLED"}
+        except TravelAssistError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+
+        PersonalCalendarEventAudit.objects.create(
+            event=event,
+            actor=request.user,
+            action=PersonalCalendarEventAudit.Action.UPDATED,
+            changes={
+                "fields": ["metadata.travel_monitor"],
+                "travel_monitor_enabled": enabled,
+            },
+        )
+        event.refresh_from_db(fields=("metadata", "updated_at"))
+        return Response(
+            {
+                "monitor": (event.metadata or {}).get("travel_monitor") or monitor,
+                "travel_assist": (event.metadata or {}).get("travel_assist"),
+                "result": result,
+            },
+            status=status.HTTP_200_OK,
+        )

@@ -8,6 +8,35 @@ from django.utils import timezone
 from personal_calendar.models import PersonalCalendarEvent
 
 
+def _travel_context(event: PersonalCalendarEvent) -> dict[str, Any]:
+    metadata = event.metadata or {}
+    plan = metadata.get("travel_assist") or {}
+    monitor = metadata.get("travel_monitor") or {}
+    route = plan.get("route") or {}
+    weather = plan.get("weather") or {}
+    alert = monitor.get("last_alert") or None
+    return {
+        "monitoring_enabled": bool(monitor.get("enabled")),
+        "last_checked_at": monitor.get("last_checked_at"),
+        "leave_by": route.get("leave_by"),
+        "drive_minutes": int(round(float(route.get("duration_seconds") or 0) / 60)) if route.get("status") == "READY" else None,
+        "traffic_delay_minutes": int(round(float(route.get("traffic_delay_seconds") or 0) / 60)) if route.get("status") == "READY" else None,
+        "weather": {
+            "status": weather.get("status"),
+            "risk": weather.get("risk"),
+            "forecast": weather.get("short_forecast"),
+            "precipitation_probability": weather.get("precipitation_probability"),
+            "temperature": weather.get("temperature"),
+            "temperature_unit": weather.get("temperature_unit"),
+        } if weather else None,
+        "alert": {
+            "severity": alert.get("severity"),
+            "messages": list(alert.get("messages") or [])[:4],
+            "created_at": alert.get("created_at"),
+        } if alert else None,
+    }
+
+
 def _event_row(event: PersonalCalendarEvent) -> dict[str, Any]:
     start = timezone.localtime(event.start_at)
     end = timezone.localtime(event.end_at) if event.end_at else None
@@ -30,6 +59,7 @@ def _event_row(event: PersonalCalendarEvent) -> dict[str, Any]:
         "arrival_buffer_minutes": int(event.arrival_buffer_minutes or 0),
         "reminder_minutes": int(event.reminder_minutes or 0),
         "ready_by": ready_by.isoformat(),
+        "travel": _travel_context(event),
     }
 
 
@@ -84,7 +114,24 @@ def build_sync_calendar_context(user) -> dict[str, Any]:
             attention.append({"code": "UPCOMING_EVENT", "minutes_until": minutes_until, "title": str(next_event.title or "")[:100]})
         if (next_event.location_name or next_event.address_line1 or next_event.city) and next_event.arrival_buffer_minutes == 0:
             attention.append({"code": "LOCATION_WITHOUT_ARRIVAL_BUFFER", "event_id": next_event.id})
+        travel = _travel_context(next_event)
+        if travel.get("alert"):
+            attention.append({
+                "code": "TRAVEL_CHANGE",
+                "event_id": next_event.id,
+                "severity": travel["alert"].get("severity"),
+                "messages": travel["alert"].get("messages"),
+            })
+        weather = travel.get("weather") or {}
+        if weather.get("risk") == "HIGH":
+            attention.append({
+                "code": "WEATHER_RISK",
+                "event_id": next_event.id,
+                "forecast": weather.get("forecast"),
+                "precipitation_probability": weather.get("precipitation_probability"),
+            })
 
+    next_travel = _travel_context(next_event) if next_event else None
     return {
         "available": True,
         "as_of": local_now.isoformat(),
@@ -94,7 +141,8 @@ def build_sync_calendar_context(user) -> dict[str, Any]:
         "conflicts": conflicts,
         "attention": attention,
         "travel_time": {
-            "available": False,
-            "note": "Drive-time and traffic calculation are not connected yet; ready_by uses only the user's configured arrival buffer.",
+            "available": bool(next_travel and next_travel.get("drive_minutes") is not None),
+            "next_event": next_travel,
+            "note": "Live traffic is only reported when a real provider result is available.",
         },
     }

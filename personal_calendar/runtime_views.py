@@ -7,10 +7,11 @@ from rest_framework.views import APIView
 
 from .github_oidc import CalendarOIDCError, verify_calendar_runtime_token
 from .sync_runner import sync_due_connections
+from .travel_monitor import refresh_due_trip_monitors
 
 
 class CalendarRuntimeAPIView(APIView):
-    """GitHub-OIDC protected entry point for unattended external calendar sync."""
+    """GitHub-OIDC protected entry point for unattended calendar + trip intelligence."""
 
     authentication_classes = []
     permission_classes = []
@@ -26,12 +27,14 @@ class CalendarRuntimeAPIView(APIView):
         except CalendarOIDCError:
             return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
 
-        result = sync_due_connections()
+        calendar_result = sync_due_connections()
+        travel_result = refresh_due_trip_monitors()
         return Response(
             {
                 "ok": True,
                 "ran_at": timezone.now().isoformat(),
                 "identity": f"github:{claims.get('run_id') or 'scheduled'}",
-                **result,
+                **calendar_result,
+                "travel_monitoring": travel_result,
             }
         )
