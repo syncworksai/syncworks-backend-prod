@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Q
@@ -6,6 +8,8 @@ from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from personal_calendar.models import PersonalCalendarEvent
 
 from .models import (
     Collection,
@@ -53,6 +57,8 @@ def managed_group_ids(user):
 
 
 def can_manage_group(user, group_id):
+    if not group_id:
+        return False
     return GroupMembership.objects.filter(
         user=user,
         group_id=group_id,
@@ -69,6 +75,113 @@ def event_is_for_group(event, group_id):
         target_group_id=group_id,
         status=GroupEventInvitation.Status.ACCEPTED,
     ).exists()
+
+
+def accepted_event_group_ids(event):
+    group_ids = set()
+    if event.organizer_group_id:
+        group_ids.add(event.organizer_group_id)
+    group_ids.update(
+        GroupEventInvitation.objects.filter(
+            event=event,
+            status=GroupEventInvitation.Status.ACCEPTED,
+        ).values_list("target_group_id", flat=True)
+    )
+    return group_ids
+
+
+def event_participant_user_ids(event):
+    group_ids = accepted_event_group_ids(event)
+    if not group_ids:
+        return {event.created_by_id}
+    return set(
+        GroupMembership.objects.filter(
+            group_id__in=group_ids,
+            status=GroupMembership.Status.ACTIVE,
+        ).values_list("user_id", flat=True)
+    )
+
+
+def social_calendar_description(event):
+    parts = [event.description.strip()] if event.description.strip() else []
+    if event.weather_dependent:
+        parts.append("Weather permitting")
+        if event.weather_note:
+            parts.append(event.weather_note)
+    if event.prizes:
+        parts.append(f"Prizes / benefits: {event.prizes}")
+    if event.rules:
+        parts.append(f"Rules / notes: {event.rules}")
+    return "\n".join(parts)
+
+
+def upsert_social_calendar_event(event, user_id, *, active=True):
+    defaults = {
+        "title": event.title,
+        "description": social_calendar_description(event),
+        "start_at": event.start_at,
+        "end_at": event.end_at,
+        "timezone": event.timezone,
+        "location_name": event.venue_name,
+        "address_line1": event.address_line1,
+        "address_line2": event.address_line2,
+        "city": event.city,
+        "state": event.state,
+        "postal_code": event.postal_code,
+        "country": event.country,
+        "recurrence_rule": event.recurrence_rule,
+        "source": PersonalCalendarEvent.Source.SYNC,
+        "created_by_sync": True,
+        "status": PersonalCalendarEvent.Status.ACTIVE if active and event.status != SocialEvent.Status.CANCELLED else PersonalCalendarEvent.Status.CANCELLED,
+        "metadata": {
+            "social_event_id": event.id,
+            "social_event_version": event.version,
+            "organizer_group_id": event.organizer_group_id,
+            "weather_dependent": event.weather_dependent,
+            "weather_note": event.weather_note,
+            "social_event_status": event.status,
+        },
+    }
+    existing = PersonalCalendarEvent.objects.filter(
+        owner_id=user_id,
+        source=PersonalCalendarEvent.Source.SYNC,
+        metadata__social_event_id=event.id,
+    ).first()
+    if existing:
+        for field, value in defaults.items():
+            setattr(existing, field, value)
+        existing.save()
+        return existing
+    return PersonalCalendarEvent.objects.create(owner_id=user_id, **defaults)
+
+
+def ensure_group_event_responses(event, group_id):
+    members = GroupMembership.objects.filter(
+        group_id=group_id,
+        status=GroupMembership.Status.ACTIVE,
+    ).values_list("user_id", flat=True)
+    for user_id in members:
+        EventMemberResponse.objects.get_or_create(
+            event=event,
+            group_id=group_id,
+            user_id=user_id,
+            defaults={"response": EventMemberResponse.Response.PENDING},
+        )
+
+
+def sync_social_event_calendars(event):
+    desired_user_ids = event_participant_user_ids(event)
+    for user_id in desired_user_ids:
+        response = EventMemberResponse.objects.filter(event=event, user_id=user_id).order_by("-updated_at").first()
+        active = not response or response.response != EventMemberResponse.Response.NO
+        upsert_social_calendar_event(event, user_id, active=active)
+    existing = PersonalCalendarEvent.objects.filter(
+        source=PersonalCalendarEvent.Source.SYNC,
+        metadata__social_event_id=event.id,
+    )
+    existing.exclude(owner_id__in=desired_user_ids).update(status=PersonalCalendarEvent.Status.ARCHIVED)
+    if event.status == SocialEvent.Status.CANCELLED:
+        existing.update(status=PersonalCalendarEvent.Status.CANCELLED)
 
 
 class PeopleViewSet(viewsets.ReadOnlyModelViewSet):
@@ -219,6 +332,14 @@ class GroupMembershipViewSet(viewsets.ModelViewSet):
             )
         membership.status = GroupMembership.Status.ACTIVE
         membership.save(update_fields=("status", "updated_at"))
+        events = SocialEvent.objects.filter(
+            Q(organizer_group=membership.group)
+            | Q(group_invitations__target_group=membership.group, group_invitations__status=GroupEventInvitation.Status.ACCEPTED),
+            status__in=(SocialEvent.Status.PUBLISHED, SocialEvent.Status.DRAFT),
+        ).distinct()
+        for event in events:
+            ensure_group_event_responses(event, membership.group_id)
+            sync_social_event_calendars(event)
         return Response(self.get_serializer(membership).data)
 
     @action(detail=True, methods=["post"])
@@ -257,7 +378,10 @@ class SocialEventViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError(
                 "You do not manage the organizer group."
             )
-        serializer.save(created_by=self.request.user)
+        event = serializer.save(created_by=self.request.user)
+        if group:
+            ensure_group_event_responses(event, group.id)
+        sync_social_event_calendars(event)
 
     def perform_update(self, serializer):
         event = self.get_object()
@@ -268,7 +392,8 @@ class SocialEventViewSet(viewsets.ModelViewSet):
         )
         if not allowed:
             raise serializers.ValidationError("You do not manage this event.")
-        serializer.save(version=event.version + 1)
+        event = serializer.save(version=event.version + 1)
+        sync_social_event_calendars(event)
 
     def perform_destroy(self, instance):
         allowed = (
@@ -281,6 +406,7 @@ class SocialEventViewSet(viewsets.ModelViewSet):
         instance.status = SocialEvent.Status.CANCELLED
         instance.version += 1
         instance.save(update_fields=("status", "version", "updated_at"))
+        sync_social_event_calendars(instance)
 
 
 class GroupEventInvitationViewSet(viewsets.ModelViewSet):
@@ -333,6 +459,9 @@ class GroupEventInvitationViewSet(viewsets.ModelViewSet):
                 "updated_at",
             )
         )
+        if value == GroupEventInvitation.Status.ACCEPTED:
+            ensure_group_event_responses(invitation.event, invitation.target_group_id)
+            sync_social_event_calendars(invitation.event)
         return Response(self.get_serializer(invitation).data)
 
     @action(detail=True, methods=["post"])
@@ -370,7 +499,8 @@ class EventMemberResponseViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError(
                 "This event has not been accepted by your group."
             )
-        serializer.save(user=self.request.user, responded_at=timezone.now())
+        response = serializer.save(user=self.request.user, responded_at=timezone.now())
+        upsert_social_calendar_event(event, self.request.user.id, active=response.response != EventMemberResponse.Response.NO)
 
     def perform_update(self, serializer):
         response = self.get_object()
@@ -378,7 +508,8 @@ class EventMemberResponseViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError(
                 "Only the member can change this response."
             )
-        serializer.save(responded_at=timezone.now())
+        response = serializer.save(responded_at=timezone.now())
+        upsert_social_calendar_event(response.event, response.user_id, active=response.response != EventMemberResponse.Response.NO)
 
 
 class CollectionViewSet(viewsets.ModelViewSet):
