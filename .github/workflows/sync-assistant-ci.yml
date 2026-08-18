@@ -1,0 +1,23 @@
+name: SYNC Assistant CI
+
+on:
+  pull_request:
+    paths:
+      - "sync_ai/**"
+      - "personal_calendar/management/commands/sync_calendar_connections.py"
+      - ".github/workflows/sync-assistant-ci.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      SECRET_KEY: test-secret-key
+      DEBUG: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python manage.py check
+      - run: python manage.py test sync_ai
