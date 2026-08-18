@@ -9,6 +9,9 @@ if "platform_edge.apps.PlatformEdgeConfig" not in INSTALLED_APPS:
 if "platform_social.apps.PlatformSocialConfig" not in INSTALLED_APPS:
     INSTALLED_APPS = [*INSTALLED_APPS, "platform_social.apps.PlatformSocialConfig"]
 
+if "platform_household.apps.PlatformHouseholdConfig" not in INSTALLED_APPS:
+    INSTALLED_APPS = [*INSTALLED_APPS, "platform_household.apps.PlatformHouseholdConfig"]
+
 EDGE_CREDENTIAL_ENCRYPTION_KEY = env("EDGE_CREDENTIAL_ENCRYPTION_KEY", "") or ""
 
 # PM requests identify the active portfolio with this custom header.
