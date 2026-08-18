@@ -49,6 +49,19 @@ class SharedTask(models.Model):
         IN_PROGRESS = "IN_PROGRESS", "In progress"
         DONE = "DONE", "Done"
         SKIPPED = "SKIPPED", "Skipped"
+        WEATHER_HOLD = "WEATHER_HOLD", "Weather hold"
+
+    class Recurrence(models.TextChoices):
+        NONE = "NONE", "Does not repeat"
+        DAILY = "DAILY", "Daily"
+        WEEKLY = "WEEKLY", "Weekly"
+        MONTHLY = "MONTHLY", "Monthly"
+
+    class WeatherStatus(models.TextChoices):
+        NOT_CHECKED = "NOT_CHECKED", "Not checked"
+        CLEAR = "CLEAR", "Weather clear"
+        WATCH = "WATCH", "Weather watch"
+        BLOCKED = "BLOCKED", "Weather blocked"
 
     household = models.ForeignKey(HouseholdProfile, on_delete=models.CASCADE, related_name="tasks")
     title = models.CharField(max_length=180)
@@ -62,6 +75,11 @@ class SharedTask(models.Model):
     requires_focus = models.BooleanField(default=False)
     can_multitask = models.BooleanField(default=True)
     location_context = models.CharField(max_length=40, blank=True)
+    recurrence = models.CharField(max_length=10, choices=Recurrence.choices, default=Recurrence.NONE)
+    recurrence_interval = models.PositiveSmallIntegerField(default=1)
+    weather_dependent = models.BooleanField(default=False)
+    weather_status = models.CharField(max_length=16, choices=WeatherStatus.choices, default=WeatherStatus.NOT_CHECKED)
+    weather_note = models.CharField(max_length=240, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
     completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
