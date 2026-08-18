@@ -1,3 +1,5 @@
+import builtins
+
 from django.conf import settings
 from django.db import models
 
@@ -82,7 +84,7 @@ class PMLead(models.Model):
             models.Index(fields=["workspace", "email"]),
         ]
 
-    @property
+    @builtins.property
     def full_name(self):
         return f"{self.first_name} {self.last_name}".strip() or self.company_name or self.email or "Lead"
 
