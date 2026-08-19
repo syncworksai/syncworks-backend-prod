@@ -7,6 +7,7 @@ from user_accounts.views.identity import (
     IdentityLocationsAPIView,
     IdentityProfileAPIView,
 )
+from user_accounts.views.identity_admin import PlatformBusinessTrustAPIView
 from user_accounts.views.location_context import ReverseCurrentLocationAPIView
 
 urlpatterns = [
@@ -16,4 +17,5 @@ urlpatterns = [
     path("current-location/", CurrentLocationContextAPIView.as_view(), name="identity-current-location"),
     path("current-location/resolve/", ReverseCurrentLocationAPIView.as_view(), name="identity-current-location-resolve"),
     path("businesses/<int:business_id>/trust/", BusinessTrustAPIView.as_view(), name="identity-business-trust"),
+    path("platform/businesses/<int:business_id>/trust/", PlatformBusinessTrustAPIView.as_view(), name="identity-platform-business-trust"),
 ]
