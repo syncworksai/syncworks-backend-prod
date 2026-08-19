@@ -26,6 +26,7 @@ def _is_platform_admin(user) -> bool:
 
 
 def _payload(business, verification):
+    checks = verification.public_checks()
     return {
         "business": {
             "id": business.id,
@@ -33,13 +34,42 @@ def _payload(business, verification):
             "business_email": business.business_email,
             "phone": business.phone,
             "owner_id": business.owner_id,
+            "city": business.city,
+            "state": business.state,
+            "website": business.website,
+            "logo_url": business.logo.url if business.logo else None,
         },
         "status": verification.status,
-        "checks": verification.public_checks(),
+        "checks": checks,
+        "verified_count": sum(1 for value in checks.values() if value),
+        "total_checks": len(checks),
         "review_notes": verification.review_notes,
         "submitted_at": verification.submitted_at.isoformat() if verification.submitted_at else None,
         "verified_at": verification.verified_at.isoformat() if verification.verified_at else None,
+        "updated_at": verification.updated_at.isoformat() if verification.updated_at else None,
+        "disclaimer": "Verification confirms only the checks shown. It is not a guarantee or endorsement of service quality.",
     }
+
+
+class PlatformBusinessVerificationQueueAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not _is_platform_admin(request.user):
+            return Response({"detail": "Platform administrator access is required."}, status=status.HTTP_403_FORBIDDEN)
+
+        status_filter = str(request.query_params.get("status") or "IN_REVIEW").upper()
+        rows = BusinessVerification.objects.select_related("business").filter(business__is_active=True)
+        allowed = {choice[0] for choice in BusinessVerification.Status.choices}
+        if status_filter != "ALL" and status_filter in allowed:
+            rows = rows.filter(status=status_filter)
+        rows = rows.order_by("-submitted_at", "-updated_at")[:250]
+        payload = [_payload(row.business, row) for row in rows]
+        counts = {
+            key: BusinessVerification.objects.filter(status=key, business__is_active=True).count()
+            for key in allowed
+        }
+        return Response({"results": payload, "counts": counts, "status": status_filter})
 
 
 class PlatformBusinessTrustAPIView(APIView):
