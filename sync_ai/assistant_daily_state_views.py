@@ -9,6 +9,7 @@ from personal_calendar.models import PersonalCalendarEvent, PersonalCalendarEven
 from user_accounts.models import AuditLog
 
 from .assistant_daily_state import build_daily_state
+from .daily_intelligence import enrich_daily_state_with_inbox
 from .jarvis_product import load_profile, save_profile, settings_for
 from .location_intelligence import geocode_address
 
@@ -40,13 +41,18 @@ class SyncAssistantDailyStateView(APIView):
 
     def get(self, request):
         _ensure_home_coordinates(request.user)
-        payload = build_daily_state(request.user)
+        payload = enrich_daily_state_with_inbox(
+            request.user,
+            build_daily_state(request.user),
+        )
         AuditLog.objects.create(
             actor=request.user,
             action="sync_assistant.daily_state.viewed",
             metadata={
                 "local_date": payload.get("local_date"),
                 "needs_attention": len(payload.get("needs_attention") or []),
+                "total_unread": (payload.get("inbox") or {}).get("total_unread", 0),
+                "high_priority_count": payload.get("high_priority_count", 0),
             },
         )
         return Response(payload)
