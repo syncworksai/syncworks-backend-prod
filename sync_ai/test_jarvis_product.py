@@ -27,7 +27,8 @@ class UserJarvisProductTests(APITestCase):
         self.assertEqual(response.data["plan"], "BASIC")
         self.assertEqual(response.data["module_catalog"][0]["id"], "marketplace")
         self.assertTrue(response.data["module_catalog"][0]["connected"])
-        self.assertEqual(response.data["live_addon"]["price"], 1.0)
+        self.assertNotIn("live_addon", response.data)
+        self.assertFalse(response.data["entitlements"]["weather_intelligence"])
 
     def test_legacy_jarvis_profile_route_still_works(self):
         self.auth()
@@ -61,6 +62,7 @@ class UserJarvisProductTests(APITestCase):
         self.assertEqual(response.data["plan"], "EXECUTIVE")
         self.assertTrue(response.data["entitlements"]["property_management"])
         self.assertTrue(response.data["entitlements"]["sync_assistant_live"])
+        self.assertTrue(response.data["entitlements"]["weather_intelligence"])
         self.assertTrue(response.data["live"]["access"])
         self.assertNotIn("god", str(response.data).lower())
 
@@ -70,6 +72,12 @@ class UserJarvisProductTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data["test_access"])
         self.assertTrue(response.data["activated"])
+        self.assertTrue(response.data["included_with_plan"])
+
+    def test_basic_live_checkout_requires_paid_assistant_plan(self):
+        self.auth()
+        response = self.client.post("/api/v1/sync-ai/assistant/billing/live/checkout/", {}, format="json")
+        self.assertEqual(response.status_code, 403)
 
     def test_check_in_and_check_out_are_available(self):
         self.auth()
@@ -89,3 +97,4 @@ class UserJarvisProductTests(APITestCase):
         self.assertFalse(response.data["email"]["available"])
         self.assertFalse(response.data["news"]["available"])
         self.assertIn("recommended_next", response.data)
+        self.assertIn("briefing_sections", response.data)
