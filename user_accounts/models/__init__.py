@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from .user import User, EmailVerificationChallenge
 from .profiles import CustomerProfile, SmallBusinessOwnerProfile, SubcontractorProfile
+from .identity import PersonalIdentity, UserLocation, BusinessVerification
 from .audit import AuditLog
 from .notifications import Notification, PlatformNewsItem
 from .categories import ServiceCategory
@@ -101,6 +102,7 @@ except Exception:
 
 __all__ = [
     "User", "EmailVerificationChallenge", "CustomerProfile", "SmallBusinessOwnerProfile", "SubcontractorProfile",
+    "PersonalIdentity", "UserLocation", "BusinessVerification",
     "AuditLog", "Notification", "PlatformNewsItem", "ServiceCategory", "BusinessCategory", "Business",
     "BusinessMember", "BusinessMemberRole", "ServiceCatalogItem", "BusinessCustomer", "BusinessDataImport",
     "BusinessProject", "BusinessPartnerRelationship", "PartnerWorkTicket", "PartnerWorkChangeOrder",
