@@ -1,5 +1,6 @@
 from django.urls import path
 
+from .assistant_connection_views import SyncAssistantGeocodeView, SyncAssistantInboxStateView
 from .assistant_daily_state_views import SyncAssistantDailyStateView, SyncAssistantDepartureReminderView
 from .briefing_views import SyncGodModeBriefingView, SyncRoleAwareBriefingView
 from .jarvis_product_views import (
@@ -25,6 +26,8 @@ urlpatterns = [
     path("assistant/check-in/", UserJarvisCheckInView.as_view(), name="sync-assistant-check-in"),
     path("assistant/check-out/", UserJarvisCheckOutView.as_view(), name="sync-assistant-check-out"),
     path("assistant/daily-state/", SyncAssistantDailyStateView.as_view(), name="sync-assistant-daily-state"),
+    path("assistant/location/geocode/", SyncAssistantGeocodeView.as_view(), name="sync-assistant-geocode"),
+    path("assistant/inbox-state/", SyncAssistantInboxStateView.as_view(), name="sync-assistant-inbox-state"),
     path("assistant/calendar/<int:event_id>/departure-reminder/", SyncAssistantDepartureReminderView.as_view(), name="sync-assistant-departure-reminder"),
     path("assistant/billing/checkout/", UserJarvisCheckoutView.as_view(), name="sync-assistant-checkout"),
     path("assistant/billing/live/checkout/", UserSyncAssistantLiveCheckoutView.as_view(), name="sync-assistant-live-checkout"),

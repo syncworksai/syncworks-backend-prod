@@ -8,6 +8,7 @@ from .connection_store import decrypt_credentials, encrypt_credentials, next_syn
 from .google_calendar_events import import_events as import_google_events
 from .microsoft_calendar_events import import_events as import_microsoft_events
 from .mail_service import import_microsoft_mail
+from .personal_mail_service import fetch_microsoft_personal_snapshot
 
 
 def _expired(credentials):
@@ -64,11 +65,15 @@ def connection_access_token(user, connection):
 def sync_connection(user, connection):
     try:
         token, credentials = connection_access_token(user, connection)
+        personal_snapshot = None
         if connection.get("provider") == "GOOGLE":
             imported = import_google_events(user, connection, token)
             mail_result = {"processed": 0, "leads": 0, "pm_messages": 0, "ignored": 0}
         elif connection.get("provider") == "MICROSOFT":
             imported = import_microsoft_events(user, connection, token)
+            destinations = {str(v).upper() for v in connection.get("mail_destinations") or []}
+            if connection.get("mail_enabled") and "PERSONAL" in destinations:
+                personal_snapshot = fetch_microsoft_personal_snapshot(connection, token)
             mail_result = import_microsoft_mail(user, connection, token) if connection.get("mail_enabled") else {"processed": 0, "leads": 0, "pm_messages": 0, "ignored": 0}
         else:
             raise RuntimeError("This calendar provider is not syncable yet.")
@@ -81,8 +86,10 @@ def sync_connection(user, connection):
         }
         if connection.get("mail_enabled") and connection.get("provider") == "MICROSOFT":
             changes.update({"mail_last_synced_at": now, "mail_last_error": ""})
+            if personal_snapshot is not None:
+                changes["mail_snapshot"] = personal_snapshot
         update_connection(user, connection["id"], changes)
-        return {"ok": True, "imported": imported, "mail": mail_result, "last_synced_at": now}
+        return {"ok": True, "imported": imported, "mail": mail_result, "personal_mail": personal_snapshot or {}, "last_synced_at": now}
     except Exception as exc:
         changes = {
             "last_error": str(exc)[:500],
@@ -91,4 +98,4 @@ def sync_connection(user, connection):
         if connection.get("mail_enabled"):
             changes["mail_last_error"] = str(exc)[:500]
         update_connection(user, connection["id"], changes)
-        return {"ok": False, "imported": 0, "mail": {"processed": 0, "leads": 0, "pm_messages": 0, "ignored": 0}, "detail": str(exc)[:500]}
+        return {"ok": False, "imported": 0, "mail": {"processed": 0, "leads": 0, "pm_messages": 0, "ignored": 0}, "personal_mail": {}, "detail": str(exc)[:500]}
