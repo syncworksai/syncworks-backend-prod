@@ -11,7 +11,7 @@ from rest_framework.views import APIView
 
 from user_accounts.models import AuditLog, User, UserBillingProfile
 
-from .jarvis_product import live_access, load_profile, product_payload, save_profile
+from .jarvis_product import is_test_access, live_access, load_profile, product_payload, save_profile
 
 PRICE_ENV = {
     "PERSONAL": "STRIPE_JARVIS_PERSONAL_PRICE_ID",
@@ -100,7 +100,12 @@ class UserSyncAssistantLiveCheckoutView(APIView):
         _, profile = load_profile(request.user)
         if live_access(request.user, profile):
             save_profile(request.user, {"live": {"enabled": True}})
-            return Response({"activated": True, "included_with_plan": True, "profile": product_payload(request.user)})
+            return Response({
+                "activated": True,
+                "included_with_plan": True,
+                "test_access": is_test_access(request.user),
+                "profile": product_payload(request.user),
+            })
         return Response({"detail": "Weather, traffic, news and sports intelligence are included with Personal, Family or Executive SYNC Assistant plans."}, status=403)
 
 
@@ -140,8 +145,6 @@ class UserJarvisWebhookView(APIView):
         except User.DoesNotExist:
             return Response({"received": True})
 
-        # Old ASSISTANT_LIVE events may still arrive from Stripe history. They
-        # are acknowledged but no longer control an independent entitlement.
         legacy_live = metadata.get("sync_addon") == "LIVE" or metadata.get("sync_product") == "ASSISTANT_LIVE"
         if legacy_live:
             return Response({"received": True, "legacy_live": True})
