@@ -9,12 +9,37 @@ from personal_calendar.models import PersonalCalendarEvent, PersonalCalendarEven
 from user_accounts.models import AuditLog
 
 from .assistant_daily_state import build_daily_state
+from .jarvis_product import load_profile, save_profile, settings_for
+from .location_intelligence import geocode_address
+
+
+def _ensure_home_coordinates(user):
+    settings = settings_for(user)
+    _, profile = load_profile(user)
+    home = profile.get("home_location") or {}
+    if home.get("latitude") is not None and home.get("longitude") is not None:
+        return
+    address = str(home.get("label") or settings.default_address or settings.default_zip or "").strip()
+    if not address:
+        return
+    result = geocode_address(address)
+    if not result.get("available"):
+        return
+    save_profile(user, {
+        "home_location": {
+            "label": result["label"],
+            "latitude": result["latitude"],
+            "longitude": result["longitude"],
+            "place_id": result.get("place_id") or "",
+        }
+    })
 
 
 class SyncAssistantDailyStateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        _ensure_home_coordinates(request.user)
         payload = build_daily_state(request.user)
         AuditLog.objects.create(
             actor=request.user,
