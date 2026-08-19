@@ -11,10 +11,7 @@ from user_accounts.models import Business, BusinessMember, CustomerSettings, PMP
 TEST_EMAILS = {"jacoblord7@outlook.com"}
 
 DEFAULT_LIVE = {
-    "enabled": False,
-    "access": False,
-    "subscription_status": "inactive",
-    "subscription_id": "",
+    "enabled": True,
     "weather_enabled": True,
     "weather_alerts": True,
     "travel_weather": True,
@@ -47,18 +44,10 @@ DEFAULT_PROFILE = {
 
 PLANS = [
     {"id": "BASIC", "name": "Basic", "price": 0, "description": "Marketplace search, service requests, manual schedule and tasks, and a limited briefing."},
-    {"id": "PERSONAL", "name": "Personal AI", "price": 12.99, "description": "Voice briefings, overnight preparation, calendar intelligence, Health, Money, and future email intelligence."},
-    {"id": "FAMILY", "name": "Family", "price": 22.99, "description": "Personal AI plus shared schedules, household coordination, and family alerts."},
-    {"id": "EXECUTIVE", "name": "Executive", "price": 34.99, "description": "Multiple businesses, rental properties, affiliates, deeper reports, and approved actions."},
+    {"id": "PERSONAL", "name": "Personal AI", "price": 12.99, "description": "Voice briefings, weather and travel intelligence, calendar intelligence, Health, Money, and email intelligence as connections are enabled."},
+    {"id": "FAMILY", "name": "Family", "price": 22.99, "description": "Personal AI plus shared schedules, household coordination, family alerts, weather and travel intelligence."},
+    {"id": "EXECUTIVE", "name": "Executive", "price": 34.99, "description": "Multiple businesses, rental properties, affiliates, deeper reports, weather/travel intelligence, and approved actions."},
 ]
-
-LIVE_ADDON = {
-    "id": "LIVE",
-    "name": "SYNC Assistant Live",
-    "price": 1.00,
-    "billing": "monthly",
-    "description": "Personalized weather, severe-weather alerts, sports, news intelligence, and travel-aware updates that matter to your day.",
-}
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -109,12 +98,14 @@ def effective_plan(user, profile: dict) -> str:
 
 
 def live_access(user, profile: dict) -> bool:
-    return is_test_access(user) or bool((profile.get("live") or {}).get("access"))
+    """Weather, traffic, sports and future news are included in paid Assistant plans."""
+    return is_test_access(user) or effective_plan(user, profile) in {"PERSONAL", "FAMILY", "EXECUTIVE"}
 
 
 def entitlements(user, profile: dict) -> dict:
     plan = effective_plan(user, profile)
     paid = plan != "BASIC"
+    live = live_access(user, profile)
     return {
         "plan": plan,
         "test_access": is_test_access(user),
@@ -128,7 +119,12 @@ def entitlements(user, profile: dict) -> dict:
         "property_management": plan == "EXECUTIVE",
         "family": plan in {"FAMILY", "EXECUTIVE"},
         "approved_actions": paid,
-        "sync_assistant_live": live_access(user, profile),
+        "weather_intelligence": live,
+        "travel_intelligence": live,
+        "news_intelligence": live,
+        "sports_intelligence": live,
+        # Compatibility key for clients released before Live was folded into plans.
+        "sync_assistant_live": live,
     }
 
 
@@ -143,8 +139,8 @@ def module_catalog(user, profile: dict) -> list[dict]:
     property_count = PMProperty.objects.filter(business_id__in=businesses.values_list("id", flat=True)).count()
     rows = [
         ("marketplace", "Local services", True, "/customer/new-request", "Find an optometrist, notary, HVAC company, or submit a repair request."),
-        ("calendar", "Calendar", bool(configured.get("calendar")), "/customer/calendar", "Organize the day, conflicts, and departure reminders."),
-        ("email", "Email", bool(configured.get("email")), "/upgrade?product=assistant&step=connections", "Surface important Gmail and Outlook messages in the next connection build."),
+        ("calendar", "Calendar", bool(configured.get("calendar")), "/customer/calendar", "Organize the day, conflicts, traffic-aware departure times, and reminders."),
+        ("email", "Email", bool(configured.get("email")), "/customer/settings", "Surface important Gmail and Outlook messages as email connections are enabled."),
         ("health", "Health", bool(configured.get("health")), "/customer/health", "Include workouts, nutrition, sleep, and recovery."),
         ("money", "Money", bool(configured.get("money")), "/customer/finance", "Include balances, bills, liabilities, and financial priorities."),
         ("business", "Businesses", businesses.exists(), "/sbo", "Track tickets, team assignments, payments, leads, and operations."),
@@ -169,9 +165,12 @@ def product_payload(user) -> dict:
     settings, profile = load_profile(user)
     billing, _ = UserBillingProfile.objects.get_or_create(user=user)
     live = _deep_merge(DEFAULT_LIVE, profile.get("live") or {})
+    access = live_access(user, profile)
+    live["access"] = access
+    live["included_with_plan"] = access
     if is_test_access(user):
-        live.update({"access": True, "enabled": True, "subscription_status": "test_access"})
-    home = profile.get("home_location") or {}
+        live.update({"enabled": True, "access": True, "included_with_plan": True})
+    home = deepcopy(profile.get("home_location") or {})
     if not home.get("label"):
         home["label"] = settings.default_address or settings.default_zip or ""
     return {
@@ -185,7 +184,6 @@ def product_payload(user) -> dict:
         "entitlements": entitlements(user, profile),
         "module_catalog": module_catalog(user, profile),
         "plans": PLANS,
-        "live_addon": LIVE_ADDON,
         "billing": {
             "subscription_status": billing.subscription_status or "free",
             "stripe_customer_ready": bool(billing.stripe_customer_id),
