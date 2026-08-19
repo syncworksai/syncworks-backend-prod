@@ -35,7 +35,10 @@ def route_minutes(origin: dict[str, Any] | None, destination: dict[str, Any] | N
     end = _coords(destination)
     if not start or not end:
         return {"available": False, "reason": "COORDINATES_REQUIRED"}
-    api_key = (os.getenv("GOOGLE_MAPS_API_KEY") or "").strip()
+    # GOOGLE_MAPS_SERVER_API_KEY is the production server-only key used by the
+    # Personal Calendar travel engine. Keep the older name as a compatibility
+    # fallback so existing Render environments continue to work.
+    api_key = (os.getenv("GOOGLE_MAPS_SERVER_API_KEY") or os.getenv("GOOGLE_MAPS_API_KEY") or "").strip()
     if not api_key:
         return {"available": False, "reason": "ROUTES_NOT_CONFIGURED"}
     payload = {
