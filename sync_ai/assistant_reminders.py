@@ -16,6 +16,12 @@ def _clock(value):
     return local.strftime("%I:%M %p").lstrip("0")
 
 
+def _departure_alerts_enabled(profile):
+    modules = profile.get("modules") if isinstance(profile.get("modules"), dict) else {}
+    proactive = modules.get("sync_proactive") if isinstance(modules.get("sync_proactive"), dict) else {}
+    return proactive.get("enabled", True) is not False and proactive.get("departure_alerts", True) is not False
+
+
 def process_departure_reminders() -> dict:
     now = timezone.now()
     scanned = sent = skipped = 0
@@ -30,7 +36,7 @@ def process_departure_reminders() -> dict:
             continue
         scanned += 1
         _, profile = load_profile(event.owner)
-        if not live_access(event.owner, profile):
+        if not live_access(event.owner, profile) or not _departure_alerts_enabled(profile):
             skipped += 1
             continue
         home = profile.get("home_location") or {}
