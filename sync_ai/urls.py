@@ -12,7 +12,7 @@ from .jarvis_product_views import (
     UserJarvisWebhookView,
     UserSyncAssistantLiveCheckoutView,
 )
-from .notification_views import SyncNotificationSettingsView, SyncPushDeviceView
+from .notification_views import SyncNotificationRefreshView, SyncNotificationSettingsView, SyncPushDeviceView
 from .views import SyncAIActionDraftView, SyncAIChatView, SyncAIStatusView, SyncAITicketReplyExecuteView
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
@@ -30,6 +30,7 @@ urlpatterns = [
     path("assistant/location/geocode/", SyncAssistantGeocodeView.as_view(), name="sync-assistant-geocode"),
     path("assistant/inbox-state/", SyncAssistantInboxStateView.as_view(), name="sync-assistant-inbox-state"),
     path("assistant/notifications/", SyncNotificationSettingsView.as_view(), name="sync-assistant-notifications"),
+    path("assistant/notifications/refresh/", SyncNotificationRefreshView.as_view(), name="sync-assistant-notifications-refresh"),
     path("assistant/notifications/device/", SyncPushDeviceView.as_view(), name="sync-assistant-push-device"),
     path("assistant/calendar/<int:event_id>/departure-reminder/", SyncAssistantDepartureReminderView.as_view(), name="sync-assistant-departure-reminder"),
     path("assistant/billing/checkout/", UserJarvisCheckoutView.as_view(), name="sync-assistant-checkout"),
