@@ -11,7 +11,7 @@ from rest_framework.views import APIView
 from user_accounts.models import CommunicationPreference
 
 from .jarvis_product import load_profile, save_profile
-from .notification_engine import notification_settings_payload
+from .notification_engine import notification_settings_payload, process_user_notifications
 
 
 def _personal_preference(user):
@@ -89,6 +89,14 @@ class SyncNotificationSettingsView(APIView):
             save_profile(request.user, {"modules": {"sync_proactive": {**current, **proactive}}})
 
         return Response(notification_settings_payload(request.user))
+
+
+class SyncNotificationRefreshView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        result = process_user_notifications(request.user)
+        return Response({"ok": True, **result})
 
 
 class SyncPushDeviceView(APIView):
