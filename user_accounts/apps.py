@@ -9,3 +9,4 @@ class UserAccountsConfig(AppConfig):
         # Ensures signal handlers and God Mode live-user controls register.
         import user_accounts.signals  # noqa: F401
         import user_accounts.platform_user_live_patch  # noqa: F401
+        import user_accounts.platform_build_backlog_patch  # noqa: F401
