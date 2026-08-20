@@ -33,6 +33,7 @@ from .partner_billing import PartnerInvoice, PartnerPayment, PartnerPaymentAlloc
 from .service_requests import ServiceRequest, ServiceRequestPhoto
 from .tickets import Ticket, TicketMessage, TicketAttachment, TicketQuote, TicketViewEvent
 from .billing import Invoice, InvoiceLineItem
+from .invoice_experience import InvoiceEvent
 from .cash_fee_invoice import CashFeeInvoice
 from .connections import Connection
 from .invites import InviteCode
@@ -112,7 +113,7 @@ __all__ = [
     "BusinessProject", "BusinessPartnerRelationship", "PartnerWorkTicket", "PartnerWorkChangeOrder",
     "PartnerPaymentAllocation", "PartnerPayment", "PartnerInvoice", "PartnerWorkEstimate", "BusinessPartnerInvitation",
     "ServiceRequest", "ServiceRequestPhoto", "Ticket", "TicketMessage", "TicketAttachment", "TicketQuote",
-    "TicketViewEvent", "Invoice", "InvoiceLineItem", "CashFeeInvoice", "Connection", "InviteCode", "DocumentTemplate",
+    "TicketViewEvent", "Invoice", "InvoiceLineItem", "InvoiceEvent", "CashFeeInvoice", "Connection", "InviteCode", "DocumentTemplate",
     "PlatformBillingProfile", "MonthlyPlatformBill", "UserBillingProfile", "PromoCode", "PromoRedemption",
     "PlatformDailyKpi", "BusinessDailyKpi", "MarketplaceCellDailyKpi", "CustomerSettings", "CommunicationPreference",
     "TicketConversationReadState", "TicketAssetLink", "AssetIdentifier", "TrackableAsset", "ResourceMovement",
