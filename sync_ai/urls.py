@@ -26,6 +26,7 @@ from .professional_services_views import (
     ProfessionalResourceDetailView,
     ProfessionalResourcesView,
 )
+from .workforce_views import BusinessOperationsSummaryView, BusinessWorkforceView, TicketOperationsView
 from .views import SyncAIActionDraftView, SyncAIChatView, SyncAIStatusView, SyncAITicketReplyExecuteView
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
@@ -35,6 +36,11 @@ urlpatterns = [
     path("local-intelligence/", SyncLocalIntelligenceView.as_view(), name="sync-local-intelligence"),
     path("briefing/", SyncRoleAwareBriefingView.as_view(), name="sync-role-aware-briefing"),
     path("briefing/god-mode/", SyncGodModeBriefingView.as_view(), name="sync-god-mode-briefing"),
+
+    # Unified Business workforce + work/SLA foundation.
+    path("business/workforce/", BusinessWorkforceView.as_view(), name="sync-business-workforce"),
+    path("business/operations/summary/", BusinessOperationsSummaryView.as_view(), name="sync-business-operations-summary"),
+    path("business/tickets/<int:ticket_id>/operations/", TicketOperationsView.as_view(), name="sync-business-ticket-operations"),
 
     # Professional / appointment-based business foundation.
     path("professional/discover/", ProfessionalDiscoveryView.as_view(), name="professional-discover"),

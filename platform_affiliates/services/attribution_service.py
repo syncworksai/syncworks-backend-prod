@@ -7,7 +7,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from platform_affiliates.choices import AttributionSource
-from platform_affiliates.models import AffiliateAuditLog, AffiliatePartner, ReferralAttribution
+from platform_affiliates.models import AffiliateAuditLog, AffiliatePartner, PersonalReferralAttribution, ReferralAttribution
 from platform_affiliates.services.notification_service import notify_affiliate_business_attributed
 from user_accounts.models import Business
 
@@ -22,10 +22,23 @@ def get_client_ip(request) -> str | None:
 def snapshot_attribution(attribution: ReferralAttribution | None) -> dict[str, Any]:
     if not attribution:
         return {}
-
     return {
         "id": attribution.id,
         "business_id": attribution.business_id,
+        "affiliate_id": attribution.affiliate_id,
+        "referral_code": attribution.referral_code,
+        "attribution_source": attribution.attribution_source,
+        "effective_from": attribution.effective_from.isoformat() if attribution.effective_from else None,
+        "retroactive": attribution.retroactive,
+    }
+
+
+def snapshot_personal_attribution(attribution: PersonalReferralAttribution | None) -> dict[str, Any]:
+    if not attribution:
+        return {}
+    return {
+        "id": attribution.id,
+        "user_id": attribution.user_id,
         "affiliate_id": attribution.affiliate_id,
         "referral_code": attribution.referral_code,
         "attribution_source": attribution.attribution_source,
@@ -76,5 +89,41 @@ def assign_business_to_affiliate(
             referral_code=affiliate.code,
         )
     )
+    return attribution
 
+
+@transaction.atomic
+def assign_user_to_affiliate(
+    *,
+    user,
+    affiliate: AffiliatePartner,
+    actor=None,
+    source: str = AttributionSource.LINK,
+    reason: str = "",
+    effective_from=None,
+    retroactive: bool = False,
+) -> PersonalReferralAttribution:
+    """Lock one lifetime affiliate attribution to a Personal SyncWorks account."""
+    if PersonalReferralAttribution.objects.filter(user=user).exists():
+        raise ValidationError({"user_id": "This user already has an affiliate attribution."})
+
+    attribution = PersonalReferralAttribution.objects.create(
+        user=user,
+        affiliate=affiliate,
+        referral_code=affiliate.code,
+        attribution_source=source,
+        assigned_by=actor if getattr(actor, "is_authenticated", False) else None,
+        admin_note=reason or "",
+        effective_from=effective_from or timezone.localdate(),
+        retroactive=bool(retroactive),
+    )
+
+    AffiliateAuditLog.objects.create(
+        actor=actor if getattr(actor, "is_authenticated", False) else None,
+        affiliate=affiliate,
+        action="AFFILIATE_PERSONAL_USER_ASSIGNED",
+        before_json={},
+        after_json=snapshot_personal_attribution(attribution),
+        note=reason or "",
+    )
     return attribution

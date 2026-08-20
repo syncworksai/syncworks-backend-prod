@@ -21,6 +21,7 @@ from .notifications import Notification, PlatformNewsItem
 from .categories import ServiceCategory
 from .business import Business, BusinessMember, BusinessCategory, BusinessMemberRole
 from .professional_services import ProfessionalPracticeProfile, ProfessionalProvider, ProfessionalResource, ProfessionalAppointment
+from .workforce import WorkforceProfile, TicketOperationalProfile
 from .service_catalog import ServiceCatalogItem
 from .business_customers import BusinessCustomer
 from .data_imports import BusinessDataImport
@@ -106,6 +107,7 @@ __all__ = [
     "PersonalIdentity", "UserLocation", "BusinessVerification",
     "AuditLog", "Notification", "PlatformNewsItem", "ServiceCategory", "BusinessCategory", "Business",
     "BusinessMember", "BusinessMemberRole", "ProfessionalPracticeProfile", "ProfessionalProvider", "ProfessionalResource", "ProfessionalAppointment",
+    "WorkforceProfile", "TicketOperationalProfile",
     "ServiceCatalogItem", "BusinessCustomer", "BusinessDataImport",
     "BusinessProject", "BusinessPartnerRelationship", "PartnerWorkTicket", "PartnerWorkChangeOrder",
     "PartnerPaymentAllocation", "PartnerPayment", "PartnerInvoice", "PartnerWorkEstimate", "BusinessPartnerInvitation",
