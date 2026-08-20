@@ -14,6 +14,13 @@ from .jarvis_product_views import (
 )
 from .local_intelligence_views import SyncLocalIntelligenceView
 from .notification_views import SyncNotificationRefreshView, SyncNotificationSettingsView, SyncPushDeviceView
+from .professional_services_views import (
+    BusinessProfessionalAppointmentsView,
+    CustomerProfessionalAppointmentResponseView,
+    CustomerProfessionalAppointmentsView,
+    ProfessionalDiscoveryView,
+    ProfessionalPracticeSettingsView,
+)
 from .views import SyncAIActionDraftView, SyncAIChatView, SyncAIStatusView, SyncAITicketReplyExecuteView
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
@@ -23,6 +30,13 @@ urlpatterns = [
     path("local-intelligence/", SyncLocalIntelligenceView.as_view(), name="sync-local-intelligence"),
     path("briefing/", SyncRoleAwareBriefingView.as_view(), name="sync-role-aware-briefing"),
     path("briefing/god-mode/", SyncGodModeBriefingView.as_view(), name="sync-god-mode-briefing"),
+
+    # Professional / appointment-based business foundation.
+    path("professional/discover/", ProfessionalDiscoveryView.as_view(), name="professional-discover"),
+    path("professional/business/practice/", ProfessionalPracticeSettingsView.as_view(), name="professional-business-practice"),
+    path("professional/business/appointments/", BusinessProfessionalAppointmentsView.as_view(), name="professional-business-appointments"),
+    path("professional/customer/appointments/", CustomerProfessionalAppointmentsView.as_view(), name="professional-customer-appointments"),
+    path("professional/customer/appointments/<int:appointment_id>/respond/", CustomerProfessionalAppointmentResponseView.as_view(), name="professional-customer-appointment-respond"),
 
     # Preferred customer-facing SYNC Assistant routes.
     path("assistant/profile/", UserJarvisProfileView.as_view(), name="sync-assistant-profile"),
