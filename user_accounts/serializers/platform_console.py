@@ -55,6 +55,8 @@ class PlatformUserSerializer(serializers.ModelSerializer):
         return getattr(obj, "role", None)
 
     def get_is_platform_admin(self, obj):
+        # Informational only. God Mode authorization is controlled separately by
+        # user_accounts.services.god_mode.is_god_mode().
         return bool(getattr(obj, "is_platform_admin", False) or obj.is_superuser)
 
     def get_display_name(self, obj):
@@ -119,7 +121,8 @@ class PlatformUserSerializer(serializers.ModelSerializer):
             "customers_brought": brought,
             "customers_supplied_by_syncworks": supplied,
             "platform_revenue_cents": max(0, int(collected * 100)),
-            "source": "production_records",
+            "customer_source": "business_customer_record_source",
+            "revenue_source": "collected_invoice_platform_fees",
         }
 
     def get_billing_summary(self, obj):
