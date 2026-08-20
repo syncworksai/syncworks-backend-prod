@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 
 import requests
@@ -37,23 +38,83 @@ def _ensure_coordinates(location: dict | None) -> dict | None:
     resolved = geocode_address(address)
     if not resolved.get("available"):
         return location
-    return {**location, "latitude": resolved.get("latitude"), "longitude": resolved.get("longitude"), "label": resolved.get("label") or location.get("label")}
+    return {
+        **location,
+        "latitude": resolved.get("latitude"),
+        "longitude": resolved.get("longitude"),
+        "label": resolved.get("label") or location.get("label"),
+    }
 
 
-def _place_row(item: dict) -> dict:
+def _distance_miles(lat1, lng1, lat2, lng2):
+    if None in (lat1, lng1, lat2, lng2):
+        return None
+    try:
+        phi1 = math.radians(float(lat1))
+        phi2 = math.radians(float(lat2))
+        dphi = math.radians(float(lat2) - float(lat1))
+        dlambda = math.radians(float(lng2) - float(lng1))
+        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        miles = 3958.7613 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        return round(miles, 1)
+    except (TypeError, ValueError):
+        return None
+
+
+def _place_row(item: dict, origin: dict | None = None) -> dict:
     geometry = ((item.get("geometry") or {}).get("location") or {})
+    rating = item.get("rating")
+    reviews = item.get("user_ratings_total") or 0
+    open_now = ((item.get("opening_hours") or {}).get("open_now"))
+    distance = _distance_miles(
+        (origin or {}).get("latitude"),
+        (origin or {}).get("longitude"),
+        geometry.get("lat"),
+        geometry.get("lng"),
+    )
+
+    score = 0.0
+    if rating is not None:
+        score += max(0.0, min(float(rating), 5.0)) * 14
+    score += min(math.log10(max(int(reviews), 1)) * 8, 28)
+    if open_now is True:
+        score += 12
+    elif open_now is False:
+        score -= 8
+    if distance is not None:
+        score += max(0, 18 - min(distance, 18))
+    score = round(max(0, min(score, 100)), 1)
+
+    reasons = []
+    if open_now is True:
+        reasons.append("Open now")
+    if rating is not None and float(rating) >= 4.5:
+        reasons.append("Highly rated")
+    elif rating is not None and float(rating) >= 4.0:
+        reasons.append("Well rated")
+    if reviews >= 250:
+        reasons.append("Popular")
+    if distance is not None:
+        if distance <= 2:
+            reasons.append("Very close")
+        elif distance <= 5:
+            reasons.append("Nearby")
+
     return {
         "place_id": item.get("place_id") or "",
         "name": item.get("name") or "",
         "address": item.get("formatted_address") or item.get("vicinity") or "",
-        "rating": item.get("rating"),
-        "user_ratings_total": item.get("user_ratings_total") or 0,
+        "rating": rating,
+        "user_ratings_total": reviews,
         "price_level": item.get("price_level"),
-        "open_now": ((item.get("opening_hours") or {}).get("open_now")),
+        "open_now": open_now,
         "types": item.get("types") or [],
         "latitude": geometry.get("lat"),
         "longitude": geometry.get("lng"),
         "business_status": item.get("business_status") or "",
+        "distance_miles": distance,
+        "sync_score": score,
+        "why": reasons[:3],
     }
 
 
@@ -89,13 +150,30 @@ def search_places(query: str, location: dict, radius_meters: int = 12000) -> dic
                 "detail": str(payload.get("error_message") or "")[:180],
                 "results": [],
             }
+
+        rows = [_place_row(item, location) for item in (payload.get("results") or [])[:20]]
+        rows.sort(key=lambda item: (item.get("sync_score") or 0, item.get("user_ratings_total") or 0), reverse=True)
+        for index, row in enumerate(rows):
+            row["rank"] = index + 1
+            row["recommended"] = index == 0 and bool(rows)
+
         return {
             "available": True,
             "provider": "GOOGLE_PLACES",
-            "results": [_place_row(item) for item in (payload.get("results") or [])[:20]],
+            "results": rows,
+            "decision": {
+                "recommended_place_id": rows[0].get("place_id") if rows else "",
+                "recommended_name": rows[0].get("name") if rows else "",
+                "reason": "SYNC ranks nearby results using distance, rating, popularity, and whether the place is open now.",
+            },
         }
     except (requests.RequestException, TypeError, ValueError) as exc:
-        return {"available": False, "reason": "PLACES_PROVIDER_ERROR", "detail": str(exc)[:180], "results": []}
+        return {
+            "available": False,
+            "reason": "PLACES_PROVIDER_ERROR",
+            "detail": str(exc)[:180],
+            "results": [],
+        }
 
 
 class LocalDiscoveryAPIView(APIView):
