@@ -86,8 +86,8 @@ class ProfessionalAppointment(models.Model):
     class Meta:
         ordering = ["-proposed_start", "-created_at"]
         indexes = [
-            models.Index(fields=["business", "status"]),
-            models.Index(fields=["customer", "status"]),
+            models.Index(fields=["business", "status"], name="ua_prof_biz_status_idx"),
+            models.Index(fields=["customer", "status"], name="ua_prof_cust_status_idx"),
         ]
 
     def mark_response(self, new_status: str) -> None:
