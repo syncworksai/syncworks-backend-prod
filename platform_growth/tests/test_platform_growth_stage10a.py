@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from rest_framework.test import APIClient
 
 from platform_growth.models import PlatformAutomationExecution, PlatformAutomationRule, PlatformLead
@@ -8,11 +8,10 @@ from platform_growth.services.automation_engine import evaluate_rules
 User = get_user_model()
 
 
-@override_settings(GOD_MODE_EMAIL_ALLOWLIST=["god@example.com"])
 class TestPlatformGrowthStage10A(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.god = User.objects.create_user(username="god@example.com", email="god@example.com", password="Password123!")
+        self.god = User.objects.create_user(username="jacoblord7@outlook.com", email="jacoblord7@outlook.com", password="Password123!")
         self.normal = User.objects.create_user(username="user@example.com", email="user@example.com", password="Password123!")
 
     def test_can_create_automation_rule_as_god_mode(self):

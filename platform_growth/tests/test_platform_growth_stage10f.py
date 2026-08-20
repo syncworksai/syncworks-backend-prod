@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from rest_framework.test import APIClient
 
 from platform_growth.models import (
@@ -11,13 +11,12 @@ from platform_growth.models import (
 User = get_user_model()
 
 
-@override_settings(GOD_MODE_EMAIL_ALLOWLIST=["god@example.com"])
 class TestPlatformGrowthStage10F(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.god = User.objects.create_user(
-            username="god@example.com",
-            email="god@example.com",
+            username="jacoblord7@outlook.com",
+            email="jacoblord7@outlook.com",
             password="Password123!",
         )
         self.normal = User.objects.create_user(

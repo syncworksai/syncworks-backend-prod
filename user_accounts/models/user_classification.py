@@ -15,25 +15,11 @@ class PlatformUserClassification(models.Model):
         BILLING_RESTRICTED = "BILLING_RESTRICTED", "Billing restricted"
         SUSPENDED = "SUSPENDED", "Suspended"
 
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="platform_classification",
-    )
-    kind = models.CharField(
-        max_length=32,
-        choices=Kind.choices,
-        default=Kind.UNCLASSIFIED,
-        db_index=True,
-    )
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="platform_classification")
+    kind = models.CharField(max_length=32, choices=Kind.choices, default=Kind.UNCLASSIFIED, db_index=True)
     note = models.TextField(blank=True)
-    classified_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="platform_user_classifications_made",
-    )
+    intelligence = models.JSONField(default=dict, blank=True, help_text="God Mode management metadata: roles, modules, subscriptions, acquisition and manual attribution. Verified financial/customer value is computed from production records instead.")
+    classified_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="platform_user_classifications_made")
     classified_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
