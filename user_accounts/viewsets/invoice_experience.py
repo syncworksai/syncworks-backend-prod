@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
-from django.db.models import Q
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -169,7 +169,7 @@ class BusinessInvoiceCenterView(APIView):
         all_invoices = list(_invoice_queryset(business))
         outstanding = sum((max(Decimal("0.00"), _money(i.total) - _money(i.amount_paid)) for i in all_invoices if i.status not in CLOSED_INVOICE_STATUSES), Decimal("0.00"))
         overdue = [i for i in all_invoices if _derived_state(i) == "OVERDUE"]
-        due_soon = [i for i in all_invoices if i.status == Invoice.Status.SENT and i.due_date and today <= i.due_date <= today + timezone.timedelta(days=7)]
+        due_soon = [i for i in all_invoices if i.status == Invoice.Status.SENT and i.due_date and today <= i.due_date <= today + timedelta(days=7)]
         paid_month = sum((_money(i.amount_paid) for i in all_invoices if i.paid_at and i.paid_at.date() >= month_start), Decimal("0.00"))
 
         invoiced_ticket_ids = {i.ticket_id for i in all_invoices if i.ticket_id and i.status != Invoice.Status.VOID}
@@ -267,7 +267,7 @@ class BusinessInvoiceFromTicketView(APIView):
             subtotal=total,
             tax=Decimal("0.00"),
             total=total,
-            due_date=timezone.localdate() + timezone.timedelta(days=due_days),
+            due_date=timezone.localdate() + timedelta(days=due_days),
             payment_method=Invoice.PaymentMethod.CARD,
         )
         InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.CREATED, actor=request.user, message="Invoice draft created from completed job.")
@@ -330,7 +330,6 @@ class BusinessInvoiceActionView(APIView):
                 if source == "SYNC_CARD":
                     method = Invoice.PaymentMethod.CARD
                 invoice.mark_paid(method=method)
-                # mark_paid only marks platform fee collected for SyncWorks/card flow.
                 if source != "SYNC_CARD":
                     invoice.platform_fee_collected = False
                     invoice.platform_fee_collected_at = None
