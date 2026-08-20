@@ -1,10 +1,15 @@
 # user_accounts/serializers/platform_console.py
 from __future__ import annotations
 
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
+from django.db.models import Sum
 from rest_framework import serializers
 
 from user_accounts.models import Business, PlatformBillingProfile
+from user_accounts.models.billing import Invoice
+from user_accounts.models.business_customers import BusinessCustomer
 from user_accounts.models.user_classification import PlatformUserClassification
 
 User = get_user_model()
@@ -21,6 +26,7 @@ class PlatformUserSerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField()
     intelligence = serializers.SerializerMethodField()
     billing_summary = serializers.SerializerMethodField()
+    verified_value = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -30,6 +36,7 @@ class PlatformUserSerializer(serializers.ModelSerializer):
             "last_login", "role", "is_platform_admin", "businesses_count",
             "classification", "classification_note", "classified_at",
             "suggested_classification", "intelligence", "billing_summary",
+            "verified_value",
         ]
 
     def _classification(self, obj):
@@ -48,8 +55,6 @@ class PlatformUserSerializer(serializers.ModelSerializer):
         return getattr(obj, "role", None)
 
     def get_is_platform_admin(self, obj):
-        # Informational only. God Mode authorization is controlled separately by
-        # user_accounts.services.god_mode.is_god_mode().
         return bool(getattr(obj, "is_platform_admin", False) or obj.is_superuser)
 
     def get_display_name(self, obj):
@@ -94,6 +99,27 @@ class PlatformUserSerializer(serializers.ModelSerializer):
             "attributed_revenue_cents": max(0, int(raw.get("attributed_revenue_cents") or 0)),
             "paid_cents": max(0, int(raw.get("paid_cents") or 0)),
             "payable_cents": max(0, int(raw.get("payable_cents") or 0)),
+        }
+
+    def get_verified_value(self, obj):
+        businesses = self._owned_businesses(obj)
+        customers = BusinessCustomer.objects.filter(
+            business__in=businesses,
+            exclude_from_kpis=False,
+        )
+        supplied = customers.filter(record_source=BusinessCustomer.RecordSource.SYNCWORKS).count()
+        brought = customers.exclude(record_source=BusinessCustomer.RecordSource.SYNCWORKS).count()
+
+        collected = Invoice.objects.filter(
+            ticket__assigned_business__in=businesses,
+            platform_fee_collected=True,
+        ).aggregate(total=Sum("platform_fee_amount"))["total"] or Decimal("0.00")
+
+        return {
+            "customers_brought": brought,
+            "customers_supplied_by_syncworks": supplied,
+            "platform_revenue_cents": max(0, int(collected * 100)),
+            "source": "production_records",
         }
 
     def get_billing_summary(self, obj):
