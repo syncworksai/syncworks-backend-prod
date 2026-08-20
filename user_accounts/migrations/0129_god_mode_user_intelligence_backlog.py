@@ -26,7 +26,11 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="platformuserclassification",
             name="intelligence",
-            field=models.JSONField(blank=True, default=dict),
+            field=models.JSONField(
+                blank=True,
+                default=dict,
+                help_text="God Mode management metadata: roles, modules, subscriptions, acquisition and manual attribution. Verified financial/customer value is computed from production records instead.",
+            ),
         ),
         migrations.CreateModel(
             name="PlatformBuildBacklogItem",
