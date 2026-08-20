@@ -17,11 +17,15 @@ class AttributionSource(models.TextChoices):
 
 
 class RevenueSource(models.TextChoices):
-    PLATFORM_FEE = "PLATFORM_FEE", "Platform Fee"
-    SBO_SUBSCRIPTION = "SBO_SUBSCRIPTION", "SBO Subscription"
-    GROWTH_OS_SUBSCRIPTION = "GROWTH_OS_SUBSCRIPTION", "Growth OS Subscription"
+    MARKETPLACE_FEE = "MARKETPLACE_FEE", "Marketplace 1% Fee"
+    BUSINESS_PLATFORM_FEE = "BUSINESS_PLATFORM_FEE", "Business Platform Fee"
+    PLATFORM_FEE = "PLATFORM_FEE", "Legacy Platform Fee"
+    SBO_SUBSCRIPTION = "SBO_SUBSCRIPTION", "Business Subscription"
+    GROWTH_OS_SUBSCRIPTION = "GROWTH_OS_SUBSCRIPTION", "Social Media Subscription"
     HEALTH_SUBSCRIPTION = "HEALTH_SUBSCRIPTION", "Health Subscription"
     HEALTH_AI_SUBSCRIPTION = "HEALTH_AI_SUBSCRIPTION", "Health AI Subscription"
+    FINANCE_SUBSCRIPTION = "FINANCE_SUBSCRIPTION", "Finance Subscription"
+    PERSONAL_SUBSCRIPTION = "PERSONAL_SUBSCRIPTION", "Personal Subscription / Add-on"
     OTHER_SYNCWORKS_REVENUE = "OTHER_SYNCWORKS_REVENUE", "Other SyncWorks Revenue"
 
 
