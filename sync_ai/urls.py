@@ -18,8 +18,13 @@ from .professional_services_views import (
     BusinessProfessionalAppointmentsView,
     CustomerProfessionalAppointmentResponseView,
     CustomerProfessionalAppointmentsView,
+    ProfessionalAvailabilityView,
     ProfessionalDiscoveryView,
     ProfessionalPracticeSettingsView,
+    ProfessionalProviderDetailView,
+    ProfessionalProvidersView,
+    ProfessionalResourceDetailView,
+    ProfessionalResourcesView,
 )
 from .views import SyncAIActionDraftView, SyncAIChatView, SyncAIStatusView, SyncAITicketReplyExecuteView
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
@@ -34,6 +39,11 @@ urlpatterns = [
     # Professional / appointment-based business foundation.
     path("professional/discover/", ProfessionalDiscoveryView.as_view(), name="professional-discover"),
     path("professional/business/practice/", ProfessionalPracticeSettingsView.as_view(), name="professional-business-practice"),
+    path("professional/business/providers/", ProfessionalProvidersView.as_view(), name="professional-business-providers"),
+    path("professional/business/providers/<int:provider_id>/", ProfessionalProviderDetailView.as_view(), name="professional-business-provider-detail"),
+    path("professional/business/resources/", ProfessionalResourcesView.as_view(), name="professional-business-resources"),
+    path("professional/business/resources/<int:resource_id>/", ProfessionalResourceDetailView.as_view(), name="professional-business-resource-detail"),
+    path("professional/business/availability/", ProfessionalAvailabilityView.as_view(), name="professional-business-availability"),
     path("professional/business/appointments/", BusinessProfessionalAppointmentsView.as_view(), name="professional-business-appointments"),
     path("professional/customer/appointments/", CustomerProfessionalAppointmentsView.as_view(), name="professional-customer-appointments"),
     path("professional/customer/appointments/<int:appointment_id>/respond/", CustomerProfessionalAppointmentResponseView.as_view(), name="professional-customer-appointment-respond"),
@@ -54,7 +64,7 @@ urlpatterns = [
     path("assistant/billing/portal/", UserJarvisPortalView.as_view(), name="sync-assistant-portal"),
     path("assistant/billing/webhook/", UserJarvisWebhookView.as_view(), name="sync-assistant-webhook"),
 
-    # Backward-compatible legacy routes. Existing clients keep working while UI copy moves to SYNC Assistant.
+    # Backward-compatible legacy routes.
     path("jarvis/profile/", UserJarvisProfileView.as_view(), name="user-jarvis-profile"),
     path("jarvis/check-in/", UserJarvisCheckInView.as_view(), name="user-jarvis-check-in"),
     path("jarvis/check-out/", UserJarvisCheckOutView.as_view(), name="user-jarvis-check-out"),
