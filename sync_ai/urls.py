@@ -12,6 +12,7 @@ from .jarvis_product_views import (
     UserJarvisWebhookView,
     UserSyncAssistantLiveCheckoutView,
 )
+from .local_intelligence_views import SyncLocalIntelligenceView
 from .notification_views import SyncNotificationRefreshView, SyncNotificationSettingsView, SyncPushDeviceView
 from .views import SyncAIActionDraftView, SyncAIChatView, SyncAIStatusView, SyncAITicketReplyExecuteView
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
@@ -19,6 +20,7 @@ from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 urlpatterns = [
     path("status/", SyncAIStatusView.as_view(), name="sync-ai-status"),
     path("chat/", SyncAIChatView.as_view(), name="sync-ai-chat"),
+    path("local-intelligence/", SyncLocalIntelligenceView.as_view(), name="sync-local-intelligence"),
     path("briefing/", SyncRoleAwareBriefingView.as_view(), name="sync-role-aware-briefing"),
     path("briefing/god-mode/", SyncGodModeBriefingView.as_view(), name="sync-god-mode-briefing"),
 
