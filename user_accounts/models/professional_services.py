@@ -17,17 +17,8 @@ class ProfessionalPracticeProfile(models.Model):
         MED_SPA = "MED_SPA", "Med spa"
         OTHER = "OTHER", "Other appointment business"
 
-    business = models.OneToOneField(
-        Business,
-        related_name="professional_practice",
-        on_delete=models.CASCADE,
-    )
-    practice_type = models.CharField(
-        max_length=32,
-        choices=PracticeType.choices,
-        default=PracticeType.DENTAL,
-        db_index=True,
-    )
+    business = models.OneToOneField(Business, related_name="professional_practice", on_delete=models.CASCADE)
+    practice_type = models.CharField(max_length=32, choices=PracticeType.choices, default=PracticeType.DENTAL, db_index=True)
     scheduling_enabled = models.BooleanField(default=True)
     accepting_new_patients = models.BooleanField(default=True)
     accepted_insurance = models.JSONField(default=list, blank=True)
@@ -35,11 +26,7 @@ class ProfessionalPracticeProfile(models.Model):
     weekly_schedule = models.JSONField(default=dict, blank=True)
     booking_lead_minutes = models.PositiveIntegerField(default=60)
     booking_buffer_minutes = models.PositiveIntegerField(default=0)
-    scheduling_disclaimer = models.CharField(
-        max_length=280,
-        blank=True,
-        default="Insurance participation is supplied by the practice. Confirm coverage with the practice or insurer before care.",
-    )
+    scheduling_disclaimer = models.CharField(max_length=280, blank=True, default="Insurance participation is supplied by the practice. Confirm coverage with the practice or insurer before care.")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -48,6 +35,45 @@ class ProfessionalPracticeProfile(models.Model):
 
     def __str__(self) -> str:
         return f"{self.business.name} professional practice"
+
+
+class ProfessionalProvider(models.Model):
+    practice = models.ForeignKey(ProfessionalPracticeProfile, related_name="providers", on_delete=models.CASCADE)
+    name = models.CharField(max_length=160)
+    role_label = models.CharField(max_length=120, blank=True, default="")
+    active = models.BooleanField(default=True)
+    appointment_types = models.JSONField(default=list, blank=True)
+    weekly_schedule = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class ProfessionalResource(models.Model):
+    class ResourceType(models.TextChoices):
+        ROOM = "ROOM", "Room"
+        CHAIR = "CHAIR", "Chair"
+        EQUIPMENT = "EQUIPMENT", "Equipment"
+        OTHER = "OTHER", "Other"
+
+    practice = models.ForeignKey(ProfessionalPracticeProfile, related_name="resources", on_delete=models.CASCADE)
+    name = models.CharField(max_length=160)
+    resource_type = models.CharField(max_length=24, choices=ResourceType.choices, default=ResourceType.ROOM)
+    active = models.BooleanField(default=True)
+    appointment_types = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["resource_type", "name"]
+
+    def __str__(self) -> str:
+        return self.name
 
 
 class ProfessionalAppointment(models.Model):
@@ -60,16 +86,10 @@ class ProfessionalAppointment(models.Model):
         CANCELLED = "CANCELLED", "Cancelled"
         COMPLETED = "COMPLETED", "Completed"
 
-    business = models.ForeignKey(
-        Business,
-        related_name="professional_appointments",
-        on_delete=models.CASCADE,
-    )
-    customer = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        related_name="professional_appointments",
-        on_delete=models.CASCADE,
-    )
+    business = models.ForeignKey(Business, related_name="professional_appointments", on_delete=models.CASCADE)
+    customer = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="professional_appointments", on_delete=models.CASCADE)
+    provider = models.ForeignKey(ProfessionalProvider, related_name="appointments", on_delete=models.SET_NULL, null=True, blank=True)
+    resource = models.ForeignKey(ProfessionalResource, related_name="appointments", on_delete=models.SET_NULL, null=True, blank=True)
     appointment_type = models.CharField(max_length=120, blank=True, default="Appointment")
     status = models.CharField(max_length=32, choices=Status.choices, default=Status.REQUESTED, db_index=True)
     proposed_start = models.DateTimeField(null=True, blank=True)
