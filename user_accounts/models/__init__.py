@@ -20,6 +20,7 @@ from .audit import AuditLog
 from .notifications import Notification, PlatformNewsItem
 from .categories import ServiceCategory
 from .business import Business, BusinessMember, BusinessCategory, BusinessMemberRole
+from .professional_services import ProfessionalPracticeProfile, ProfessionalAppointment
 from .service_catalog import ServiceCatalogItem
 from .business_customers import BusinessCustomer
 from .data_imports import BusinessDataImport
@@ -104,7 +105,8 @@ __all__ = [
     "User", "EmailVerificationChallenge", "CustomerProfile", "SmallBusinessOwnerProfile", "SubcontractorProfile",
     "PersonalIdentity", "UserLocation", "BusinessVerification",
     "AuditLog", "Notification", "PlatformNewsItem", "ServiceCategory", "BusinessCategory", "Business",
-    "BusinessMember", "BusinessMemberRole", "ServiceCatalogItem", "BusinessCustomer", "BusinessDataImport",
+    "BusinessMember", "BusinessMemberRole", "ProfessionalPracticeProfile", "ProfessionalAppointment",
+    "ServiceCatalogItem", "BusinessCustomer", "BusinessDataImport",
     "BusinessProject", "BusinessPartnerRelationship", "PartnerWorkTicket", "PartnerWorkChangeOrder",
     "PartnerPaymentAllocation", "PartnerPayment", "PartnerInvoice", "PartnerWorkEstimate", "BusinessPartnerInvitation",
     "ServiceRequest", "ServiceRequestPhoto", "Ticket", "TicketMessage", "TicketAttachment", "TicketQuote",
