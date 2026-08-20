@@ -3,6 +3,20 @@ from django.db import migrations, models
 import django.db.models.deletion
 
 
+def seed_twilio_backlog(apps, schema_editor):
+    Backlog = apps.get_model("user_accounts", "PlatformBuildBacklogItem")
+    Backlog.objects.get_or_create(
+        title="Bring-your-own Twilio SMS/MMS connector",
+        defaults={
+            "status": "BUILD_LATER",
+            "priority": "HIGH",
+            "module": "Communications / SYNC Inbox",
+            "source": "ChatGPT",
+            "notes": "Allow a user/business to connect its own Twilio account or Messaging Service to SyncWorks. Ingest SMS/MMS, match contacts, classify with SYNC Assist, route to the correct Personal/Business/PM destination, preserve threads, support replies and delivery status, and validate Twilio webhook signatures. Include consent/STOP/HELP and A2P setup guidance.",
+        },
+    )
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("user_accounts", "0127_ticket_operational_scheduled_window"),
@@ -42,4 +56,5 @@ class Migration(migrations.Migration):
             model_name="platformbuildbacklogitem",
             index=models.Index(fields=["module", "updated_at"], name="ua_backlog_module_updated_idx"),
         ),
+        migrations.RunPython(seed_twilio_backlog, migrations.RunPython.noop),
     ]
