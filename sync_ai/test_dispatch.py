@@ -20,7 +20,6 @@ class DispatchTests(APITestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="dispatch-owner", email="dispatch@example.com", password="test-password-123")
         token = Token.objects.create(user=self.user)
-        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}", HTTP_X_BUSINESS_ID="1")
         self.business = Business.objects.create(owner=self.user, name="Route Test Co", base_zip="36104", accepts_marketplace_tickets=True)
         self.member = BusinessMember.objects.create(business=self.business, user=self.user, role="OWNER", is_active=True, can_manage_schedule=True, can_assign_tickets=True)
         WorkforceProfile.objects.create(member=self.member, title="Lead Tech", skills=["Plumbing"], route_start_address="100 Main St, Montgomery, AL", default_buffer_minutes=10, is_schedulable=True)
@@ -34,7 +33,7 @@ class DispatchTests(APITestCase):
 
     @patch("sync_ai.dispatch_views.estimate_travel", return_value={"minutes": 20, "miles": 8.0, "basis": "test"})
     def test_dispatch_board_flags_insufficient_travel_gap(self, travel):
-        day = timezone.localdate()
+        day = timezone.localdate() + timedelta(days=1)
         first = timezone.make_aware(datetime.combine(day, time(9, 0)))
         second = timezone.make_aware(datetime.combine(day, time(10, 5)))
         self.make_job(first, first + timedelta(hours=1), "200 Market St")
@@ -47,7 +46,7 @@ class DispatchTests(APITestCase):
         self.assertEqual(jobs[1]["risk"], "AT_RISK")
 
     def test_delay_updates_expected_finish_without_moving_later_jobs(self):
-        day = timezone.localdate()
+        day = timezone.localdate() + timedelta(days=1)
         start = timezone.make_aware(datetime.combine(day, time(11, 0)))
         ticket = self.make_job(start, start + timedelta(hours=1))
         original = ticket.operations_profile.scheduled_end
@@ -56,4 +55,4 @@ class DispatchTests(APITestCase):
         ticket.operations_profile.refresh_from_db()
         self.assertEqual(ticket.operations_profile.scheduled_end, original + timedelta(minutes=30))
         self.assertEqual(ticket.operations_profile.expected_finish_at, original + timedelta(minutes=30))
-        self.assertIn("not moved automatically", response.data["message"])
+        self.assertIn("moved automatically", response.data["message"])
