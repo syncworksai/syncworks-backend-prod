@@ -13,6 +13,7 @@ from .jarvis_product_views import (
     UserSyncAssistantLiveCheckoutView,
 )
 from .local_intelligence_views import SyncLocalIntelligenceView
+from .marketplace_views import MarketplaceAvailabilityView, MarketplaceBookView
 from .notification_views import SyncNotificationRefreshView, SyncNotificationSettingsView, SyncPushDeviceView
 from .professional_services_views import (
     BusinessProfessionalAppointmentsView,
@@ -36,6 +37,10 @@ urlpatterns = [
     path("local-intelligence/", SyncLocalIntelligenceView.as_view(), name="sync-local-intelligence"),
     path("briefing/", SyncRoleAwareBriefingView.as_view(), name="sync-role-aware-briefing"),
     path("briefing/god-mode/", SyncGodModeBriefingView.as_view(), name="sync-god-mode-briefing"),
+
+    # Marketplace -> real configured availability -> Marketplace-origin Ticket.
+    path("marketplace/availability/", MarketplaceAvailabilityView.as_view(), name="sync-marketplace-availability"),
+    path("marketplace/book/", MarketplaceBookView.as_view(), name="sync-marketplace-book"),
 
     # Unified Business workforce + work/SLA foundation.
     path("business/workforce/", BusinessWorkforceView.as_view(), name="sync-business-workforce"),

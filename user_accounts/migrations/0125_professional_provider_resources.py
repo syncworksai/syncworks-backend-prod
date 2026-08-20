@@ -4,7 +4,7 @@ import django.db.models.deletion
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("user_accounts", "0124_professional_services"),
+        ("user_accounts", "0124_professional_services_scheduling"),
     ]
 
     operations = [

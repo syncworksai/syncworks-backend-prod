@@ -74,8 +74,8 @@ class UserLocation(models.Model):
     class Meta:
         ordering = ["-is_default_service", "kind", "label", "id"]
         indexes = [
-            models.Index(fields=["user", "kind"]),
-            models.Index(fields=["user", "is_default_service"]),
+            models.Index(fields=["user", "kind"], name="user_accoun_user_id_86e4af_idx"),
+            models.Index(fields=["user", "is_default_service"], name="user_accoun_user_id_451794_idx"),
         ]
 
     @property
