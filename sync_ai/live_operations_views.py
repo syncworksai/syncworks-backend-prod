@@ -291,14 +291,14 @@ class EmployeeJobClockView(APIView):
                 ops.actual_work_seconds = 0
             if ticket.status in {"ASSIGNED", "ACCEPTED", "SCHEDULED", "EN_ROUTE", "ON_SITE"}:
                 ticket.status = "IN_PROGRESS"
-                ticket.save(update_fields=["status", "updated_at"])
+                ticket.save(update_fields=["status"])
         else:
             if ops.actual_started_at and not ops.actual_finished_at:
                 ops.actual_work_seconds = max(0, int((now - ops.actual_started_at).total_seconds()))
                 ops.actual_finished_at = now
             if ticket.status == "IN_PROGRESS":
                 ticket.status = "COMPLETED"
-                ticket.save(update_fields=["status", "updated_at"])
+                ticket.save(update_fields=["status"])
         ops.save(update_fields=["actual_started_at", "actual_finished_at", "actual_work_seconds", "updated_at"])
         return Response({"ticket_id": ticket.id, "status": ticket.status, "clock": _clock_payload(ops, now)})
 
