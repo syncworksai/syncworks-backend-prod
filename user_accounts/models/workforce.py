@@ -80,6 +80,8 @@ class TicketOperationalProfile(models.Model):
     assignment_sla_minutes = models.PositiveIntegerField(default=0)
     arrival_sla_minutes = models.PositiveIntegerField(default=0)
     completion_sla_minutes = models.PositiveIntegerField(default=0)
+    scheduled_start = models.DateTimeField(null=True, blank=True)
+    scheduled_end = models.DateTimeField(null=True, blank=True)
     expected_finish_at = models.DateTimeField(null=True, blank=True)
     due_at = models.DateTimeField(null=True, blank=True)
     customer_visible_note = models.TextField(blank=True, default="")
@@ -92,6 +94,7 @@ class TicketOperationalProfile(models.Model):
         indexes = [
             models.Index(fields=["origin", "priority"], name="ua_ticketops_origin_pri_idx"),
             models.Index(fields=["due_at"], name="ua_ticketops_due_idx"),
+            models.Index(fields=["scheduled_start", "scheduled_end"], name="ua_ticketops_window_idx"),
         ]
 
     def __str__(self) -> str:
