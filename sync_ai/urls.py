@@ -1,5 +1,11 @@
 from django.urls import path
 
+from user_accounts.viewsets.invoice_experience import (
+    BusinessInvoiceActionView,
+    BusinessInvoiceCenterView,
+    BusinessInvoiceDetailView,
+    BusinessInvoiceFromTicketView,
+)
 from .assistant_connection_views import SyncAssistantGeocodeView, SyncAssistantInboxStateView
 from .assistant_daily_state_views import SyncAssistantDailyStateView, SyncAssistantDepartureReminderView
 from .briefing_views import SyncGodModeBriefingView, SyncRoleAwareBriefingView
@@ -55,6 +61,12 @@ urlpatterns = [
     path("business/live-operations/", BusinessLiveOperationsView.as_view(), name="sync-business-live-operations"),
     path("employee/live-day/", EmployeeLiveDayView.as_view(), name="sync-employee-live-day"),
     path("employee/jobs/<int:ticket_id>/clock/", EmployeeJobClockView.as_view(), name="sync-employee-job-clock"),
+
+    # Build 18 invoice command center: visibility, audit trail, payment reconciliation.
+    path("business/invoices/", BusinessInvoiceCenterView.as_view(), name="sync-business-invoice-center"),
+    path("business/invoices/<int:invoice_id>/", BusinessInvoiceDetailView.as_view(), name="sync-business-invoice-detail"),
+    path("business/invoices/from-ticket/<int:ticket_id>/", BusinessInvoiceFromTicketView.as_view(), name="sync-business-invoice-from-ticket"),
+    path("business/invoices/<int:invoice_id>/<str:action_name>/", BusinessInvoiceActionView.as_view(), name="sync-business-invoice-action"),
 
     # Professional / appointment-based business foundation.
     path("professional/discover/", ProfessionalDiscoveryView.as_view(), name="professional-discover"),
