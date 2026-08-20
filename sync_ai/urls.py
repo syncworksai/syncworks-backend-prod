@@ -4,6 +4,7 @@ from .assistant_connection_views import SyncAssistantGeocodeView, SyncAssistantI
 from .assistant_daily_state_views import SyncAssistantDailyStateView, SyncAssistantDepartureReminderView
 from .briefing_views import SyncGodModeBriefingView, SyncRoleAwareBriefingView
 from .dispatch_views import BusinessDispatchBoardView, BusinessDispatchDelayView
+from .live_operations_views import BusinessLiveOperationsView, EmployeeJobClockView, EmployeeLiveDayView
 from .jarvis_product_views import (
     UserJarvisCheckInView,
     UserJarvisCheckOutView,
@@ -49,6 +50,11 @@ urlpatterns = [
     path("business/tickets/<int:ticket_id>/operations/", TicketOperationsView.as_view(), name="sync-business-ticket-operations"),
     path("business/dispatch/", BusinessDispatchBoardView.as_view(), name="sync-business-dispatch"),
     path("business/dispatch/<int:ticket_id>/delay/", BusinessDispatchDelayView.as_view(), name="sync-business-dispatch-delay"),
+
+    # Build 17 live operations intelligence + technician field clock.
+    path("business/live-operations/", BusinessLiveOperationsView.as_view(), name="sync-business-live-operations"),
+    path("employee/live-day/", EmployeeLiveDayView.as_view(), name="sync-employee-live-day"),
+    path("employee/jobs/<int:ticket_id>/clock/", EmployeeJobClockView.as_view(), name="sync-employee-job-clock"),
 
     # Professional / appointment-based business foundation.
     path("professional/discover/", ProfessionalDiscoveryView.as_view(), name="professional-discover"),
