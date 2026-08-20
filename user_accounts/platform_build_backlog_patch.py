@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 from datetime import date
-from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from rest_framework import status
@@ -24,12 +23,7 @@ def _token():
 
 
 def _headers(token, *, json_body=False):
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {token}",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "syncworks-god-mode-build-backlog",
-    }
+    headers = {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "syncworks-god-mode-build-backlog"}
     if json_body:
         headers["Content-Type"] = "application/json"
     return headers
@@ -48,15 +42,7 @@ def _github_api(path, *, method="GET", payload=None):
 
 
 def _build_body(item):
-    return (
-        f"{BACKLOG_MARKER}\n"
-        f"Status: {item.status}\n"
-        f"Priority: {item.priority}\n"
-        f"Module: {item.module}\n"
-        f"Source: {item.source}\n"
-        f"Created: {item.created_at.date().isoformat() if item.created_at else date.today().isoformat()}\n\n"
-        f"---\n{item.notes.strip()}\n"
-    )
+    return f"{BACKLOG_MARKER}\nStatus: {item.status}\nPriority: {item.priority}\nModule: {item.module}\nSource: {item.source}\nCreated: {item.created_at.date().isoformat() if item.created_at else date.today().isoformat()}\n\n---\n{item.notes.strip()}\n"
 
 
 def _serialize(item):
@@ -79,14 +65,11 @@ def _serialize(item):
 
 
 def _mirror_create(item):
+    """Mirror to GitHub when configured. Mirror failures never fail God Mode."""
     if not _token():
         return
     try:
-        issue = _github_api(
-            "/issues",
-            method="POST",
-            payload={"title": f"{BACKLOG_TITLE_PREFIX} {item.title}", "body": _build_body(item)},
-        )
+        issue = _github_api("/issues", method="POST", payload={"title": f"{BACKLOG_TITLE_PREFIX} {item.title}", "body": _build_body(item)})
         item.github_issue_number = issue.get("number")
         item.github_url = issue.get("html_url") or ""
         item.github_sync_error = ""
@@ -100,15 +83,7 @@ def _mirror_update(item):
     if not _token() or not item.github_issue_number:
         return
     try:
-        issue = _github_api(
-            f"/issues/{item.github_issue_number}",
-            method="PATCH",
-            payload={
-                "title": f"{BACKLOG_TITLE_PREFIX} {item.title}",
-                "body": _build_body(item),
-                "state": "closed" if item.status == PlatformBuildBacklogItem.Status.DONE else "open",
-            },
-        )
+        issue = _github_api(f"/issues/{item.github_issue_number}", method="PATCH", payload={"title": f"{BACKLOG_TITLE_PREFIX} {item.title}", "body": _build_body(item), "state": "closed" if item.status == PlatformBuildBacklogItem.Status.DONE else "open"})
         item.github_url = issue.get("html_url") or item.github_url
         item.github_sync_error = ""
         item.save(update_fields=["github_url", "github_sync_error", "updated_at"])
@@ -132,16 +107,7 @@ def _validate(data):
 
 def _create_item(data, user):
     title, status_value, priority = _validate(data)
-    item = PlatformBuildBacklogItem.objects.create(
-        title=title,
-        status=status_value,
-        priority=priority,
-        module=str(data.get("module") or "General").strip() or "General",
-        source=str(data.get("source") or "God Mode").strip() or "God Mode",
-        notes=str(data.get("notes") or "").strip(),
-        created_by=user,
-        updated_by=user,
-    )
+    item = PlatformBuildBacklogItem.objects.create(title=title, status=status_value, priority=priority, module=str(data.get("module") or "General").strip() or "General", source=str(data.get("source") or "God Mode").strip() or "God Mode", notes=str(data.get("notes") or "").strip(), created_by=user, updated_by=user)
     _mirror_create(item)
     return item
 
@@ -153,12 +119,7 @@ def _update_item(data, user):
         item = PlatformBuildBacklogItem.objects.filter(github_issue_number=raw_id).first()
     if item is None:
         raise ValueError("Backlog item not found.")
-
-    title, status_value, priority = _validate({
-        "title": data.get("title") or item.title,
-        "status": data.get("status") or item.status,
-        "priority": data.get("priority") or item.priority,
-    })
+    title, status_value, priority = _validate({"title": data.get("title") or item.title, "status": data.get("status") or item.status, "priority": data.get("priority") or item.priority})
     item.title = title
     item.status = status_value
     item.priority = priority
