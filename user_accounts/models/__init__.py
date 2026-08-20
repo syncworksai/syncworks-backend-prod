@@ -38,6 +38,7 @@ from .connections import Connection
 from .invites import InviteCode
 from .templates import DocumentTemplate
 from .platform_billing import PlatformBillingProfile, MonthlyPlatformBill
+from .platform_build_backlog import PlatformBuildBacklogItem
 from .user_billing import UserBillingProfile
 from .promo import PromoCode, PromoRedemption
 from .kpis import PlatformDailyKpi, BusinessDailyKpi, MarketplaceCellDailyKpi
@@ -113,7 +114,7 @@ __all__ = [
     "PartnerPaymentAllocation", "PartnerPayment", "PartnerInvoice", "PartnerWorkEstimate", "BusinessPartnerInvitation",
     "ServiceRequest", "ServiceRequestPhoto", "Ticket", "TicketMessage", "TicketAttachment", "TicketQuote",
     "TicketViewEvent", "Invoice", "InvoiceLineItem", "CashFeeInvoice", "Connection", "InviteCode", "DocumentTemplate",
-    "PlatformBillingProfile", "MonthlyPlatformBill", "UserBillingProfile", "PromoCode", "PromoRedemption",
+    "PlatformBillingProfile", "PlatformBuildBacklogItem", "MonthlyPlatformBill", "UserBillingProfile", "PromoCode", "PromoRedemption",
     "PlatformDailyKpi", "BusinessDailyKpi", "MarketplaceCellDailyKpi", "CustomerSettings", "CommunicationPreference",
     "TicketConversationReadState", "TicketAssetLink", "AssetIdentifier", "TrackableAsset", "ResourceMovement",
     "ResourceAssignment", "BusinessResource", "TicketDependency", "TicketRequirement", "TicketETA", "OperationalEvent",
