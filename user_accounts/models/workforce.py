@@ -84,6 +84,13 @@ class TicketOperationalProfile(models.Model):
     scheduled_end = models.DateTimeField(null=True, blank=True)
     expected_finish_at = models.DateTimeField(null=True, blank=True)
     due_at = models.DateTimeField(null=True, blank=True)
+
+    # Build 17: actual field-work clock. These are operational timestamps only;
+    # payroll remains outside this model unless a later HR/payroll module opts in.
+    actual_started_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    actual_finished_at = models.DateTimeField(null=True, blank=True)
+    actual_work_seconds = models.PositiveIntegerField(default=0)
+
     customer_visible_note = models.TextField(blank=True, default="")
     internal_note = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
