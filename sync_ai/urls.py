@@ -3,6 +3,7 @@ from django.urls import path
 from .assistant_connection_views import SyncAssistantGeocodeView, SyncAssistantInboxStateView
 from .assistant_daily_state_views import SyncAssistantDailyStateView, SyncAssistantDepartureReminderView
 from .briefing_views import SyncGodModeBriefingView, SyncRoleAwareBriefingView
+from .dispatch_views import BusinessDispatchBoardView, BusinessDispatchDelayView
 from .jarvis_product_views import (
     UserJarvisCheckInView,
     UserJarvisCheckOutView,
@@ -46,6 +47,8 @@ urlpatterns = [
     path("business/workforce/", BusinessWorkforceView.as_view(), name="sync-business-workforce"),
     path("business/operations/summary/", BusinessOperationsSummaryView.as_view(), name="sync-business-operations-summary"),
     path("business/tickets/<int:ticket_id>/operations/", TicketOperationsView.as_view(), name="sync-business-ticket-operations"),
+    path("business/dispatch/", BusinessDispatchBoardView.as_view(), name="sync-business-dispatch"),
+    path("business/dispatch/<int:ticket_id>/delay/", BusinessDispatchDelayView.as_view(), name="sync-business-dispatch-delay"),
 
     # Professional / appointment-based business foundation.
     path("professional/discover/", ProfessionalDiscoveryView.as_view(), name="professional-discover"),
