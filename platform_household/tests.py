@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -256,3 +257,100 @@ class HouseholdPrivacyTests(APITestCase):
         self.assertEqual(next_task.status, SharedTask.Status.OPEN)
         self.assertEqual(next_task.recurrence, SharedTask.Recurrence.WEEKLY)
         self.assertGreater(next_task.due_at, original.due_at)
+
+    @patch("platform_household.views.build_household_weather_plan")
+    def test_weather_plan_and_user_decisions_update_single_task_and_calendar(self, weather_plan):
+        owner = self.user("weather-owner@example.com")
+        group = self.group_for(owner)
+        household = HouseholdProfile.objects.create(
+            group=group,
+            created_by=owner,
+            address_line1="100 Main St",
+            city="Montgomery",
+            state="AL",
+            postal_code="36104",
+        )
+        HouseholdMemberSettings.objects.create(household=household, user=owner)
+        due = timezone.now() + timedelta(days=1)
+        suggested = due + timedelta(days=1)
+        weather_plan.return_value = {
+            "status": "READY",
+            "provider": "NWS",
+            "task_start_at": due.isoformat(),
+            "current": {
+                "start_at": due.isoformat(),
+                "risk": "HIGH",
+                "short_forecast": "Thunderstorms",
+                "precipitation_probability": 80,
+            },
+            "recommendation": "MOVE",
+            "suggested_start_at": suggested.isoformat(),
+            "alternatives": [{"start_at": suggested.isoformat(), "risk": "LOW", "precipitation_probability": 10}],
+            "message": "Move this task.",
+        }
+        created = self.client_for(owner).post(
+            "/api/v1/household/tasks/",
+            {
+                "household": household.id,
+                "title": "Mow the yard",
+                "due_at": due.isoformat(),
+                "estimated_minutes": 60,
+                "weather_dependent": True,
+            },
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201)
+        task_id = created.json()["id"]
+
+        planned = self.client_for(owner).post(f"/api/v1/household/tasks/{task_id}/weather-plan/", {}, format="json")
+        self.assertEqual(planned.status_code, 200)
+        task = SharedTask.objects.get(id=task_id)
+        self.assertEqual(task.weather_status, SharedTask.WeatherStatus.BLOCKED)
+        self.assertIn("80% precip", task.weather_note)
+
+        accepted = self.client_for(owner).post(
+            f"/api/v1/household/tasks/{task_id}/weather-decision/",
+            {"decision": "ACCEPT_SUGGESTED", "due_at": suggested.isoformat()},
+            format="json",
+        )
+        self.assertEqual(accepted.status_code, 200)
+        task.refresh_from_db()
+        self.assertEqual(task.status, SharedTask.Status.OPEN)
+        self.assertEqual(task.weather_status, SharedTask.WeatherStatus.CLEAR)
+        self.assertEqual(task.due_at, suggested)
+        calendar_row = PersonalCalendarEvent.objects.get(owner=owner, metadata__household_task_id=task_id)
+        self.assertEqual(calendar_row.start_at, suggested)
+        self.assertEqual(calendar_row.status, PersonalCalendarEvent.Status.ACTIVE)
+
+        custom = suggested + timedelta(hours=2)
+        customized = self.client_for(owner).post(
+            f"/api/v1/household/tasks/{task_id}/weather-decision/",
+            {"decision": "CUSTOM", "due_at": custom.isoformat()},
+            format="json",
+        )
+        self.assertEqual(customized.status_code, 200)
+        task.refresh_from_db()
+        self.assertEqual(task.due_at, custom)
+        self.assertEqual(task.weather_status, SharedTask.WeatherStatus.NOT_CHECKED)
+
+        held = self.client_for(owner).post(
+            f"/api/v1/household/tasks/{task_id}/weather-decision/",
+            {"decision": "HOLD"},
+            format="json",
+        )
+        self.assertEqual(held.status_code, 200)
+        task.refresh_from_db()
+        self.assertEqual(task.status, SharedTask.Status.WEATHER_HOLD)
+        calendar_row.refresh_from_db()
+        self.assertEqual(calendar_row.status, PersonalCalendarEvent.Status.ARCHIVED)
+
+        kept = self.client_for(owner).post(
+            f"/api/v1/household/tasks/{task_id}/weather-decision/",
+            {"decision": "KEEP"},
+            format="json",
+        )
+        self.assertEqual(kept.status_code, 200)
+        task.refresh_from_db()
+        self.assertEqual(task.status, SharedTask.Status.OPEN)
+        calendar_row.refresh_from_db()
+        self.assertEqual(calendar_row.status, PersonalCalendarEvent.Status.ACTIVE)
