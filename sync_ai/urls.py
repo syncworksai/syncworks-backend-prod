@@ -9,6 +9,7 @@ from user_accounts.viewsets.invoice_experience import (
 from user_accounts.viewsets.invoice_automation import BusinessInvoiceAutomationSettingsView, BusinessReceivablesIntelligenceView
 from .assistant_connection_views import SyncAssistantGeocodeView, SyncAssistantInboxStateView
 from .assistant_daily_state_views import SyncAssistantDailyStateView, SyncAssistantDepartureReminderView
+from .billing_runtime_views import BillingRuntimeAPIView
 from .briefing_views import SyncGodModeBriefingView, SyncRoleAwareBriefingView
 from .dispatch_views import BusinessDispatchBoardView, BusinessDispatchDelayView
 from .invoice_customer_views import CustomerInvoiceCenterView, CustomerInvoiceDetailView
@@ -44,6 +45,7 @@ urlpatterns = [
     path("business/invoices/<int:invoice_id>/<str:action_name>/", BusinessInvoiceActionView.as_view(), name="sync-business-invoice-action"),
     path("business/billing-automation/", BusinessInvoiceAutomationSettingsView.as_view(), name="sync-business-billing-automation"),
     path("business/receivables/", BusinessReceivablesIntelligenceView.as_view(), name="sync-business-receivables"),
+    path("billing/runtime/run/", BillingRuntimeAPIView.as_view(), name="sync-billing-runtime"),
     path("customer/invoices/", CustomerInvoiceCenterView.as_view(), name="sync-customer-invoice-center"),
     path("customer/invoices/<int:invoice_id>/", CustomerInvoiceDetailView.as_view(), name="sync-customer-invoice-detail"),
     path("professional/discover/", ProfessionalDiscoveryView.as_view(), name="professional-discover"),
