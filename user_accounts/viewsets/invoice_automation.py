@@ -7,7 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from user_accounts.models import Business, BusinessMember, Invoice, InvoiceAutomationSettings
+from user_accounts.models import Business, BusinessMember, Invoice, InvoiceAutomationSettings, InvoiceEvent
 
 
 def _business_context(request):
@@ -40,6 +40,10 @@ def _business_context(request):
 
 def _can_manage(business, member, user):
     return bool(business.owner_id == user.id or (member and (member.can_manage_invoices or member.can_manage_settings)))
+
+
+def _money(value) -> Decimal:
+    return Decimal(str(value or 0)).quantize(Decimal("0.01"))
 
 
 def _settings_payload(settings):
@@ -127,19 +131,42 @@ class BusinessReceivablesIntelligenceView(APIView):
             return Response({"detail": "Financial access required."}, status=403)
 
         today = timezone.localdate()
-        invoices = Invoice.objects.select_related("ticket", "ticket__customer").filter(ticket__assigned_business=business).exclude(status=Invoice.Status.VOID)
+        invoices = list(
+            Invoice.objects.select_related("ticket", "ticket__customer")
+            .filter(ticket__assigned_business=business)
+            .exclude(status=Invoice.Status.VOID)
+        )
         buckets = {"current": Decimal("0.00"), "1_30": Decimal("0.00"), "31_60": Decimal("0.00"), "61_90": Decimal("0.00"), "90_plus": Decimal("0.00")}
         overdue_customers = {}
+        due_next_7 = Decimal("0.00")
+        due_next_30 = Decimal("0.00")
+        outstanding_total = Decimal("0.00")
+        forecast_30 = Decimal("0.00")
+
         for invoice in invoices:
-            balance = max(Decimal("0.00"), Decimal(str(invoice.total or 0)) - Decimal(str(invoice.amount_paid or 0)))
+            balance = max(Decimal("0.00"), _money(invoice.total) - _money(invoice.amount_paid))
             if balance <= 0 or invoice.status == Invoice.Status.PAID:
                 continue
+
+            outstanding_total += balance
             days = 0
             if invoice.due_date and invoice.due_date < today:
                 days = (today - invoice.due_date).days
             key = "current" if days <= 0 else "1_30" if days <= 30 else "31_60" if days <= 60 else "61_90" if days <= 90 else "90_plus"
             buckets[key] += balance
-            if days > 0 and invoice.ticket_id:
+
+            if invoice.due_date:
+                days_until_due = (invoice.due_date - today).days
+                if 0 <= days_until_due <= 7:
+                    due_next_7 += balance
+                if 0 <= days_until_due <= 30:
+                    due_next_30 += balance
+
+            weight = Decimal("0.90") if days <= 0 else Decimal("0.65") if days <= 30 else Decimal("0.35") if days <= 60 else Decimal("0.15") if days <= 90 else Decimal("0.05")
+            if days > 0 or (invoice.due_date and (invoice.due_date - today).days <= 30):
+                forecast_30 += balance * weight
+
+            if days > 0 and invoice.ticket_id and invoice.ticket.customer_id:
                 customer = invoice.ticket.customer
                 cid = customer.id
                 row = overdue_customers.setdefault(cid, {"customer_id": cid, "customer_name": customer.get_full_name() or customer.email, "overdue_balance": Decimal("0.00"), "oldest_days": 0, "invoice_count": 0})
@@ -149,17 +176,93 @@ class BusinessReceivablesIntelligenceView(APIView):
 
         settings, _ = InvoiceAutomationSettings.objects.get_or_create(business=business)
         customers = sorted(overdue_customers.values(), key=lambda row: (row["oldest_days"], row["overdue_balance"]), reverse=True)
+        threshold_amount = Decimal(settings.overdue_pause_threshold_cents) / Decimal("100")
         for row in customers:
             row["overdue_balance"] = str(row["overdue_balance"].quantize(Decimal("0.01")))
-            threshold_amount = Decimal(settings.overdue_pause_threshold_cents) / Decimal("100")
             row["pause_recommended"] = bool(settings.pause_new_non_emergency_work_when_overdue and row["oldest_days"] >= settings.overdue_pause_threshold_days and Decimal(row["overdue_balance"]) >= threshold_amount)
 
         total_overdue = sum((Decimal(row["overdue_balance"]) for row in customers), Decimal("0.00"))
+
+        payment_history = {}
+        for invoice in invoices:
+            if invoice.status != Invoice.Status.PAID or not invoice.paid_at or not invoice.due_date or not invoice.ticket_id or not invoice.ticket.customer_id:
+                continue
+            customer = invoice.ticket.customer
+            row = payment_history.setdefault(customer.id, {
+                "customer_id": customer.id,
+                "customer_name": customer.get_full_name() or customer.email,
+                "paid_invoice_count": 0,
+                "late_invoice_count": 0,
+                "late_days_total": 0,
+            })
+            row["paid_invoice_count"] += 1
+            late_days = max(0, (invoice.paid_at.date() - invoice.due_date).days)
+            if late_days > 0:
+                row["late_invoice_count"] += 1
+                row["late_days_total"] += late_days
+
+        chronic_late = []
+        for row in payment_history.values():
+            paid_count = row["paid_invoice_count"]
+            late_count = row["late_invoice_count"]
+            if paid_count < 2 or late_count < 2:
+                continue
+            late_rate = late_count / paid_count if paid_count else 0
+            avg_late = row["late_days_total"] / late_count if late_count else 0
+            if late_rate >= 0.5 or avg_late >= 7:
+                chronic_late.append({
+                    "customer_id": row["customer_id"],
+                    "customer_name": row["customer_name"],
+                    "paid_invoice_count": paid_count,
+                    "late_invoice_count": late_count,
+                    "late_rate": round(late_rate, 2),
+                    "average_days_late": round(avg_late, 1),
+                })
+        chronic_late.sort(key=lambda row: (row["late_rate"], row["average_days_late"]), reverse=True)
+
+        top_overdue = Decimal(customers[0]["overdue_balance"]) if customers else Decimal("0.00")
+        concentration_pct = round(float((top_overdue / total_overdue) * Decimal("100")), 1) if total_overdue > 0 else 0.0
+
+        insights = []
+        if total_overdue > 0:
+            insights.append({"severity": "high" if total_overdue >= Decimal("5000") else "medium", "type": "OVERDUE_BALANCE", "message": f"${total_overdue.quantize(Decimal('0.01'))} is currently overdue across {len(customers)} customer(s)."})
+        if concentration_pct >= 50 and customers:
+            insights.append({"severity": "high", "type": "CUSTOMER_CONCENTRATION", "message": f"{concentration_pct}% of overdue receivables are concentrated in {customers[0]['customer_name']}."})
+        if chronic_late:
+            insights.append({"severity": "medium", "type": "CHRONIC_LATE_PAYERS", "message": f"{len(chronic_late)} customer(s) have a repeated late-payment pattern."})
+        if outstanding_total > 0 and forecast_30 < outstanding_total * Decimal("0.50"):
+            insights.append({"severity": "medium", "type": "COLLECTION_RISK", "message": "Less than half of outstanding receivables are currently weighted as likely to collect in the next 30 days."})
+
+        last_automated = (
+            InvoiceEvent.objects.filter(
+                invoice__ticket__assigned_business=business,
+                event_type=InvoiceEvent.EventType.REMINDER,
+                external_reference__startswith="AUTO_REMINDER_V1:",
+            )
+            .order_by("-occurred_at")
+            .values_list("occurred_at", flat=True)
+            .first()
+        )
+
         return Response({
             "business_id": business.id,
             "aging": {key: str(value.quantize(Decimal("0.01"))) for key, value in buckets.items()},
+            "outstanding_total": str(outstanding_total.quantize(Decimal("0.01"))),
             "overdue_total": str(total_overdue.quantize(Decimal("0.01"))),
             "overdue_customer_count": len(customers),
             "customers": customers[:50],
+            "collection_forecast": {
+                "due_next_7_days": str(due_next_7.quantize(Decimal("0.01"))),
+                "due_next_30_days": str(due_next_30.quantize(Decimal("0.01"))),
+                "weighted_expected_30_days": str(forecast_30.quantize(Decimal("0.01"))),
+                "overdue_concentration_pct": concentration_pct,
+            },
+            "chronic_late_customers": chronic_late[:25],
+            "insights": insights[:8],
+            "automation": {
+                "reminders_enabled": settings.auto_reminders_enabled,
+                "last_automated_reminder_at": last_automated.isoformat() if last_automated else None,
+                "runtime": "ACTIVE_DAILY" if settings.auto_reminders_enabled else "DISABLED_BY_BUSINESS",
+            },
             "settings": _settings_payload(settings),
         })
