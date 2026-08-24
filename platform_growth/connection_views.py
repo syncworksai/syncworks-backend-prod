@@ -12,7 +12,7 @@ from platform_growth.services.oauth_state import is_state_expired
 from platform_growth.views import OAuthMetaCallbackAPIView, OAuthMetaStartAPIView
 
 
-_ALLOWED_RETURN_PATHS = {"/sbo/growth", "/sbo/settings"}
+_ALLOWED_RETURN_PATHS = {"/sbo/growth", "/sbo/settings", "/platform"}
 
 
 def _safe_return_path(value: object) -> str:
