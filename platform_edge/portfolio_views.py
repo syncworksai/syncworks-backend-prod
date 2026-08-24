@@ -57,6 +57,37 @@ def _strategy_boards():
     }
 
 
+def _portfolio_trades(user):
+    return EdgePaperTrade.objects.filter(
+        user=user,
+        signal__event_key__startswith="PORTFOLIO:",
+    ).select_related("signal")
+
+
+def _lifetime_snapshot(user, bankroll_cents):
+    trades = _portfolio_trades(user)
+    closed = trades.filter(status="EXITED")
+    opened = trades.filter(status="OPEN")
+    realized = closed.aggregate(total=Sum("pnl_cents"))["total"] or 0
+    first_trade_at = trades.order_by("created_at").values_list("created_at", flat=True).first()
+    last_trade_at = trades.order_by("-created_at").values_list("created_at", flat=True).first()
+    equity = bankroll_cents + realized
+    roi_pct = round((realized / bankroll_cents) * 100, 2) if bankroll_cents else 0.0
+    return {
+        "starting_bankroll_cents": bankroll_cents,
+        "compounded_equity_cents": equity,
+        "lifetime_realized_pnl_cents": realized,
+        "lifetime_roi_pct": roi_pct,
+        "lifetime_trade_count": trades.count(),
+        "lifetime_closed_trades": closed.count(),
+        "lifetime_open_trades": opened.count(),
+        "inception_at": first_trade_at,
+        "last_trade_at": last_trade_at,
+        "as_of": timezone.now(),
+        "note": "Cumulative realized paper P/L is carried forward across days. Risk sizing rules remain frozen and do not automatically increase with gains.",
+    }
+
+
 def _risk_snapshot(user, bankroll_cents):
     start = _today_start()
     trades = EdgePaperTrade.objects.filter(
@@ -197,6 +228,7 @@ def portfolio_live(request):
     bankroll_cents = max(100, int(request.query_params.get("bankroll_cents") or 10000))
     boards = _strategy_boards()
     risk = _risk_snapshot(request.user, bankroll_cents)
+    lifetime = _lifetime_snapshot(request.user, bankroll_cents)
     candidates = []
     for code, board in boards.items():
         for item in board.get("qualifying_signals", []):
@@ -210,12 +242,14 @@ def portfolio_live(request):
                 "blocked_reason": blocked_reason if not can_enter else ("daily_risk_cap" if risk["stop_new_entries"] else ("game_risk_cap" if game_used >= game_limit else None)),
                 "game_risk_used_cents": game_used,
                 "game_risk_limit_cents": game_limit,
+                "observed_at": timezone.now(),
             })
-    recent = EdgePaperTrade.objects.filter(user=request.user, signal__event_key__startswith="PORTFOLIO:").select_related("signal").order_by("-created_at")[:50]
+    recent = _portfolio_trades(request.user).order_by("-created_at")[:50]
     return Response({
         "mode": "paper_only",
         "live_money_enabled": False,
         "portfolio": risk,
+        "lifetime": lifetime,
         "rules": {
             "one_open_position_per_market": True,
             "averaging_down": False,
@@ -227,6 +261,7 @@ def portfolio_live(request):
         },
         "candidates": candidates,
         "paper_trades": [_trade_payload(x) for x in recent],
+        "as_of": timezone.now(),
     })
 
 
@@ -290,7 +325,8 @@ def portfolio_paper_tick(request):
                 opened.append(_trade_payload(trade))
 
     final_risk = _risk_snapshot(request.user, bankroll_cents)
-    recent = EdgePaperTrade.objects.filter(user=request.user, signal__event_key__startswith="PORTFOLIO:").select_related("signal").order_by("-created_at")[:50]
+    lifetime = _lifetime_snapshot(request.user, bankroll_cents)
+    recent = _portfolio_trades(request.user).order_by("-created_at")[:50]
     return Response({
         "mode": "paper_only",
         "live_money_enabled": False,
@@ -298,5 +334,7 @@ def portfolio_paper_tick(request):
         "closed": closed,
         "skipped": skipped,
         "portfolio": final_risk,
+        "lifetime": lifetime,
         "paper_trades": [_trade_payload(x) for x in recent],
+        "as_of": timezone.now(),
     })
