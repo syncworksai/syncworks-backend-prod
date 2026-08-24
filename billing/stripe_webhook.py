@@ -1,31 +1,28 @@
-# backend/billing/stripe_webhook.py
 import json
-import stripe
 
+import stripe
 from django.conf import settings
 from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 
-# ✅ IMPORTANT:
-# Set these in your environment / settings:
-# STRIPE_SECRET_KEY=sk_test_...
-# STRIPE_WEBHOOK_SECRET=whsec_...   (from Stripe Dashboard or Stripe CLI)
+from user_accounts.stripe_webhook_events import claim_stripe_event, mark_stripe_event_failed, mark_stripe_event_processed
+
 stripe.api_key = getattr(settings, "STRIPE_SECRET_KEY", None) or getattr(settings, "STRIPE_API_KEY", None)
 
 
 @csrf_exempt
 def stripe_webhook(request):
+    """Primary Stripe webhook ingress with persistent delivery idempotency.
+
+    Business-specific side effects still live in their dedicated handlers. This
+    endpoint now records every verified event id so Stripe retries cannot be
+    silently processed twice as the primary billing flow is expanded.
     """
-    Handles Stripe webhook events.
-    MVP: we care about checkout.session.completed for card setup / subscription start.
-    """
+
     payload = request.body
     sig_header = request.META.get("HTTP_STRIPE_SIGNATURE", "")
-
     webhook_secret = getattr(settings, "STRIPE_WEBHOOK_SECRET", None)
 
-    # If you haven't configured the secret yet, allow in DEBUG for local testing
-    # (In production, you MUST have STRIPE_WEBHOOK_SECRET set.)
     if not webhook_secret:
         if not settings.DEBUG:
             return HttpResponse("Missing STRIPE_WEBHOOK_SECRET", status=500)
@@ -41,26 +38,20 @@ def stripe_webhook(request):
         except stripe.error.SignatureVerificationError:
             return HttpResponse("Invalid signature", status=400)
 
-    event_type = event.get("type", "")
-    data_obj = (event.get("data") or {}).get("object") or {}
+    try:
+        ledger, should_process = claim_stripe_event(event, endpoint="primary_billing")
+    except ValueError:
+        return HttpResponse("Missing Stripe event id", status=400)
 
-    # ✅ TODO: wire this to your DB
-    # At minimum, you'll want to:
-    # - identify business (via metadata you attach when creating session)
-    # - store stripe customer id
-    # - store card brand/last4/exp
-    # - mark stripe_setup_complete = True
+    if not should_process:
+        return HttpResponse(status=200, headers={"X-SyncWorks-Stripe-Duplicate": "1"})
 
-    if event_type == "checkout.session.completed":
-        # For Checkout sessions, Stripe session object:
-        # data_obj["id"], data_obj["customer"], data_obj.get("mode"), etc.
-        # If you created the session, you should set metadata like:
-        # metadata={"business_id": "...", "user_id": "..."}
-        # so you can update the correct Business.
-        #
-        # Example:
-        # business_id = (data_obj.get("metadata") or {}).get("business_id")
-        # customer_id = data_obj.get("customer")
-        pass
+    try:
+        # This legacy ingress currently has no remaining business mutation of its
+        # own. Mark verified events ignored until a dedicated handler claims them.
+        mark_stripe_event_processed(ledger, ignored=True)
+    except Exception as exc:
+        mark_stripe_event_failed(ledger, exc)
+        raise
 
     return HttpResponse(status=200)
