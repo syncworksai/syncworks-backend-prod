@@ -41,7 +41,7 @@ class ProductionReadinessTests(APITestCase):
         SESSION_COOKIE_SECURE=True,
         CSRF_COOKIE_SECURE=True,
         SECURE_HSTS_SECONDS=3600,
-        ALLOWED_HOSTS=["syncworks-api.onrender.com"],
+        ALLOWED_HOSTS=["testserver", "syncworks-api.onrender.com"],
         EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend",
         EMAIL_HOST="smtp.example.com",
         DEFAULT_FROM_EMAIL="SyncWorks <no-reply@syncworksapp.com>",
