@@ -9,7 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from user_accounts.models import Business, BusinessMember, Invoice, InvoiceEvent, Ticket
+from user_accounts.models import Business, BusinessMember, Invoice, InvoiceEvent, Notification, Ticket
 from user_accounts.serializers.tickets import InvoiceSerializer
 
 
@@ -104,6 +104,26 @@ def _customer_name(ticket):
             pass
         return getattr(customer, "email", "") or "Customer"
     return "Customer"
+
+
+def _notify_customer(invoice: Invoice, *, title: str, body: str, event: str, actor=None) -> None:
+    ticket = getattr(invoice, "ticket", None)
+    recipient = getattr(ticket, "customer", None) if ticket else None
+    if not recipient:
+        return
+    Notification.objects.create(
+        recipient=recipient,
+        actor=actor,
+        type=Notification.TYPE_BILLING,
+        title=title,
+        body=body,
+        data={
+            "invoice_id": invoice.id,
+            "ticket_id": invoice.ticket_id,
+            "event": event,
+            "route": f"/customer/invoices?invoice_id={invoice.id}",
+        },
+    )
 
 
 def _invoice_payload(invoice: Invoice, include_events=False):
@@ -299,13 +319,28 @@ class BusinessInvoiceActionView(APIView):
                 ticket = invoice.ticket
                 if not ticket.invoiced_at:
                     ticket.invoiced_at = timezone.now()
-                    ticket.save(update_fields=["invoiced_at"])
-            InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.SENT, actor=request.user, message="Invoice marked sent to customer.")
+                    ticket.status = Ticket.Status.INVOICED
+                    ticket.save(update_fields=["invoiced_at", "status"])
+            InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.SENT, actor=request.user, message="Invoice sent to customer through SyncWorks.")
+            _notify_customer(
+                invoice,
+                title=f"Invoice #{invoice.id} is ready",
+                body=f"{business.name} sent you an invoice for ${_money(invoice.total)}. Open SyncWorks to review and pay.",
+                event="INVOICE_SENT",
+                actor=request.user,
+            )
 
         elif action_name == "reminder":
             if invoice.status != Invoice.Status.SENT:
                 return Response({"detail": "Only sent invoices can receive a payment reminder."}, status=409)
-            InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.REMINDER, actor=request.user, message="Payment reminder queued from Invoice Center.")
+            InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.REMINDER, actor=request.user, message="Payment reminder sent from Invoice Center.")
+            _notify_customer(
+                invoice,
+                title=f"Payment reminder · Invoice #{invoice.id}",
+                body=f"${max(Decimal('0.00'), _money(invoice.total) - _money(invoice.amount_paid))} remains due to {business.name}.",
+                event="PAYMENT_REMINDER",
+                actor=request.user,
+            )
 
         elif action_name == "void":
             if invoice.status == Invoice.Status.PAID:
@@ -344,6 +379,13 @@ class BusinessInvoiceActionView(APIView):
                 amount=amount,
                 payment_source=source,
                 external_reference=reference,
+            )
+            _notify_customer(
+                invoice,
+                title=f"Payment recorded · Invoice #{invoice.id}",
+                body=("Your invoice is paid in full." if fully_paid else f"A ${amount} payment was recorded. Remaining balance: ${max(Decimal('0.00'), _money(invoice.total) - new_paid)}."),
+                event="PAYMENT_RECORDED",
+                actor=request.user,
             )
         else:
             return Response({"detail": "Unknown invoice action."}, status=404)

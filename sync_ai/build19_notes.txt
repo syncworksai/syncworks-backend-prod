@@ -1,0 +1,1 @@
+Customer invoice API routes live under /api/v1/sync-ai/customer/invoices/ and use the existing /api/v1/billing/invoices/:id/checkout/ Stripe payment endpoint.
