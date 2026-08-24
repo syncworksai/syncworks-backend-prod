@@ -36,6 +36,7 @@ from .billing import Invoice, InvoiceLineItem
 from .invoice_experience import InvoiceEvent
 from .invoice_automation import InvoiceAutomationSettings
 from .production_readiness import ProductionReadinessState
+from .stripe_webhook_event import StripeWebhookEvent
 from .cash_fee_invoice import CashFeeInvoice
 from .connections import Connection
 from .invites import InviteCode
@@ -115,7 +116,7 @@ __all__ = [
     "BusinessProject", "BusinessPartnerRelationship", "PartnerWorkTicket", "PartnerWorkChangeOrder",
     "PartnerPaymentAllocation", "PartnerPayment", "PartnerInvoice", "PartnerWorkEstimate", "BusinessPartnerInvitation",
     "ServiceRequest", "ServiceRequestPhoto", "Ticket", "TicketMessage", "TicketAttachment", "TicketQuote",
-    "TicketViewEvent", "Invoice", "InvoiceLineItem", "InvoiceEvent", "InvoiceAutomationSettings", "ProductionReadinessState", "CashFeeInvoice", "Connection", "InviteCode", "DocumentTemplate",
+    "TicketViewEvent", "Invoice", "InvoiceLineItem", "InvoiceEvent", "InvoiceAutomationSettings", "ProductionReadinessState", "StripeWebhookEvent", "CashFeeInvoice", "Connection", "InviteCode", "DocumentTemplate",
     "PlatformBillingProfile", "MonthlyPlatformBill", "UserBillingProfile", "PromoCode", "PromoRedemption",
     "PlatformDailyKpi", "BusinessDailyKpi", "MarketplaceCellDailyKpi", "CustomerSettings", "CommunicationPreference",
     "TicketConversationReadState", "TicketAssetLink", "AssetIdentifier", "TrackableAsset", "ResourceMovement",
