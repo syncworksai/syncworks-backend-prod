@@ -17,6 +17,7 @@ from user_accounts.models import (
     InvoiceEvent,
     Notification,
     ProductionReadinessState,
+    StripeWebhookEvent,
     Ticket,
 )
 from user_accounts.permissions import IsGodMode
@@ -55,14 +56,7 @@ def _present(*names: str) -> bool:
 
 
 def _check(key: str, label: str, status: str, detail: str, *, category: str, action: str = "") -> dict:
-    return {
-        "key": key,
-        "label": label,
-        "status": status,
-        "detail": detail,
-        "category": category,
-        "action": action,
-    }
+    return {"key": key, "label": label, "status": status, "detail": detail, "category": category, "action": action}
 
 
 def _database_check() -> tuple[dict, bool]:
@@ -70,22 +64,9 @@ def _database_check() -> tuple[dict, bool]:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
             cursor.fetchone()
-        return _check(
-            "database_connectivity",
-            "Database connectivity",
-            "GREEN",
-            "The application can query the configured database.",
-            category="Data",
-        ), True
+        return _check("database_connectivity", "Database connectivity", "GREEN", "The application can query the configured database.", category="Data"), True
     except Exception:
-        return _check(
-            "database_connectivity",
-            "Database connectivity",
-            "RED",
-            "The application could not complete a database health query.",
-            category="Data",
-            action="Inspect the production database connection immediately.",
-        ), False
+        return _check("database_connectivity", "Database connectivity", "RED", "The application could not complete a database health query.", category="Data", action="Inspect the production database connection immediately."), False
 
 
 def _latest_reminder_at():
@@ -111,11 +92,7 @@ def _clean_signoff_section(raw, allowed_keys: set[str], current: dict) -> dict:
         status = str(value.get("status") or "PENDING").upper()
         if status not in SIGNOFF_STATUSES:
             raise ValueError(f"Invalid status for {key}.")
-        next_state[key] = {
-            "status": status,
-            "note": str(value.get("note") or "").strip()[:1000],
-            "updated_at": now,
-        }
+        next_state[key] = {"status": status, "note": str(value.get("note") or "").strip()[:1000], "updated_at": now}
     return next_state
 
 
@@ -126,12 +103,7 @@ def _signoff_summary(state: ProductionReadinessState, red_count: int) -> dict:
     blocked = sum(1 for row in all_rows if row.get("status") == "BLOCKED")
     external_resolved = sum(1 for key in EXTERNAL_GATE_KEYS if external.get(key, {}).get("status") in {"PASSED", "WAIVED"})
     certification_resolved = sum(1 for key in CERTIFICATION_KEYS if certification.get(key, {}).get("status") in {"PASSED", "WAIVED"})
-    ready = (
-        red_count == 0
-        and blocked == 0
-        and external_resolved == len(EXTERNAL_GATE_KEYS)
-        and certification_resolved == len(CERTIFICATION_KEYS)
-    )
+    ready = red_count == 0 and blocked == 0 and external_resolved == len(EXTERNAL_GATE_KEYS) and certification_resolved == len(CERTIFICATION_KEYS)
     release_gate = "READY_FOR_RELEASE" if ready else "BLOCKED" if red_count or blocked else "VERIFICATION_IN_PROGRESS"
     return {
         "release_gate": release_gate,
@@ -150,153 +122,62 @@ def build_production_readiness_payload() -> dict:
 
     engine = str(settings.DATABASES.get("default", {}).get("ENGINE") or "")
     postgres = "postgresql" in engine
-    checks.append(_check(
-        "production_database",
-        "Production database engine",
-        "GREEN" if postgres else "YELLOW",
-        "PostgreSQL is configured." if postgres else "This environment is not using PostgreSQL. SQLite is acceptable for local/test only.",
-        category="Data",
-        action="Verify DB_ENGINE=postgres in production." if not postgres else "",
-    ))
+    checks.append(_check("production_database", "Production database engine", "GREEN" if postgres else "YELLOW", "PostgreSQL is configured." if postgres else "This environment is not using PostgreSQL. SQLite is acceptable for local/test only.", category="Data", action="Verify DB_ENGINE=postgres in production." if not postgres else ""))
 
-    checks.append(_check(
-        "debug_disabled",
-        "Django debug disabled",
-        "GREEN" if not settings.DEBUG else "RED",
-        "DEBUG is disabled." if not settings.DEBUG else "DEBUG is enabled in this environment.",
-        category="Security",
-        action="Set DJANGO_DEBUG=false before public production use." if settings.DEBUG else "",
-    ))
+    checks.append(_check("debug_disabled", "Django debug disabled", "GREEN" if not settings.DEBUG else "RED", "DEBUG is disabled." if not settings.DEBUG else "DEBUG is enabled in this environment.", category="Security", action="Set DJANGO_DEBUG=false before public production use." if settings.DEBUG else ""))
 
     secure_secret = str(getattr(settings, "SECRET_KEY", "")) not in {"", "dev-insecure-secret-change-me"}
-    checks.append(_check(
-        "secret_key",
-        "Production secret key",
-        "GREEN" if secure_secret else "RED",
-        "A non-development Django secret is configured." if secure_secret else "The development/default Django secret is active.",
-        category="Security",
-        action="Set DJANGO_SECRET_KEY to a strong provider secret." if not secure_secret else "",
-    ))
+    checks.append(_check("secret_key", "Production secret key", "GREEN" if secure_secret else "RED", "A non-development Django secret is configured." if secure_secret else "The development/default Django secret is active.", category="Security", action="Set DJANGO_SECRET_KEY to a strong provider secret." if not secure_secret else ""))
 
     secure_transport = bool(getattr(settings, "SESSION_COOKIE_SECURE", False) and getattr(settings, "CSRF_COOKIE_SECURE", False))
-    checks.append(_check(
-        "secure_cookies",
-        "Secure auth cookies",
-        "GREEN" if secure_transport else "YELLOW",
-        "Session and CSRF secure-cookie flags are enabled." if secure_transport else "One or more secure-cookie flags are disabled in this environment.",
-        category="Security",
-    ))
+    checks.append(_check("secure_cookies", "Secure auth cookies", "GREEN" if secure_transport else "YELLOW", "Session and CSRF secure-cookie flags are enabled." if secure_transport else "One or more secure-cookie flags are disabled in this environment.", category="Security"))
 
     hsts = int(getattr(settings, "SECURE_HSTS_SECONDS", 0) or 0)
-    checks.append(_check(
-        "hsts",
-        "HTTPS / HSTS policy",
-        "GREEN" if hsts > 0 else "YELLOW",
-        f"HSTS is enabled for {hsts} seconds." if hsts > 0 else "HSTS is not enabled in this environment.",
-        category="Security",
-    ))
+    checks.append(_check("hsts", "HTTPS / HSTS policy", "GREEN" if hsts > 0 else "YELLOW", f"HSTS is enabled for {hsts} seconds." if hsts > 0 else "HSTS is not enabled in this environment.", category="Security"))
 
     allowed_hosts = {str(value).lower() for value in getattr(settings, "ALLOWED_HOSTS", [])}
     host_ready = "syncworks-api.onrender.com" in allowed_hosts or "api.syncworksapp.com" in allowed_hosts
-    checks.append(_check(
-        "allowed_hosts",
-        "Production API hosts",
-        "GREEN" if host_ready else "RED",
-        "A SyncWorks production API hostname is allowlisted." if host_ready else "Expected production API hosts are missing from ALLOWED_HOSTS.",
-        category="Security",
-    ))
+    checks.append(_check("allowed_hosts", "Production API hosts", "GREEN" if host_ready else "RED", "A SyncWorks production API hostname is allowlisted." if host_ready else "Expected production API hosts are missing from ALLOWED_HOSTS.", category="Security"))
 
     email_backend = str(getattr(settings, "EMAIL_BACKEND", ""))
     email_ready = bool("console" not in email_backend.lower() and getattr(settings, "EMAIL_HOST", "") and getattr(settings, "DEFAULT_FROM_EMAIL", ""))
-    checks.append(_check(
-        "email_delivery",
-        "No-reply email delivery",
-        "GREEN" if email_ready else "RED",
-        "A non-console email backend, host, and sender are configured." if email_ready else "Email is not fully configured for real production delivery.",
-        category="Communications",
-        action="Verify EMAIL_BACKEND, EMAIL_HOST, credentials, and DEFAULT_FROM_EMAIL." if not email_ready else "",
-    ))
+    checks.append(_check("email_delivery", "No-reply email delivery", "GREEN" if email_ready else "RED", "A non-console email backend, host, and sender are configured." if email_ready else "Email is not fully configured for real production delivery.", category="Communications", action="Verify EMAIL_BACKEND, EMAIL_HOST, credentials, and DEFAULT_FROM_EMAIL." if not email_ready else ""))
 
     stripe_secret = bool(str(getattr(settings, "STRIPE_SECRET_KEY", "") or "").strip())
     stripe_webhook = bool(str(getattr(settings, "STRIPE_WEBHOOK_SECRET", "") or "").strip())
     invoice_webhook = bool(str(getattr(settings, "STRIPE_INVOICE_WEBHOOK_SECRET", "") or "").strip())
-    checks.append(_check(
-        "stripe_core",
-        "Stripe payment configuration",
-        "GREEN" if stripe_secret and stripe_webhook else "RED",
-        "Stripe secret key and primary webhook secret are configured." if stripe_secret and stripe_webhook else "Stripe payment credentials or the primary webhook secret are missing.",
-        category="Payments",
-    ))
-    checks.append(_check(
-        "stripe_invoice_webhook",
-        "Invoice webhook separation",
-        "GREEN" if invoice_webhook else "YELLOW",
-        "A dedicated invoice webhook secret is configured." if invoice_webhook else "Invoice webhook uses fallback/shared configuration. Dedicated separation is preferred for production hardening.",
-        category="Payments",
-    ))
+    checks.append(_check("stripe_core", "Stripe payment configuration", "GREEN" if stripe_secret and stripe_webhook else "RED", "Stripe secret key and primary webhook secret are configured." if stripe_secret and stripe_webhook else "Stripe payment credentials or the primary webhook secret are missing.", category="Payments"))
+    checks.append(_check("stripe_invoice_webhook", "Invoice webhook separation", "GREEN" if invoice_webhook else "YELLOW", "A dedicated invoice webhook secret is configured." if invoice_webhook else "Invoice webhook uses fallback/shared configuration. Dedicated separation is preferred for production hardening.", category="Payments"))
 
     openai_ready = _present("OPENAI_API_KEY")
-    checks.append(_check(
-        "sync_ai_provider",
-        "SYNC AI provider",
-        "GREEN" if openai_ready else "YELLOW",
-        "OPENAI_API_KEY is present." if openai_ready else "No OPENAI_API_KEY is visible to this runtime.",
-        category="AI",
-    ))
+    checks.append(_check("sync_ai_provider", "SYNC AI provider", "GREEN" if openai_ready else "YELLOW", "OPENAI_API_KEY is present." if openai_ready else "No OPENAI_API_KEY is visible to this runtime.", category="AI"))
 
     maps_ready = _present("GOOGLE_MAPS_SERVER_KEY", "GOOGLE_MAPS_API_KEY")
-    checks.append(_check(
-        "maps_provider",
-        "Maps / routing provider",
-        "GREEN" if maps_ready else "YELLOW",
-        "A Google Maps server key is present." if maps_ready else "Maps/routing will use reduced or fallback behavior without a configured server key.",
-        category="Integrations",
-    ))
+    checks.append(_check("maps_provider", "Maps / routing provider", "GREEN" if maps_ready else "YELLOW", "A Google Maps server key is present." if maps_ready else "Maps/routing will use reduced or fallback behavior without a configured server key.", category="Integrations"))
 
     meta_ready = bool(getattr(settings, "META_APP_ID", "") and getattr(settings, "META_APP_SECRET", ""))
-    checks.append(_check(
-        "meta_growth",
-        "Meta Growth connection",
-        "GREEN" if meta_ready else "YELLOW",
-        "Meta app credentials are configured." if meta_ready else "Meta social automation is not fully configured in this environment.",
-        category="Integrations",
-    ))
+    checks.append(_check("meta_growth", "Meta Growth connection", "GREEN" if meta_ready else "YELLOW", "Meta app credentials are configured." if meta_ready else "Meta social automation is not fully configured in this environment.", category="Integrations"))
 
     push_ready = bool(getattr(settings, "SYNC_PUSH_PROVIDER_CONFIGURED", False))
-    checks.append(_check(
-        "push_provider",
-        "Native/web push provider",
-        "GREEN" if push_ready else "YELLOW",
-        "Push provider is marked configured." if push_ready else "Push registration is prepared, but a delivery provider is not marked configured.",
-        category="Communications",
-    ))
+    checks.append(_check("push_provider", "Native/web push provider", "GREEN" if push_ready else "YELLOW", "Push provider is marked configured." if push_ready else "Push registration is prepared, but a delivery provider is not marked configured.", category="Communications"))
 
     media_root = str(getattr(settings, "MEDIA_ROOT", "") or "")
-    checks.append(_check(
-        "durable_media",
-        "Durable uploaded-file storage",
-        "YELLOW",
-        f"Application media currently resolves through MEDIA_ROOT ({media_root or 'not set'}). Provider-level durable object storage/versioning cannot be proven from Django runtime.",
-        category="Data",
-        action="Verify durable object storage/versioning before broad onboarding.",
-    ))
+    checks.append(_check("durable_media", "Durable uploaded-file storage", "YELLOW", f"Application media currently resolves through MEDIA_ROOT ({media_root or 'not set'}). Provider-level durable object storage/versioning cannot be proven from Django runtime.", category="Data", action="Verify durable object storage/versioning before broad onboarding."))
+    checks.append(_check("backups_pitr", "Automated backups + PITR", "YELLOW", "Provider-level PostgreSQL backups, retention, PITR, and restore testing cannot be verified from application code.", category="Recovery", action="Verify automated backups/PITR at the database provider and record a restore drill."))
 
-    checks.append(_check(
-        "backups_pitr",
-        "Automated backups + PITR",
-        "YELLOW",
-        "Provider-level PostgreSQL backups, retention, PITR, and restore testing cannot be verified from application code.",
-        category="Recovery",
-        action="Verify automated backups/PITR at the database provider and record a restore drill.",
-    ))
-
+    ledger_migration_applied = False
+    if db_ok:
+        try:
+            ledger_migration_applied = MigrationRecorder.Migration.objects.filter(app="user_accounts", name="0132_stripe_webhook_event").exists()
+        except Exception:
+            ledger_migration_applied = False
     checks.append(_check(
         "stripe_event_ledger",
         "Global Stripe event idempotency ledger",
-        "YELLOW",
-        "Invoice reminder events are idempotent, but the existing Stripe production audit still recommends a persistent global Stripe webhook event ledger.",
+        "GREEN" if ledger_migration_applied else "YELLOW",
+        "Persistent Stripe event-id deduplication is active for hardened webhook ingress." if ledger_migration_applied else "Stripe event ledger code exists but migration 0132 is not yet recorded in this database.",
         category="Payments",
-        action="Add a durable Stripe event-id ledger before high-volume unrestricted launch.",
+        action="Apply user_accounts.0132_stripe_webhook_event." if not ledger_migration_applied else "",
     ))
 
     counts = Counter(row["status"] for row in checks)
@@ -315,6 +196,8 @@ def build_production_readiness_payload() -> dict:
                 "notifications": Notification.objects.count(),
                 "applied_migrations": MigrationRecorder.Migration.objects.count(),
                 "last_invoice_reminder_at": _latest_reminder_at(),
+                "stripe_webhook_events": StripeWebhookEvent.objects.count() if ledger_migration_applied else None,
+                "stripe_webhook_duplicate_deliveries": sum(max(0, value - 1) for value in StripeWebhookEvent.objects.values_list("attempts", flat=True)) if ledger_migration_applied else None,
             }
             state = _state_row()
         except Exception:
@@ -377,17 +260,9 @@ class ProductionReadinessAPIView(APIView):
         state = _state_row()
         try:
             if "external_verification" in request.data:
-                state.external_verification = _clean_signoff_section(
-                    request.data.get("external_verification"),
-                    EXTERNAL_GATE_KEYS,
-                    state.external_verification,
-                )
+                state.external_verification = _clean_signoff_section(request.data.get("external_verification"), EXTERNAL_GATE_KEYS, state.external_verification)
             if "certification" in request.data:
-                state.certification = _clean_signoff_section(
-                    request.data.get("certification"),
-                    CERTIFICATION_KEYS,
-                    state.certification,
-                )
+                state.certification = _clean_signoff_section(request.data.get("certification"), CERTIFICATION_KEYS, state.certification)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)
         state.updated_by = request.user
