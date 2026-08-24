@@ -8,11 +8,11 @@ from platform_growth.models import PlatformActivationEvent, PlatformCampaign, Pl
 User = get_user_model()
 
 
-@override_settings(GOD_MODE_EMAIL_ALLOWLIST=["god@example.com"], META_WEBHOOK_VERIFY_TOKEN="verify-123")
+@override_settings(META_WEBHOOK_VERIFY_TOKEN="verify-123")
 class TestPlatformGrowthPhase1(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.god = User.objects.create_user(username="god@example.com", email="god@example.com", password="Password123!")
+        self.god = User.objects.create_user(username="jacoblord7@outlook.com", email="jacoblord7@outlook.com", password="Password123!")
         self.normal = User.objects.create_user(
             username="normal@example.com",
             email="normal@example.com",
