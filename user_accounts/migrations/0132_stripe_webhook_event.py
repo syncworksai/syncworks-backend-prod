@@ -26,6 +26,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="stripewebhookevent",
-            index=models.Index(fields=["endpoint", "event_type", "status"], name="user_accoun_endpoin_e751d5_idx"),
+            index=models.Index(fields=["endpoint", "event_type", "status"], name="user_accoun_endpoin_4547cb_idx"),
         ),
     ]
