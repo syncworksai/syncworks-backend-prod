@@ -9,7 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from user_accounts.models import Business, BusinessMember, Invoice, InvoiceEvent, Notification, Ticket
+from user_accounts.models import Business, BusinessMember, Invoice, InvoiceAutomationSettings, InvoiceEvent, Notification, Ticket
 from user_accounts.serializers.tickets import InvoiceSerializer
 
 
@@ -32,7 +32,6 @@ def _business_context(request):
 
     owned = Business.objects.filter(owner=request.user, is_active=True)
     memberships = BusinessMember.objects.filter(user=request.user, is_active=True, business__is_active=True).select_related("business")
-
     if business_id:
         business = Business.objects.filter(pk=business_id, is_active=True).first()
         if not business:
@@ -43,7 +42,6 @@ def _business_context(request):
         if not member:
             raise PermissionError("You do not have access to this Business.")
         return business, member
-
     business = owned.order_by("id").first()
     if business:
         return business, None
@@ -117,12 +115,39 @@ def _notify_customer(invoice: Invoice, *, title: str, body: str, event: str, act
         type=Notification.TYPE_BILLING,
         title=title,
         body=body,
-        data={
-            "invoice_id": invoice.id,
-            "ticket_id": invoice.ticket_id,
-            "event": event,
-            "route": f"/customer/invoices?invoice_id={invoice.id}",
-        },
+        data={"invoice_id": invoice.id, "ticket_id": invoice.ticket_id, "event": event, "route": f"/customer/invoices?invoice_id={invoice.id}"},
+    )
+
+
+def _send_invoice(invoice: Invoice, business: Business, *, actor=None, automated=False) -> None:
+    if invoice.status == Invoice.Status.VOID:
+        raise ValueError("A void invoice cannot be sent.")
+    invoice.status = Invoice.Status.SENT
+    invoice.save(update_fields=["status", "updated_at"])
+    if invoice.ticket_id and invoice.ticket:
+        ticket = invoice.ticket
+        fields = []
+        if not ticket.invoiced_at:
+            ticket.invoiced_at = timezone.now()
+            fields.append("invoiced_at")
+        if ticket.status != Ticket.Status.INVOICED:
+            ticket.status = Ticket.Status.INVOICED
+            fields.append("status")
+        if fields:
+            ticket.save(update_fields=fields)
+    InvoiceEvent.objects.create(
+        invoice=invoice,
+        event_type=InvoiceEvent.EventType.SENT,
+        actor=actor,
+        message="Invoice auto-sent using Business billing settings." if automated else "Invoice sent to customer through SyncWorks.",
+        metadata={"automated": bool(automated)},
+    )
+    _notify_customer(
+        invoice,
+        title=f"Invoice #{invoice.id} is ready",
+        body=f"{business.name} sent you an invoice for ${_money(invoice.total)}. Open SyncWorks to review and pay.",
+        event="INVOICE_SENT",
+        actor=actor,
     )
 
 
@@ -136,26 +161,19 @@ def _invoice_payload(invoice: Invoice, include_events=False):
         "ticket_status": getattr(ticket, "status", "") if ticket else "",
         "customer_name": _customer_name(ticket),
         "marketplace_origin": bool(getattr(ticket, "is_marketplace", False)) if ticket else False,
-        "service_title": (
-            getattr(ticket, "work_title", "")
-            or getattr(getattr(ticket, "service_request", None), "title", "")
-            or invoice.title
-        ) if ticket else invoice.title,
+        "service_title": (getattr(ticket, "work_title", "") or getattr(getattr(ticket, "service_request", None), "title", "") or invoice.title) if ticket else invoice.title,
     })
     if include_events:
-        data["events"] = [
-            {
-                "id": event.id,
-                "event_type": event.event_type,
-                "message": event.message,
-                "amount": str(event.amount) if event.amount is not None else None,
-                "payment_source": event.payment_source,
-                "external_reference": event.external_reference,
-                "occurred_at": event.occurred_at.isoformat(),
-                "actor_id": event.actor_id,
-            }
-            for event in invoice.events.all()
-        ]
+        data["events"] = [{
+            "id": event.id,
+            "event_type": event.event_type,
+            "message": event.message,
+            "amount": str(event.amount) if event.amount is not None else None,
+            "payment_source": event.payment_source,
+            "external_reference": event.external_reference,
+            "occurred_at": event.occurred_at.isoformat(),
+            "actor_id": event.actor_id,
+        } for event in invoice.events.all()]
     return data
 
 
@@ -191,14 +209,8 @@ class BusinessInvoiceCenterView(APIView):
         overdue = [i for i in all_invoices if _derived_state(i) == "OVERDUE"]
         due_soon = [i for i in all_invoices if i.status == Invoice.Status.SENT and i.due_date and today <= i.due_date <= today + timedelta(days=7)]
         paid_month = sum((_money(i.amount_paid) for i in all_invoices if i.paid_at and i.paid_at.date() >= month_start), Decimal("0.00"))
-
         invoiced_ticket_ids = {i.ticket_id for i in all_invoices if i.ticket_id and i.status != Invoice.Status.VOID}
-        ready_tickets = list(
-            Ticket.objects.select_related("customer", "service_request")
-            .filter(assigned_business=business, status=Ticket.Status.COMPLETED)
-            .exclude(id__in=invoiced_ticket_ids)
-            .order_by("-created_at")[:50]
-        )
+        ready_tickets = list(Ticket.objects.select_related("customer", "service_request").filter(assigned_business=business, status=Ticket.Status.COMPLETED).exclude(id__in=invoiced_ticket_ids).order_by("-created_at")[:50])
 
         suggestions = []
         if ready_tickets:
@@ -208,29 +220,14 @@ class BusinessInvoiceCenterView(APIView):
         if due_soon:
             suggestions.append({"type": "DUE_SOON", "count": len(due_soon), "message": f"{len(due_soon)} invoice(s) are due in the next 7 days."})
 
+        automation, _ = InvoiceAutomationSettings.objects.get_or_create(business=business)
         return Response({
             "business_id": business.id,
             "business_name": business.name,
-            "summary": {
-                "invoice_count": len(all_invoices),
-                "outstanding": str(outstanding.quantize(Decimal("0.01"))),
-                "overdue_count": len(overdue),
-                "due_soon_count": len(due_soon),
-                "paid_this_month": str(paid_month.quantize(Decimal("0.01"))),
-                "ready_to_bill_count": len(ready_tickets),
-            },
+            "summary": {"invoice_count": len(all_invoices), "outstanding": str(outstanding.quantize(Decimal("0.01"))), "overdue_count": len(overdue), "due_soon_count": len(due_soon), "paid_this_month": str(paid_month.quantize(Decimal("0.01"))), "ready_to_bill_count": len(ready_tickets)},
+            "automation": {"auto_send_invoices": automation.auto_send_invoices, "auto_reminders_enabled": automation.auto_reminders_enabled, "due_terms": automation.due_terms},
             "suggestions": suggestions,
-            "ready_to_bill": [
-                {
-                    "ticket_id": ticket.id,
-                    "ticket_code": ticket.ticket_code,
-                    "title": ticket.work_title or getattr(ticket.service_request, "title", "") or "Completed job",
-                    "customer_name": _customer_name(ticket),
-                    "marketplace_origin": bool(ticket.is_marketplace),
-                    "total_amount_cents": ticket.total_amount_cents,
-                }
-                for ticket in ready_tickets
-            ],
+            "ready_to_bill": [{"ticket_id": ticket.id, "ticket_code": ticket.ticket_code, "title": ticket.work_title or getattr(ticket.service_request, "title", "") or "Completed job", "customer_name": _customer_name(ticket), "marketplace_origin": bool(ticket.is_marketplace), "total_amount_cents": ticket.total_amount_cents} for ticket in ready_tickets],
             "results": [_invoice_payload(invoice) for invoice in invoices],
         })
 
@@ -272,25 +269,21 @@ class BusinessInvoiceFromTicketView(APIView):
         if existing:
             return Response(_invoice_payload(existing, include_events=True), status=200)
 
+        automation, _ = InvoiceAutomationSettings.objects.get_or_create(business=business)
         cents = int(ticket.total_amount_cents or 0)
         total = (Decimal(cents) / Decimal("100")).quantize(Decimal("0.01"))
         title = str(request.data.get("title") or ticket.work_title or getattr(ticket.service_request, "title", "") or f"Service invoice #{ticket.id}")
-        due_days = request.data.get("due_days", 14)
+        due_days = request.data.get("due_days", None)
+        if due_days is None:
+            due_days = automation.due_days()
         try:
-            due_days = max(0, min(120, int(due_days)))
+            due_days = max(0, min(365, int(due_days)))
         except (TypeError, ValueError):
-            due_days = 14
-        invoice = Invoice.objects.create(
-            ticket=ticket,
-            title=title,
-            notes=str(request.data.get("notes") or ""),
-            subtotal=total,
-            tax=Decimal("0.00"),
-            total=total,
-            due_date=timezone.localdate() + timedelta(days=due_days),
-            payment_method=Invoice.PaymentMethod.CARD,
-        )
-        InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.CREATED, actor=request.user, message="Invoice draft created from completed job.")
+            due_days = automation.due_days()
+        invoice = Invoice.objects.create(ticket=ticket, title=title, notes=str(request.data.get("notes") or ""), subtotal=total, tax=Decimal("0.00"), total=total, due_date=timezone.localdate() + timedelta(days=due_days), payment_method=Invoice.PaymentMethod.CARD)
+        InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.CREATED, actor=request.user, message="Invoice draft created from completed job.", metadata={"due_days": due_days, "auto_send_enabled": automation.auto_send_invoices})
+        if automation.auto_send_invoices:
+            _send_invoice(invoice, business, actor=request.user, automated=True)
         return Response(_invoice_payload(invoice, include_events=True), status=201)
 
 
@@ -311,44 +304,21 @@ class BusinessInvoiceActionView(APIView):
 
         action_name = str(action_name or "").lower()
         if action_name == "send":
-            if invoice.status == Invoice.Status.VOID:
-                return Response({"detail": "A void invoice cannot be sent."}, status=409)
-            invoice.status = Invoice.Status.SENT
-            invoice.save(update_fields=["status", "updated_at"])
-            if invoice.ticket_id and invoice.ticket:
-                ticket = invoice.ticket
-                if not ticket.invoiced_at:
-                    ticket.invoiced_at = timezone.now()
-                    ticket.status = Ticket.Status.INVOICED
-                    ticket.save(update_fields=["invoiced_at", "status"])
-            InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.SENT, actor=request.user, message="Invoice sent to customer through SyncWorks.")
-            _notify_customer(
-                invoice,
-                title=f"Invoice #{invoice.id} is ready",
-                body=f"{business.name} sent you an invoice for ${_money(invoice.total)}. Open SyncWorks to review and pay.",
-                event="INVOICE_SENT",
-                actor=request.user,
-            )
-
+            try:
+                _send_invoice(invoice, business, actor=request.user, automated=False)
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=409)
         elif action_name == "reminder":
             if invoice.status != Invoice.Status.SENT:
                 return Response({"detail": "Only sent invoices can receive a payment reminder."}, status=409)
             InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.REMINDER, actor=request.user, message="Payment reminder sent from Invoice Center.")
-            _notify_customer(
-                invoice,
-                title=f"Payment reminder · Invoice #{invoice.id}",
-                body=f"${max(Decimal('0.00'), _money(invoice.total) - _money(invoice.amount_paid))} remains due to {business.name}.",
-                event="PAYMENT_REMINDER",
-                actor=request.user,
-            )
-
+            _notify_customer(invoice, title=f"Payment reminder · Invoice #{invoice.id}", body=f"${max(Decimal('0.00'), _money(invoice.total) - _money(invoice.amount_paid))} remains due to {business.name}.", event="PAYMENT_REMINDER", actor=request.user)
         elif action_name == "void":
             if invoice.status == Invoice.Status.PAID:
                 return Response({"detail": "Paid invoices must be reconciled, not voided."}, status=409)
             invoice.status = Invoice.Status.VOID
             invoice.save(update_fields=["status", "updated_at"])
             InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.VOIDED, actor=request.user, message=str(request.data.get("reason") or "Invoice voided."))
-
         elif action_name == "record-payment":
             if invoice.status == Invoice.Status.VOID:
                 return Response({"detail": "Cannot record payment on a void invoice."}, status=409)
@@ -371,22 +341,8 @@ class BusinessInvoiceActionView(APIView):
             else:
                 invoice.status = Invoice.Status.SENT
             invoice.save()
-            InvoiceEvent.objects.create(
-                invoice=invoice,
-                event_type=InvoiceEvent.EventType.PAID if fully_paid else InvoiceEvent.EventType.PAYMENT_RECORDED,
-                actor=request.user,
-                message="Payment recorded in SyncWorks." if source == "SYNC_CARD" else "External payment recorded for reconciliation; SyncWorks did not process this payment.",
-                amount=amount,
-                payment_source=source,
-                external_reference=reference,
-            )
-            _notify_customer(
-                invoice,
-                title=f"Payment recorded · Invoice #{invoice.id}",
-                body=("Your invoice is paid in full." if fully_paid else f"A ${amount} payment was recorded. Remaining balance: ${max(Decimal('0.00'), _money(invoice.total) - new_paid)}."),
-                event="PAYMENT_RECORDED",
-                actor=request.user,
-            )
+            InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.PAID if fully_paid else InvoiceEvent.EventType.PAYMENT_RECORDED, actor=request.user, message="Payment recorded in SyncWorks." if source == "SYNC_CARD" else "External payment recorded for reconciliation; SyncWorks did not process this payment.", amount=amount, payment_source=source, external_reference=reference)
+            _notify_customer(invoice, title=f"Payment recorded · Invoice #{invoice.id}", body=("Your invoice is paid in full." if fully_paid else f"A ${amount} payment was recorded. Remaining balance: ${max(Decimal('0.00'), _money(invoice.total) - new_paid)}."), event="PAYMENT_RECORDED", actor=request.user)
         else:
             return Response({"detail": "Unknown invoice action."}, status=404)
 
