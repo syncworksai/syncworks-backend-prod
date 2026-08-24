@@ -56,6 +56,7 @@ class ProductionReadinessTests(APITestCase):
         self.assertIn("summary", response.data)
         self.assertIn("checks", response.data)
         self.assertIn("metrics", response.data)
+        self.assertIn("signoff_state", response.data)
         self.assertIn("external_verification_required", response.data)
         self.assertIn(response.data["summary"]["application_gate"], {"BLOCKED", "PASS_WITH_EXTERNAL_VERIFICATION"})
 
@@ -69,6 +70,41 @@ class ProductionReadinessTests(APITestCase):
         self.assertIn("stripe_core", keys)
         self.assertIn("backups_pitr", keys)
         self.assertIn("durable_media", keys)
+
+    @override_settings(GOD_MODE_EMAIL_ALLOWLIST=["production-god@example.com"])
+    def test_signoff_state_persists_server_side(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {self.god_token.key}")
+        saved = self.client.patch(
+            self.endpoint,
+            {
+                "external_verification": {
+                    "database_backups": {"status": "PASSED", "note": "Provider backup policy verified."},
+                },
+                "certification": {
+                    "marketplace_ticket": {"status": "BLOCKED", "note": "Retest booking boundary."},
+                },
+            },
+            format="json",
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.data["signoff_state"]["external_verification"]["database_backups"]["status"], "PASSED")
+        self.assertEqual(saved.data["signoff_state"]["certification"]["marketplace_ticket"]["status"], "BLOCKED")
+        self.assertEqual(saved.data["summary"]["manual_blocked"], 1)
+
+        loaded = self.client.get(self.endpoint)
+        self.assertEqual(loaded.status_code, 200)
+        self.assertEqual(loaded.data["signoff_state"]["external_verification"]["database_backups"]["status"], "PASSED")
+        self.assertEqual(loaded.data["signoff_state"]["certification"]["marketplace_ticket"]["note"], "Retest booking boundary.")
+
+    @override_settings(GOD_MODE_EMAIL_ALLOWLIST=["production-god@example.com"])
+    def test_invalid_signoff_status_is_rejected(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {self.god_token.key}")
+        response = self.client.patch(
+            self.endpoint,
+            {"external_verification": {"database_backups": {"status": "MAGIC"}}},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
 
     @override_settings(
         GOD_MODE_EMAIL_ALLOWLIST=["production-god@example.com"],
