@@ -64,6 +64,23 @@ def _skill_match(profile: WorkforceProfile, requested: list[str]) -> bool:
     return bool(owned & wanted)
 
 
+def _next_quarter_hour(now):
+    """Return the next strictly-future 15-minute boundary.
+
+    Marketplace openings must never return a slot whose start can already be in
+    the past by the time the customer books it. This specifically handles an
+    exact quarter-hour clock (for example 2:45:03), where simply zeroing seconds
+    would otherwise produce 2:45:00 and make an immediately-returned slot stale.
+    """
+    bumped = now.replace(second=0, microsecond=0)
+    if bumped <= now:
+        bumped += timedelta(minutes=1)
+    remainder = bumped.minute % 15
+    if remainder:
+        bumped += timedelta(minutes=15 - remainder)
+    return bumped
+
+
 def _candidate_slots(business: Business, *, required_skills: list[str], duration_minutes: int, days: int = 7):
     profiles = list(
         WorkforceProfile.objects.select_related("member", "member__user")
@@ -88,13 +105,7 @@ def _candidate_slots(business: Business, *, required_skills: list[str], duration
             cursor = timezone.make_aware(datetime.combine(day, start_t), timezone.get_current_timezone())
             day_end = timezone.make_aware(datetime.combine(day, end_t), timezone.get_current_timezone())
             if cursor < now:
-                minute = ((now.minute + 14) // 15) * 15
-                bumped = now.replace(second=0, microsecond=0)
-                if minute >= 60:
-                    bumped = bumped.replace(minute=0) + timedelta(hours=1)
-                else:
-                    bumped = bumped.replace(minute=minute)
-                cursor = max(cursor, bumped)
+                cursor = max(cursor, _next_quarter_hour(now))
 
             duration = max(15, int(duration_minutes or wf.default_job_duration_minutes or 60))
             buffer_minutes = int(wf.default_buffer_minutes or 0)
