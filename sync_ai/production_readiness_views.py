@@ -11,8 +11,43 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from user_accounts.models import Business, Invoice, InvoiceEvent, Notification, Ticket
+from user_accounts.models import (
+    Business,
+    Invoice,
+    InvoiceEvent,
+    Notification,
+    ProductionReadinessState,
+    Ticket,
+)
 from user_accounts.permissions import IsGodMode
+
+
+EXTERNAL_GATE_KEYS = {
+    "backend_deployment",
+    "frontend_deployment",
+    "database_backups",
+    "database_pitr",
+    "restore_drill",
+    "durable_media",
+    "stripe_webhooks",
+    "mobile_smoke",
+}
+
+CERTIFICATION_KEYS = {
+    "auth_identity",
+    "marketplace_ticket",
+    "workforce_dispatch",
+    "invoice_payment",
+    "platform_affiliate",
+    "billing_runtime",
+    "personal_core",
+    "health",
+    "property_management",
+    "social_events",
+    "sync_assistant",
+}
+
+SIGNOFF_STATUSES = {"PENDING", "PASSED", "BLOCKED", "WAIVED"}
 
 
 def _present(*names: str) -> bool:
@@ -35,14 +70,77 @@ def _database_check() -> tuple[dict, bool]:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
             cursor.fetchone()
-        return _check("database_connectivity", "Database connectivity", "GREEN", "The application can query the configured database.", category="Data"), True
+        return _check(
+            "database_connectivity",
+            "Database connectivity",
+            "GREEN",
+            "The application can query the configured database.",
+            category="Data",
+        ), True
     except Exception:
-        return _check("database_connectivity", "Database connectivity", "RED", "The application could not complete a database health query.", category="Data", action="Inspect the production database connection immediately."), False
+        return _check(
+            "database_connectivity",
+            "Database connectivity",
+            "RED",
+            "The application could not complete a database health query.",
+            category="Data",
+            action="Inspect the production database connection immediately.",
+        ), False
 
 
 def _latest_reminder_at():
     event = InvoiceEvent.objects.filter(event_type=InvoiceEvent.EventType.REMINDER).order_by("-occurred_at").first()
     return event.occurred_at.isoformat() if event else None
+
+
+def _state_row():
+    state, _ = ProductionReadinessState.objects.get_or_create(key="GLOBAL")
+    return state
+
+
+def _clean_signoff_section(raw, allowed_keys: set[str], current: dict) -> dict:
+    if not isinstance(raw, dict):
+        raise ValueError("Signoff section must be an object.")
+    next_state = dict(current or {})
+    now = timezone.now().isoformat()
+    for key, value in raw.items():
+        if key not in allowed_keys:
+            continue
+        if not isinstance(value, dict):
+            raise ValueError(f"{key} must be an object.")
+        status = str(value.get("status") or "PENDING").upper()
+        if status not in SIGNOFF_STATUSES:
+            raise ValueError(f"Invalid status for {key}.")
+        next_state[key] = {
+            "status": status,
+            "note": str(value.get("note") or "").strip()[:1000],
+            "updated_at": now,
+        }
+    return next_state
+
+
+def _signoff_summary(state: ProductionReadinessState, red_count: int) -> dict:
+    external = state.external_verification or {}
+    certification = state.certification or {}
+    all_rows = [external.get(key, {}) for key in EXTERNAL_GATE_KEYS] + [certification.get(key, {}) for key in CERTIFICATION_KEYS]
+    blocked = sum(1 for row in all_rows if row.get("status") == "BLOCKED")
+    external_resolved = sum(1 for key in EXTERNAL_GATE_KEYS if external.get(key, {}).get("status") in {"PASSED", "WAIVED"})
+    certification_resolved = sum(1 for key in CERTIFICATION_KEYS if certification.get(key, {}).get("status") in {"PASSED", "WAIVED"})
+    ready = (
+        red_count == 0
+        and blocked == 0
+        and external_resolved == len(EXTERNAL_GATE_KEYS)
+        and certification_resolved == len(CERTIFICATION_KEYS)
+    )
+    release_gate = "READY_FOR_RELEASE" if ready else "BLOCKED" if red_count or blocked else "VERIFICATION_IN_PROGRESS"
+    return {
+        "release_gate": release_gate,
+        "external_resolved": external_resolved,
+        "external_total": len(EXTERNAL_GATE_KEYS),
+        "certification_resolved": certification_resolved,
+        "certification_total": len(CERTIFICATION_KEYS),
+        "manual_blocked": blocked,
+    }
 
 
 def build_production_readiness_payload() -> dict:
@@ -138,16 +236,40 @@ def build_production_readiness_payload() -> dict:
     ))
 
     openai_ready = _present("OPENAI_API_KEY")
-    checks.append(_check("sync_ai_provider", "SYNC AI provider", "GREEN" if openai_ready else "YELLOW", "OPENAI_API_KEY is present." if openai_ready else "No OPENAI_API_KEY is visible to this runtime.", category="AI"))
+    checks.append(_check(
+        "sync_ai_provider",
+        "SYNC AI provider",
+        "GREEN" if openai_ready else "YELLOW",
+        "OPENAI_API_KEY is present." if openai_ready else "No OPENAI_API_KEY is visible to this runtime.",
+        category="AI",
+    ))
 
     maps_ready = _present("GOOGLE_MAPS_SERVER_KEY", "GOOGLE_MAPS_API_KEY")
-    checks.append(_check("maps_provider", "Maps / routing provider", "GREEN" if maps_ready else "YELLOW", "A Google Maps server key is present." if maps_ready else "Maps/routing will use reduced or fallback behavior without a configured server key.", category="Integrations"))
+    checks.append(_check(
+        "maps_provider",
+        "Maps / routing provider",
+        "GREEN" if maps_ready else "YELLOW",
+        "A Google Maps server key is present." if maps_ready else "Maps/routing will use reduced or fallback behavior without a configured server key.",
+        category="Integrations",
+    ))
 
     meta_ready = bool(getattr(settings, "META_APP_ID", "") and getattr(settings, "META_APP_SECRET", ""))
-    checks.append(_check("meta_growth", "Meta Growth connection", "GREEN" if meta_ready else "YELLOW", "Meta app credentials are configured." if meta_ready else "Meta social automation is not fully configured in this environment.", category="Integrations"))
+    checks.append(_check(
+        "meta_growth",
+        "Meta Growth connection",
+        "GREEN" if meta_ready else "YELLOW",
+        "Meta app credentials are configured." if meta_ready else "Meta social automation is not fully configured in this environment.",
+        category="Integrations",
+    ))
 
     push_ready = bool(getattr(settings, "SYNC_PUSH_PROVIDER_CONFIGURED", False))
-    checks.append(_check("push_provider", "Native/web push provider", "GREEN" if push_ready else "YELLOW", "Push provider is marked configured." if push_ready else "Push registration is prepared, but a delivery provider is not marked configured.", category="Communications"))
+    checks.append(_check(
+        "push_provider",
+        "Native/web push provider",
+        "GREEN" if push_ready else "YELLOW",
+        "Push provider is marked configured." if push_ready else "Push registration is prepared, but a delivery provider is not marked configured.",
+        category="Communications",
+    ))
 
     media_root = str(getattr(settings, "MEDIA_ROOT", "") or "")
     checks.append(_check(
@@ -183,6 +305,7 @@ def build_production_readiness_payload() -> dict:
     launch_blockers = [row for row in checks if row["status"] == "RED"]
 
     metrics = {}
+    state = None
     if db_ok:
         try:
             metrics = {
@@ -193,8 +316,24 @@ def build_production_readiness_payload() -> dict:
                 "applied_migrations": MigrationRecorder.Migration.objects.count(),
                 "last_invoice_reminder_at": _latest_reminder_at(),
             }
+            state = _state_row()
         except Exception:
             metrics = {"metrics_error": True}
+
+    signoff_state = {
+        "external_verification": state.external_verification if state else {},
+        "certification": state.certification if state else {},
+        "updated_at": state.updated_at.isoformat() if state else None,
+        "updated_by_user_id": state.updated_by_id if state else None,
+    }
+    signoff_summary = _signoff_summary(state, counts["RED"]) if state else {
+        "release_gate": "BLOCKED" if counts["RED"] else "VERIFICATION_IN_PROGRESS",
+        "external_resolved": 0,
+        "external_total": len(EXTERNAL_GATE_KEYS),
+        "certification_resolved": 0,
+        "certification_total": len(CERTIFICATION_KEYS),
+        "manual_blocked": 0,
+    }
 
     return {
         "generated_at": timezone.now().isoformat(),
@@ -211,10 +350,12 @@ def build_production_readiness_payload() -> dict:
             "red": counts["RED"],
             "launch_blocker_count": len(launch_blockers),
             "application_gate": "BLOCKED" if launch_blockers else "PASS_WITH_EXTERNAL_VERIFICATION",
+            **signoff_summary,
         },
         "checks": checks,
         "launch_blockers": launch_blockers,
         "metrics": metrics,
+        "signoff_state": signoff_state,
         "external_verification_required": [
             "Database automated backup policy and PITR",
             "Successful restore drill",
@@ -230,4 +371,25 @@ class ProductionReadinessAPIView(APIView):
     permission_classes = [IsAuthenticated, IsGodMode]
 
     def get(self, request):
+        return Response(build_production_readiness_payload())
+
+    def patch(self, request):
+        state = _state_row()
+        try:
+            if "external_verification" in request.data:
+                state.external_verification = _clean_signoff_section(
+                    request.data.get("external_verification"),
+                    EXTERNAL_GATE_KEYS,
+                    state.external_verification,
+                )
+            if "certification" in request.data:
+                state.certification = _clean_signoff_section(
+                    request.data.get("certification"),
+                    CERTIFICATION_KEYS,
+                    state.certification,
+                )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        state.updated_by = request.user
+        state.save(update_fields=["external_verification", "certification", "updated_by", "updated_at"])
         return Response(build_production_readiness_payload())
