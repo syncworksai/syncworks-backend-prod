@@ -19,12 +19,14 @@ from .local_intelligence_views import SyncLocalIntelligenceView
 from .marketplace_views import MarketplaceAvailabilityView, MarketplaceBookView
 from .notification_views import SyncNotificationRefreshView, SyncNotificationSettingsView, SyncPushDeviceView
 from .professional_services_views import BusinessProfessionalAppointmentsView, CustomerProfessionalAppointmentResponseView, CustomerProfessionalAppointmentsView, ProfessionalAvailabilityView, ProfessionalDiscoveryView, ProfessionalPracticeSettingsView, ProfessionalProviderDetailView, ProfessionalProvidersView, ProfessionalResourceDetailView, ProfessionalResourcesView
+from .production_readiness_views import ProductionReadinessAPIView
 from .workforce_views import BusinessOperationsSummaryView, BusinessWorkforceView, TicketOperationsView
 from .views import SyncAIActionDraftView, SyncAIChatView, SyncAIStatusView, SyncAITicketReplyExecuteView
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
     path("status/", SyncAIStatusView.as_view(), name="sync-ai-status"),
+    path("production/readiness/", ProductionReadinessAPIView.as_view(), name="sync-production-readiness"),
     path("chat/", SyncAIChatView.as_view(), name="sync-ai-chat"),
     path("local-intelligence/", SyncLocalIntelligenceView.as_view(), name="sync-local-intelligence"),
     path("briefing/", SyncRoleAwareBriefingView.as_view(), name="sync-role-aware-briefing"),

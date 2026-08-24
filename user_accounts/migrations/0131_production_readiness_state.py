@@ -1,0 +1,26 @@
+from django.conf import settings
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+    dependencies = [
+        ("user_accounts", "0130_invoice_automation_settings"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="ProductionReadinessState",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("key", models.CharField(default="GLOBAL", max_length=32, unique=True)),
+                ("external_verification", models.JSONField(blank=True, default=dict)),
+                ("certification", models.JSONField(blank=True, default=dict)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("updated_by", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="production_readiness_updates", to=settings.AUTH_USER_MODEL)),
+            ],
+            options={"ordering": ["key"]},
+        ),
+    ]
