@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from user_accounts.models import AuditLog, User, UserBillingProfile
+from user_accounts.stripe_webhook_events import claim_stripe_event, mark_stripe_event_failed, mark_stripe_event_processed
 
 from .jarvis_product import is_test_access, live_access, load_profile, product_payload, save_profile
 
@@ -134,39 +135,60 @@ class UserJarvisWebhookView(APIView):
             event = stripe.Webhook.construct_event(request.body, request.headers.get("Stripe-Signature", ""), secret)
         except Exception:
             return Response(status=400)
-        event_type = event["type"]
-        obj = event["data"]["object"]
-        metadata = obj.get("metadata") or {}
-        user_id = metadata.get("user_id") or obj.get("client_reference_id")
-        if not user_id:
-            return Response({"received": True})
+
         try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
+            ledger, should_process = claim_stripe_event(event, endpoint="sync_assistant")
+        except ValueError:
+            return Response({"detail": "Stripe event id is missing."}, status=400)
+
+        if not should_process:
+            return Response({"received": True, "duplicate": True})
+
+        try:
+            event_type = event["type"]
+            obj = event["data"]["object"]
+            metadata = obj.get("metadata") or {}
+            user_id = metadata.get("user_id") or obj.get("client_reference_id")
+            if not user_id:
+                mark_stripe_event_processed(ledger, ignored=True)
+                return Response({"received": True})
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                mark_stripe_event_processed(ledger, ignored=True)
+                return Response({"received": True})
+
+            legacy_live = metadata.get("sync_addon") == "LIVE" or metadata.get("sync_product") == "ASSISTANT_LIVE"
+            if legacy_live:
+                mark_stripe_event_processed(ledger, ignored=True)
+                return Response({"received": True, "legacy_live": True})
+
+            handled = False
+            if event_type == "checkout.session.completed":
+                billing, _ = UserBillingProfile.objects.get_or_create(user=user)
+                billing.stripe_customer_id = obj.get("customer") or billing.stripe_customer_id
+                plan = str(metadata.get("jarvis_plan") or "PERSONAL").upper()
+                save_profile(user, {"plan": plan, "onboarding_complete": True, "live": {"enabled": True}})
+                billing.stripe_subscription_id = obj.get("subscription") or billing.stripe_subscription_id
+                billing.subscription_status = "active"
+                AuditLog.objects.create(actor=user, action="sync_assistant.subscription.activated", metadata={"plan": plan})
+                billing.save()
+                handled = True
+
+            if event_type in {"customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"}:
+                status = str(obj.get("status") or "inactive")
+                billing, _ = UserBillingProfile.objects.get_or_create(user=user)
+                billing.subscription_status = status
+                billing.stripe_subscription_id = obj.get("id") or billing.stripe_subscription_id
+                billing.subscription_cancel_at_period_end = bool(obj.get("cancel_at_period_end"))
+                period_end = obj.get("current_period_end")
+                if period_end:
+                    billing.subscription_current_period_end = datetime.fromtimestamp(period_end, tz=dt_timezone.utc)
+                billing.save()
+                handled = True
+
+            mark_stripe_event_processed(ledger, ignored=not handled)
             return Response({"received": True})
-
-        legacy_live = metadata.get("sync_addon") == "LIVE" or metadata.get("sync_product") == "ASSISTANT_LIVE"
-        if legacy_live:
-            return Response({"received": True, "legacy_live": True})
-
-        if event_type == "checkout.session.completed":
-            billing, _ = UserBillingProfile.objects.get_or_create(user=user)
-            billing.stripe_customer_id = obj.get("customer") or billing.stripe_customer_id
-            plan = str(metadata.get("jarvis_plan") or "PERSONAL").upper()
-            save_profile(user, {"plan": plan, "onboarding_complete": True, "live": {"enabled": True}})
-            billing.stripe_subscription_id = obj.get("subscription") or billing.stripe_subscription_id
-            billing.subscription_status = "active"
-            AuditLog.objects.create(actor=user, action="sync_assistant.subscription.activated", metadata={"plan": plan})
-            billing.save()
-
-        if event_type in {"customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"}:
-            status = str(obj.get("status") or "inactive")
-            billing, _ = UserBillingProfile.objects.get_or_create(user=user)
-            billing.subscription_status = status
-            billing.stripe_subscription_id = obj.get("id") or billing.stripe_subscription_id
-            billing.subscription_cancel_at_period_end = bool(obj.get("cancel_at_period_end"))
-            period_end = obj.get("current_period_end")
-            if period_end:
-                billing.subscription_current_period_end = datetime.fromtimestamp(period_end, tz=dt_timezone.utc)
-            billing.save()
-        return Response({"received": True})
+        except Exception as exc:
+            mark_stripe_event_failed(ledger, exc)
+            raise
