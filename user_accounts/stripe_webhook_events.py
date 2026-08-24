@@ -16,10 +16,11 @@ def _value(source, key, default=None):
 
 
 def claim_stripe_event(event, *, endpoint: str) -> tuple[StripeWebhookEvent, bool]:
-    """Claim a verified Stripe event exactly once.
+    """Claim a verified Stripe event before running any side effect.
 
-    Returns `(ledger_row, should_process)`. Duplicate deliveries increment the
-    attempt counter but return `False`, so callers must not re-run side effects.
+    Returns `(ledger_row, should_process)`. Already processed/ignored/in-flight
+    duplicate deliveries return `False`. A prior FAILED row is reopened so a
+    legitimate Stripe retry can attempt the handler again.
     """
 
     event_id = str(_value(event, "id", "") or "").strip()
@@ -45,13 +46,16 @@ def claim_stripe_event(event, *, endpoint: str) -> tuple[StripeWebhookEvent, boo
             )
             return row, True
     except IntegrityError:
-        row = StripeWebhookEvent.objects.get(stripe_event_id=event_id)
-        StripeWebhookEvent.objects.filter(pk=row.pk).update(
-            attempts=row.attempts + 1,
-            updated_at=timezone.now(),
-        )
-        row.refresh_from_db()
-        return row, False
+        with transaction.atomic():
+            row = StripeWebhookEvent.objects.select_for_update().get(stripe_event_id=event_id)
+            row.attempts += 1
+            should_retry = row.status == StripeWebhookEvent.Status.FAILED
+            if should_retry:
+                row.status = StripeWebhookEvent.Status.RECEIVED
+                row.last_error = ""
+                row.processed_at = None
+            row.save(update_fields=["attempts", "status", "last_error", "processed_at", "updated_at"])
+            return row, should_retry
 
 
 def mark_stripe_event_processed(row: StripeWebhookEvent, *, ignored: bool = False) -> None:
