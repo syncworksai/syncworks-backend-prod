@@ -9,8 +9,12 @@ from user_accounts.models.user_classification import PlatformUserClassification
 from user_accounts.serializers.platform_console import PlatformUserSerializer
 from user_accounts.viewsets.platform_console import PlatformUsersViewSet
 
-
 ALLOWED_KINDS = {choice for choice, _ in PlatformUserClassification.Kind.choices}
+ALLOWED_INTELLIGENCE_KEYS = {
+    "roles", "modules", "subscriptions", "acquisition_source", "acquisition_detail",
+    "customers_brought", "customers_supplied_by_syncworks", "attributed_revenue_cents",
+    "paid_cents", "payable_cents",
+}
 
 
 def live_queryset(viewset):
@@ -22,12 +26,7 @@ def live_queryset(viewset):
     q = str(viewset.request.query_params.get("q") or "").strip()
     kind = str(viewset.request.query_params.get("classification") or "").strip().upper()
     if q:
-        qs = qs.filter(
-            Q(email__icontains=q)
-            | Q(first_name__icontains=q)
-            | Q(last_name__icontains=q)
-            | Q(username__icontains=q)
-        )
+        qs = qs.filter(Q(email__icontains=q) | Q(first_name__icontains=q) | Q(last_name__icontains=q) | Q(username__icontains=q))
     if kind:
         if kind == PlatformUserClassification.Kind.UNCLASSIFIED:
             qs = qs.filter(platform_classification__isnull=True)
@@ -41,13 +40,18 @@ def classify_user(viewset, request, pk=None):
     kind = str(request.data.get("classification") or request.data.get("kind") or "").strip().upper()
     note = str(request.data.get("note") or "").strip()
     if kind not in ALLOWED_KINDS:
-        return Response(
-            {"detail": "Invalid classification.", "allowed": sorted(ALLOWED_KINDS)},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        return Response({"detail": "Invalid classification.", "allowed": sorted(ALLOWED_KINDS)}, status=status.HTTP_400_BAD_REQUEST)
+
     item, _ = PlatformUserClassification.objects.get_or_create(user=user)
     item.kind = kind
     item.note = note
+    incoming = request.data.get("intelligence")
+    if isinstance(incoming, dict):
+        existing = dict(item.intelligence or {})
+        for key in ALLOWED_INTELLIGENCE_KEYS:
+            if key in incoming:
+                existing[key] = incoming[key]
+        item.intelligence = existing
     item.classified_by = request.user
     item.classified_at = timezone.now()
     item.save()

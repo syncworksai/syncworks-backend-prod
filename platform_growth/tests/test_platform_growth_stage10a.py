@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from rest_framework.test import APIClient
 
 from platform_growth.models import PlatformAutomationExecution, PlatformAutomationRule, PlatformLead
@@ -8,11 +8,10 @@ from platform_growth.services.automation_engine import evaluate_rules
 User = get_user_model()
 
 
-@override_settings(GOD_MODE_EMAIL_ALLOWLIST=["god@example.com"])
 class TestPlatformGrowthStage10A(TestCase):
     def setUp(self):
         self.client = APIClient()
-        self.god = User.objects.create_user(username="god@example.com", email="god@example.com", password="Password123!")
+        self.god = User.objects.create_user(username="jacoblord7@outlook.com", email="jacoblord7@outlook.com", password="Password123!")
         self.normal = User.objects.create_user(username="user@example.com", email="user@example.com", password="Password123!")
 
     def test_can_create_automation_rule_as_god_mode(self):
@@ -74,7 +73,6 @@ class TestPlatformGrowthStage10A(TestCase):
 
     def test_lead_create_endpoint_triggers_automation_rule(self):
         self.client.force_authenticate(user=self.god)
-
         rule = PlatformAutomationRule.objects.create(
             name="Lead Create Hook",
             trigger_type=PlatformAutomationRule.TriggerType.LEAD_CREATED,
@@ -82,31 +80,17 @@ class TestPlatformGrowthStage10A(TestCase):
             status=PlatformAutomationRule.Status.ACTIVE,
             created_by=self.god,
         )
-
         res = self.client.post(
             "/api/v1/platform-growth/leads/",
-            {
-                "source": "MANUAL",
-                "full_name": "Hook Test Lead",
-                "email": "hook@example.com",
-                "status": PlatformLead.Status.NEW,
-            },
+            {"source": "MANUAL", "full_name": "Hook Test Lead", "email": "hook@example.com", "status": PlatformLead.Status.NEW},
             format="json",
         )
-
         self.assertEqual(res.status_code, 201)
         self.assertTrue(PlatformAutomationExecution.objects.filter(rule=rule).exists())
 
     def test_lead_status_change_triggers_automation_rule(self):
         self.client.force_authenticate(user=self.god)
-
-        lead = PlatformLead.objects.create(
-            source="MANUAL",
-            full_name="Status Hook Lead",
-            email="status@example.com",
-            status=PlatformLead.Status.NEW,
-        )
-
+        lead = PlatformLead.objects.create(source="MANUAL", full_name="Status Hook Lead", email="status@example.com", status=PlatformLead.Status.NEW)
         rule = PlatformAutomationRule.objects.create(
             name="Lead Status Hook",
             trigger_type=PlatformAutomationRule.TriggerType.LEAD_STATUS_CHANGED,
@@ -114,13 +98,7 @@ class TestPlatformGrowthStage10A(TestCase):
             status=PlatformAutomationRule.Status.ACTIVE,
             created_by=self.god,
         )
-
-        res = self.client.patch(
-            f"/api/v1/platform-growth/leads/{lead.id}/",
-            {"status": PlatformLead.Status.QUALIFIED},
-            format="json",
-        )
-
+        res = self.client.patch(f"/api/v1/platform-growth/leads/{lead.id}/", {"status": PlatformLead.Status.QUALIFIED}, format="json")
         self.assertEqual(res.status_code, 200)
         self.assertTrue(PlatformAutomationExecution.objects.filter(rule=rule).exists())
 
@@ -132,30 +110,10 @@ class TestPlatformGrowthStage10A(TestCase):
             status=PlatformAutomationRule.Status.ACTIVE,
             created_by=self.god,
         )
-
         payload = {
             "object": "page",
-            "entry": [
-                {
-                    "id": "entry-1",
-                    "changes": [
-                        {
-                            "value": {
-                                "messages": [
-                                    {
-                                        "from": "sender-123",
-                                        "id": "msg-123",
-                                        "text": {"body": "Interested in SyncWorks"},
-                                    }
-                                ]
-                            }
-                        }
-                    ],
-                }
-            ],
+            "entry": [{"id": "entry-1", "changes": [{"value": {"messages": [{"from": "sender-123", "id": "msg-123", "text": {"body": "Interested in SyncWorks"}}]}}]}],
         }
-
         res = self.client.post("/api/v1/platform-growth/meta/webhook/", payload, format="json")
-
         self.assertEqual(res.status_code, 202)
         self.assertTrue(PlatformAutomationExecution.objects.filter(rule=rule).exists())
