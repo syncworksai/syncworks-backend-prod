@@ -27,6 +27,11 @@ class PlatformUserClassification(models.Model):
         db_index=True,
     )
     note = models.TextField(blank=True)
+    intelligence = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="God Mode roles, module access, subscription state, acquisition attribution, customer attribution and value metadata.",
+    )
     classified_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
