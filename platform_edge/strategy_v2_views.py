@@ -6,7 +6,8 @@ from rest_framework.response import Response
 
 from .live_data import get_live_mlb_board
 from .models import EdgeStrategy
-from .strategy_v2 import V2_VERSION, run_v2_for_user, strategy_v2_scoreboard
+from .server_paper import run_for_user as run_v1_for_user
+from .strategy_v2 import V2_VERSION, run_v2_for_user
 
 
 def _eligible_users():
@@ -16,8 +17,38 @@ def _eligible_users():
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
+def system_combined_paper_tick(request):
+    """Run legacy frozen paper strategies and Strategy Engine v2 from the existing scheduler URL."""
+    board = get_live_mlb_board()
+    results = []
+    for user in _eligible_users():
+        row = {"user_id": user.id}
+        try:
+            row["v1"] = run_v1_for_user(user, board=board)
+        except Exception as exc:
+            row["v1"] = {"error": True, "detail": str(exc)[:160]}
+        try:
+            row["v2"] = run_v2_for_user(user, board=board)
+        except Exception as exc:
+            row["v2"] = {"error": True, "detail": str(exc)[:160]}
+        results.append(row)
+    return Response({
+        "mode": "paper_only",
+        "live_money_enabled": False,
+        "v2_version": V2_VERSION,
+        "ran_at": timezone.now(),
+        "users_processed": len(results),
+        "v1_opened_count": sum((row.get("v1") or {}).get("opened_count", 0) for row in results),
+        "v1_closed_count": sum((row.get("v1") or {}).get("closed_count", 0) for row in results),
+        "v2_opened_count": sum((row.get("v2") or {}).get("opened_count", 0) for row in results),
+        "v2_managed_count": sum((row.get("v2") or {}).get("managed_count", 0) for row in results),
+    })
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
 def system_strategy_v2_tick(request):
-    """Paper-only scheduler endpoint for Strategy Engine v2. No exchange-order path exists here."""
+    """Paper-only standalone scheduler endpoint for Strategy Engine v2."""
     board = get_live_mlb_board()
     results = []
     for user in _eligible_users():
