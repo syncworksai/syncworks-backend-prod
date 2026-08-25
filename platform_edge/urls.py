@@ -6,11 +6,11 @@ from .historical_views import replay_summary, sync_mlb_kalshi
 from .live_views import live_mlb_board
 from .portfolio_views import portfolio_live, portfolio_paper_tick
 from .research_views import mlb_research_board, paper_simulate, paper_summary
-from .server_paper import server_paper_status, system_paper_tick
+from .server_paper import server_paper_status
 from .strategy_a_views import strategy_a_live, strategy_a_paper_tick
 from .strategy_scoreboard import strategy_scoreboard
 from .strategy_v2 import strategy_v2_scoreboard
-from .strategy_v2_views import strategy_v2_tick_me, system_strategy_v2_tick
+from .strategy_v2_views import strategy_v2_tick_me, system_combined_paper_tick, system_strategy_v2_tick
 from .views import PaperTradeViewSet, StrategyViewSet, dashboard, kalshi_connection, kalshi_verify
 
 router = DefaultRouter()
@@ -28,7 +28,7 @@ urlpatterns = [
     path("portfolio/strategies/scoreboard/", strategy_scoreboard, name="edge-strategy-scoreboard"),
     path("portfolio/strategy-v2/scoreboard/", strategy_v2_scoreboard, name="edge-strategy-v2-scoreboard"),
     path("portfolio/strategy-v2/tick/", strategy_v2_tick_me, name="edge-strategy-v2-tick-me"),
-    path("system/paper/tick/", system_paper_tick, name="edge-system-paper-tick"),
+    path("system/paper/tick/", system_combined_paper_tick, name="edge-system-paper-tick"),
     path("system/paper/v2/tick/", system_strategy_v2_tick, name="edge-system-strategy-v2-tick"),
     path("research/mlb/", mlb_research_board, name="edge-research-mlb"),
     path("research/mlb/backtest/", mlb_backtest, name="edge-research-mlb-backtest"),
