@@ -4,6 +4,7 @@ import os
 from typing import Any
 
 import requests
+from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -12,6 +13,7 @@ from rest_framework.views import APIView
 OPENWEATHER_URL = "https://api.openweathermap.org/data/3.0/onecall"
 MAPBOX_GEOCODE_URL = "https://api.mapbox.com/search/geocode/v6/forward"
 MAPBOX_DIRECTIONS_URL = "https://api.mapbox.com/directions/v5/mapbox/driving-traffic/{coordinates}"
+MAPBOX_STATIC_URL = "https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/{overlay}/{lon},{lat},{zoom},0/900x420@2x"
 
 
 def _openweather_key() -> str:
@@ -70,41 +72,32 @@ def _normalize_weather(payload: dict, latitude: float, longitude: float) -> dict
 
     minutely = []
     for item in (payload.get("minutely") or [])[:61]:
-        minutely.append(
-            {
-                "timestamp": item.get("dt"),
-                "precipitation_mm": round(float(item.get("precipitation") or 0), 2),
-            }
-        )
+        minutely.append({"timestamp": item.get("dt"), "precipitation_mm": round(float(item.get("precipitation") or 0), 2)})
 
     hourly = []
     for item in (payload.get("hourly") or [])[:12]:
         hourly_main, hourly_description, hourly_icon = _weather_description(item)
-        hourly.append(
-            {
-                "timestamp": item.get("dt"),
-                "temp_f": _fahrenheit(item.get("temp")),
-                "feels_like_f": _fahrenheit(item.get("feels_like")),
-                "precip_probability": round(float(item.get("pop") or 0) * 100),
-                "condition": hourly_main,
-                "description": hourly_description,
-                "icon": hourly_icon,
-                "wind_mph": _mph_from_mps(item.get("wind_speed")),
-            }
-        )
+        hourly.append({
+            "timestamp": item.get("dt"),
+            "temp_f": _fahrenheit(item.get("temp")),
+            "feels_like_f": _fahrenheit(item.get("feels_like")),
+            "precip_probability": round(float(item.get("pop") or 0) * 100),
+            "condition": hourly_main,
+            "description": hourly_description,
+            "icon": hourly_icon,
+            "wind_mph": _mph_from_mps(item.get("wind_speed")),
+        })
 
     alerts = []
     for item in (payload.get("alerts") or [])[:8]:
-        alerts.append(
-            {
-                "sender": item.get("sender_name") or "",
-                "event": item.get("event") or "Weather alert",
-                "start": item.get("start"),
-                "end": item.get("end"),
-                "description": str(item.get("description") or "")[:1200],
-                "tags": item.get("tags") or [],
-            }
-        )
+        alerts.append({
+            "sender": item.get("sender_name") or "",
+            "event": item.get("event") or "Weather alert",
+            "start": item.get("start"),
+            "end": item.get("end"),
+            "description": str(item.get("description") or "")[:1200],
+            "tags": item.get("tags") or [],
+        })
 
     next_precip = next((item for item in minutely if (item.get("precipitation_mm") or 0) > 0), None)
     max_precip = max((item.get("precipitation_mm") or 0 for item in minutely), default=0)
@@ -112,12 +105,7 @@ def _normalize_weather(payload: dict, latitude: float, longitude: float) -> dict
     return {
         "available": True,
         "provider": "OPENWEATHER_ONE_CALL_3",
-        "location": {
-            "latitude": latitude,
-            "longitude": longitude,
-            "timezone": payload.get("timezone") or "",
-            "timezone_offset": payload.get("timezone_offset"),
-        },
+        "location": {"latitude": latitude, "longitude": longitude, "timezone": payload.get("timezone") or "", "timezone_offset": payload.get("timezone_offset")},
         "current": {
             "timestamp": current.get("dt"),
             "temp_f": _fahrenheit(current.get("temp")),
@@ -132,28 +120,14 @@ def _normalize_weather(payload: dict, latitude: float, longitude: float) -> dict
             "clouds": current.get("clouds"),
             "visibility_miles": _miles_from_meters(current.get("visibility")),
         },
-        "minute_forecast": {
-            "available": bool(minutely),
-            "points": minutely,
-            "next_precipitation": next_precip,
-            "max_precipitation_mm": round(max_precip, 2),
-        },
+        "minute_forecast": {"available": bool(minutely), "points": minutely, "next_precipitation": next_precip, "max_precipitation_mm": round(max_precip, 2)},
         "hourly": hourly,
         "alerts": alerts,
     }
 
 
 def _geocode_destination(query: str, token: str) -> dict:
-    response = requests.get(
-        MAPBOX_GEOCODE_URL,
-        params={
-            "q": query,
-            "access_token": token,
-            "limit": 1,
-            "autocomplete": "false",
-        },
-        timeout=12,
-    )
+    response = requests.get(MAPBOX_GEOCODE_URL, params={"q": query, "access_token": token, "limit": 1, "autocomplete": "false"}, timeout=12)
     response.raise_for_status()
     payload = response.json()
     features = payload.get("features") or []
@@ -165,32 +139,23 @@ def _geocode_destination(query: str, token: str) -> dict:
     if len(coordinates) < 2:
         return {"available": False, "reason": "DESTINATION_NOT_FOUND"}
     properties = feature.get("properties") or {}
-    return {
-        "available": True,
-        "longitude": coordinates[0],
-        "latitude": coordinates[1],
-        "label": properties.get("full_address") or properties.get("name") or feature.get("place_name") or query,
-    }
+    return {"available": True, "longitude": coordinates[0], "latitude": coordinates[1], "label": properties.get("full_address") or properties.get("name") or feature.get("place_name") or query}
 
 
 def _normalize_route(route: dict, index: int) -> dict:
     duration_seconds = _number(route.get("duration")) or 0
     typical_seconds = _number(route.get("duration_typical"))
     delay_seconds = max(0, duration_seconds - typical_seconds) if typical_seconds is not None else None
-    legs = route.get("legs") or []
     incidents = []
-    for leg in legs:
+    for leg in route.get("legs") or []:
         for incident in (leg.get("incidents") or []):
-            incidents.append(
-                {
-                    "type": incident.get("type") or "incident",
-                    "description": incident.get("description") or incident.get("long_description") or "",
-                    "impact": incident.get("impact") or "",
-                    "start_time": incident.get("creation_time") or incident.get("start_time"),
-                    "end_time": incident.get("end_time"),
-                }
-            )
-
+            incidents.append({
+                "type": incident.get("type") or "incident",
+                "description": incident.get("description") or incident.get("long_description") or "",
+                "impact": incident.get("impact") or "",
+                "start_time": incident.get("creation_time") or incident.get("start_time"),
+                "end_time": incident.get("end_time"),
+            })
     return {
         "rank": index + 1,
         "duration_seconds": round(duration_seconds),
@@ -206,147 +171,94 @@ def _normalize_route(route: dict, index: int) -> dict:
 
 
 class LiveWeatherAPIView(APIView):
-    """Return normalized live/minute weather without exposing provider credentials."""
-
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         latitude = _number(request.data.get("latitude"), minimum=-90, maximum=90)
         longitude = _number(request.data.get("longitude"), minimum=-180, maximum=180)
         if latitude is None or longitude is None:
-            return Response(
-                {"available": False, "reason": "VALID_LOCATION_REQUIRED", "detail": "Allow current location and try again."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
+            return Response({"available": False, "reason": "VALID_LOCATION_REQUIRED", "detail": "Allow current location and try again."}, status=status.HTTP_400_BAD_REQUEST)
         key = _openweather_key()
         if not key:
-            return Response(
-                {"available": False, "reason": "WEATHER_NOT_CONFIGURED", "detail": "Live weather is not configured."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
+            return Response({"available": False, "reason": "WEATHER_NOT_CONFIGURED", "detail": "Live weather is not configured."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         try:
-            response = requests.get(
-                OPENWEATHER_URL,
-                params={
-                    "lat": latitude,
-                    "lon": longitude,
-                    "appid": key,
-                    "units": "imperial",
-                    "exclude": "daily",
-                },
-                timeout=15,
-            )
+            response = requests.get(OPENWEATHER_URL, params={"lat": latitude, "lon": longitude, "appid": key, "units": "imperial", "exclude": "daily"}, timeout=15)
             response.raise_for_status()
             return Response(_normalize_weather(response.json(), latitude, longitude))
         except requests.HTTPError as exc:
-            provider_status = getattr(exc.response, "status_code", None)
-            return Response(
-                {
-                    "available": False,
-                    "reason": "WEATHER_PROVIDER_ERROR",
-                    "provider_status": provider_status,
-                    "detail": "OpenWeather could not return live weather. Verify One Call access if this persists.",
-                },
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+            return Response({"available": False, "reason": "WEATHER_PROVIDER_ERROR", "provider_status": getattr(exc.response, "status_code", None), "detail": "OpenWeather could not return live weather. Verify One Call access if this persists."}, status=status.HTTP_502_BAD_GATEWAY)
         except (requests.RequestException, TypeError, ValueError):
-            return Response(
-                {"available": False, "reason": "WEATHER_PROVIDER_UNAVAILABLE", "detail": "Live weather is temporarily unavailable."},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+            return Response({"available": False, "reason": "WEATHER_PROVIDER_UNAVAILABLE", "detail": "Live weather is temporarily unavailable."}, status=status.HTTP_502_BAD_GATEWAY)
 
 
 class LiveTrafficAPIView(APIView):
-    """Return Mapbox driving-traffic ETA, typical ETA, delay and alternatives."""
-
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         origin_latitude = _number(request.data.get("latitude"), minimum=-90, maximum=90)
         origin_longitude = _number(request.data.get("longitude"), minimum=-180, maximum=180)
         if origin_latitude is None or origin_longitude is None:
-            return Response(
-                {"available": False, "reason": "VALID_ORIGIN_REQUIRED", "detail": "Allow current location and try again."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
+            return Response({"available": False, "reason": "VALID_ORIGIN_REQUIRED", "detail": "Allow current location and try again."}, status=status.HTTP_400_BAD_REQUEST)
         token = _mapbox_token()
         if not token:
-            return Response(
-                {"available": False, "reason": "TRAFFIC_NOT_CONFIGURED", "detail": "Live traffic is not configured."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+            return Response({"available": False, "reason": "TRAFFIC_NOT_CONFIGURED", "detail": "Live traffic is not configured."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         destination_latitude = _number(request.data.get("destination_latitude"), minimum=-90, maximum=90)
         destination_longitude = _number(request.data.get("destination_longitude"), minimum=-180, maximum=180)
         destination_label = str(request.data.get("destination_label") or request.data.get("destination") or "").strip()
-
         try:
             if destination_latitude is None or destination_longitude is None:
                 if not destination_label:
-                    return Response(
-                        {"available": False, "reason": "DESTINATION_REQUIRED", "detail": "Enter a destination to check live traffic."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+                    return Response({"available": False, "reason": "DESTINATION_REQUIRED", "detail": "Enter a destination to check live traffic."}, status=status.HTTP_400_BAD_REQUEST)
                 destination = _geocode_destination(destination_label, token)
                 if not destination.get("available"):
-                    return Response(
-                        {"available": False, "reason": "DESTINATION_NOT_FOUND", "detail": "SYNC could not find that destination."},
-                        status=status.HTTP_404_NOT_FOUND,
-                    )
+                    return Response({"available": False, "reason": "DESTINATION_NOT_FOUND", "detail": "SYNC could not find that destination."}, status=status.HTTP_404_NOT_FOUND)
                 destination_latitude = float(destination["latitude"])
                 destination_longitude = float(destination["longitude"])
                 destination_label = str(destination.get("label") or destination_label)
 
             coordinates = f"{origin_longitude},{origin_latitude};{destination_longitude},{destination_latitude}"
-            response = requests.get(
-                MAPBOX_DIRECTIONS_URL.format(coordinates=coordinates),
-                params={
-                    "access_token": token,
-                    "alternatives": "true",
-                    "overview": "false",
-                    "steps": "false",
-                },
-                timeout=15,
-            )
+            response = requests.get(MAPBOX_DIRECTIONS_URL.format(coordinates=coordinates), params={"access_token": token, "alternatives": "true", "overview": "false", "steps": "false"}, timeout=15)
             response.raise_for_status()
             payload = response.json()
             routes = [_normalize_route(route, index) for index, route in enumerate((payload.get("routes") or [])[:3])]
             if not routes:
-                return Response(
-                    {"available": False, "reason": "ROUTE_NOT_FOUND", "detail": "No drivable route was found."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-
-            return Response(
-                {
-                    "available": True,
-                    "provider": "MAPBOX_DRIVING_TRAFFIC",
-                    "origin": {"latitude": origin_latitude, "longitude": origin_longitude},
-                    "destination": {
-                        "label": destination_label,
-                        "latitude": destination_latitude,
-                        "longitude": destination_longitude,
-                    },
-                    "best": routes[0],
-                    "routes": routes,
-                }
-            )
+                return Response({"available": False, "reason": "ROUTE_NOT_FOUND", "detail": "No drivable route was found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({
+                "available": True,
+                "provider": "MAPBOX_DRIVING_TRAFFIC",
+                "origin": {"latitude": origin_latitude, "longitude": origin_longitude},
+                "destination": {"label": destination_label, "latitude": destination_latitude, "longitude": destination_longitude},
+                "best": routes[0],
+                "routes": routes,
+            })
         except requests.HTTPError as exc:
-            provider_status = getattr(exc.response, "status_code", None)
-            return Response(
-                {
-                    "available": False,
-                    "reason": "TRAFFIC_PROVIDER_ERROR",
-                    "provider_status": provider_status,
-                    "detail": "Mapbox could not return live traffic. Verify the access token if this persists.",
-                },
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+            return Response({"available": False, "reason": "TRAFFIC_PROVIDER_ERROR", "provider_status": getattr(exc.response, "status_code", None), "detail": "Mapbox could not return live traffic. Verify the access token if this persists."}, status=status.HTTP_502_BAD_GATEWAY)
         except (requests.RequestException, TypeError, ValueError):
-            return Response(
-                {"available": False, "reason": "TRAFFIC_PROVIDER_UNAVAILABLE", "detail": "Live traffic is temporarily unavailable."},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+            return Response({"available": False, "reason": "TRAFFIC_PROVIDER_UNAVAILABLE", "detail": "Live traffic is temporarily unavailable."}, status=status.HTTP_502_BAD_GATEWAY)
+
+
+class MapPreviewAPIView(APIView):
+    """Return a Mapbox static map image without exposing the access token to the browser."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        latitude = _number(request.query_params.get("latitude"), minimum=-90, maximum=90)
+        longitude = _number(request.query_params.get("longitude"), minimum=-180, maximum=180)
+        zoom = _number(request.query_params.get("zoom"), minimum=3, maximum=18) or 12
+        if latitude is None or longitude is None:
+            return Response({"detail": "Valid latitude and longitude are required."}, status=status.HTTP_400_BAD_REQUEST)
+        token = _mapbox_token()
+        if not token:
+            return Response({"detail": "Map preview is not configured."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        overlay = f"pin-s+22d3ee({longitude},{latitude})"
+        url = MAPBOX_STATIC_URL.format(overlay=overlay, lon=longitude, lat=latitude, zoom=round(zoom, 1))
+        try:
+            provider = requests.get(url, params={"access_token": token, "logo": "true", "attribution": "true"}, timeout=15)
+            provider.raise_for_status()
+            content_type = provider.headers.get("Content-Type") or "image/png"
+            return HttpResponse(provider.content, content_type=content_type)
+        except requests.RequestException:
+            return Response({"detail": "Map preview is temporarily unavailable."}, status=status.HTTP_502_BAD_GATEWAY)
