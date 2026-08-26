@@ -49,5 +49,8 @@ Before each release certification:
 ## Mobile smoke boundary
 Mobile remains PENDING until tested on a real device. CI/browser builds do not prove installed-iPhone/PWA safe areas, app switching, touch targets, native browser permission prompts, camera/file inputs, or session persistence.
 
+## CI authorization note
+God Mode is founder-only in the current security model. Build 24 regression tests use the canonical founder email rather than the retired configurable allowlist assumption, so production-readiness and God Mode briefing tests exercise the same authorization rule as production.
+
 ## Build 25 handoff
 Once Build 24 is green at the code/runtime level, Build 25 certifies the critical product lifecycle end-to-end: identity → Marketplace → Business → workforce/dispatch → completion → invoice → payment → platform fee → affiliate → notifications/SYNC.
