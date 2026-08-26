@@ -12,6 +12,7 @@ from user_accounts.views.identity_admin import (
     PlatformBusinessTrustAPIView,
     PlatformBusinessVerificationQueueAPIView,
 )
+from user_accounts.views.live_context import LiveTrafficAPIView, LiveWeatherAPIView
 from user_accounts.views.local_discovery import LocalDiscoveryAPIView
 from user_accounts.views.location_context import ReverseCurrentLocationAPIView
 
@@ -23,6 +24,8 @@ urlpatterns = [
     path("current-location/resolve/", ReverseCurrentLocationAPIView.as_view(), name="identity-current-location-resolve"),
     path("context-location/", ContextLocationRouterAPIView.as_view(), name="identity-context-location"),
     path("discover/", LocalDiscoveryAPIView.as_view(), name="identity-local-discovery"),
+    path("live-weather/", LiveWeatherAPIView.as_view(), name="identity-live-weather"),
+    path("live-traffic/", LiveTrafficAPIView.as_view(), name="identity-live-traffic"),
     path("businesses/<int:business_id>/trust/", BusinessTrustAPIView.as_view(), name="identity-business-trust"),
     path("platform/verifications/", PlatformBusinessVerificationQueueAPIView.as_view(), name="identity-platform-verification-queue"),
     path("platform/businesses/<int:business_id>/trust/", PlatformBusinessTrustAPIView.as_view(), name="identity-platform-business-trust"),
