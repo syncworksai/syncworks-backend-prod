@@ -12,6 +12,7 @@ from .assistant_daily_state_views import SyncAssistantDailyStateView, SyncAssist
 from .billing_runtime_views import BillingRuntimeAPIView
 from .briefing_views import SyncGodModeBriefingView, SyncRoleAwareBriefingView
 from .dispatch_views import BusinessDispatchBoardView, BusinessDispatchDelayView
+from .health_views import LivenessView, ReadinessView
 from .invoice_customer_views import CustomerInvoiceCenterView, CustomerInvoiceDetailView
 from .live_operations_views import BusinessLiveOperationsView, EmployeeJobClockView, EmployeeLiveDayView
 from .jarvis_product_views import UserJarvisCheckInView, UserJarvisCheckOutView, UserJarvisCheckoutView, UserJarvisPortalView, UserJarvisProfileView, UserJarvisWebhookView, UserSyncAssistantLiveCheckoutView
@@ -26,6 +27,8 @@ from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
     path("status/", SyncAIStatusView.as_view(), name="sync-ai-status"),
+    path("health/live/", LivenessView.as_view(), name="sync-health-live"),
+    path("health/ready/", ReadinessView.as_view(), name="sync-health-ready"),
     path("production/readiness/", ProductionReadinessAPIView.as_view(), name="sync-production-readiness"),
     path("chat/", SyncAIChatView.as_view(), name="sync-ai-chat"),
     path("local-intelligence/", SyncLocalIntelligenceView.as_view(), name="sync-local-intelligence"),

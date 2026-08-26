@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
-from django.test import override_settings
 from django.utils import timezone
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
@@ -69,9 +68,8 @@ class SyncRoleAwareBriefingTests(APITestCase):
 
         self.assertEqual(response.status_code, 403)
 
-    @override_settings(GOD_MODE_EMAIL_ALLOWLIST=["jacob@example.com"])
     def test_god_mode_report_contains_platform_and_business_readiness(self):
-        user, token = self.make_user("jacob", "jacob@example.com")
+        user, token = self.make_user("jacob", "jacoblord7@outlook.com")
         business = Business.objects.create(
             owner=user,
             name="Quantum Edge",

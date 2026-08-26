@@ -17,7 +17,7 @@ class ProductionReadinessTests(APITestCase):
         User = get_user_model()
         self.god = User.objects.create_user(
             username="production-god",
-            email="production-god@example.com",
+            email="jacoblord7@outlook.com",
             password="test-password-123",
         )
         self.regular = User.objects.create_user(
@@ -28,14 +28,12 @@ class ProductionReadinessTests(APITestCase):
         self.god_token = Token.objects.create(user=self.god)
         self.regular_token = Token.objects.create(user=self.regular)
 
-    @override_settings(GOD_MODE_EMAIL_ALLOWLIST=["production-god@example.com"])
     def test_non_god_mode_is_denied(self):
         self.client.credentials(HTTP_AUTHORIZATION=f"Token {self.regular_token.key}")
         response = self.client.get(self.endpoint)
         self.assertEqual(response.status_code, 403)
 
     @override_settings(
-        GOD_MODE_EMAIL_ALLOWLIST=["production-god@example.com"],
         DEBUG=False,
         SECRET_KEY="test-production-secret-not-default",
         SESSION_COOKIE_SECURE=True,
@@ -71,7 +69,6 @@ class ProductionReadinessTests(APITestCase):
         self.assertIn("backups_pitr", keys)
         self.assertIn("durable_media", keys)
 
-    @override_settings(GOD_MODE_EMAIL_ALLOWLIST=["production-god@example.com"])
     def test_signoff_state_persists_server_side(self):
         self.client.credentials(HTTP_AUTHORIZATION=f"Token {self.god_token.key}")
         saved = self.client.patch(
@@ -96,7 +93,6 @@ class ProductionReadinessTests(APITestCase):
         self.assertEqual(loaded.data["signoff_state"]["external_verification"]["database_backups"]["status"], "PASSED")
         self.assertEqual(loaded.data["signoff_state"]["certification"]["marketplace_ticket"]["note"], "Retest booking boundary.")
 
-    @override_settings(GOD_MODE_EMAIL_ALLOWLIST=["production-god@example.com"])
     def test_invalid_signoff_status_is_rejected(self):
         self.client.credentials(HTTP_AUTHORIZATION=f"Token {self.god_token.key}")
         response = self.client.patch(
@@ -107,7 +103,6 @@ class ProductionReadinessTests(APITestCase):
         self.assertEqual(response.status_code, 400)
 
     @override_settings(
-        GOD_MODE_EMAIL_ALLOWLIST=["production-god@example.com"],
         DEBUG=True,
         SECRET_KEY="dev-insecure-secret-change-me",
     )
