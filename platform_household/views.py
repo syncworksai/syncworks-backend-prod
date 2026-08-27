@@ -3,17 +3,20 @@ from datetime import timedelta
 
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from personal_calendar.models import PersonalCalendarEvent
+from personal_calendar.travel_assist import TravelAssistError
 from platform_social.models import GroupMembership, SocialGroup
 from platform_social.views import MANAGEMENT_ROLES
 
 from .models import HouseholdGoal, HouseholdMemberSettings, HouseholdProfile, MealPlanEntry, SharedTask, ShoppingItem
 from .serializers import HouseholdGoalSerializer, HouseholdMemberSettingsSerializer, HouseholdProfileSerializer, MealPlanEntrySerializer, SharedTaskSerializer, ShoppingItemSerializer
+from .weather_assist import build_household_weather_plan
 
 
 def active_household_ids(user):
@@ -113,7 +116,7 @@ def sync_task_to_household_calendars(task):
             "recurrence_rule": recurrence_rule(task),
             "source": PersonalCalendarEvent.Source.SYNC,
             "created_by_sync": True,
-            "status": PersonalCalendarEvent.Status.ACTIVE if task.status != SharedTask.Status.DONE else PersonalCalendarEvent.Status.ARCHIVED,
+            "status": PersonalCalendarEvent.Status.ACTIVE if task.status not in (SharedTask.Status.DONE, SharedTask.Status.WEATHER_HOLD) else PersonalCalendarEvent.Status.ARCHIVED,
             "metadata": {
                 "household_id": household.id,
                 "household_task_id": task.id,
@@ -138,6 +141,33 @@ def sync_task_to_household_calendars(task):
         source=PersonalCalendarEvent.Source.SYNC,
         metadata__household_task_id=task.id,
     ).exclude(owner_id__in=desired_owner_ids).update(status=PersonalCalendarEvent.Status.ARCHIVED)
+
+
+def task_weather_event(task, owner):
+    existing = PersonalCalendarEvent.objects.filter(
+        source=PersonalCalendarEvent.Source.SYNC,
+        metadata__household_task_id=task.id,
+    ).first()
+    if existing:
+        return existing
+    household = task.household
+    return PersonalCalendarEvent(
+        owner=owner,
+        title=task.title,
+        description=calendar_description(task),
+        start_at=task.due_at,
+        end_at=task.due_at + timedelta(minutes=max(int(task.estimated_minutes or 15), 1)) if task.due_at else None,
+        timezone=household.timezone,
+        location_name="Household task",
+        address_line1=household.address_line1,
+        address_line2=household.address_line2,
+        city=household.city,
+        state=household.state,
+        postal_code=household.postal_code,
+        country=household.country,
+        source=PersonalCalendarEvent.Source.SYNC,
+        status=PersonalCalendarEvent.Status.ACTIVE,
+    )
 
 
 def create_next_recurring_task(task):
@@ -263,6 +293,72 @@ class SharedTaskViewSet(HouseholdScopedViewSet):
         sync_task_to_household_calendars(task)
         if original_status != SharedTask.Status.DONE and task.status == SharedTask.Status.DONE:
             create_next_recurring_task(task)
+
+    @action(detail=True, methods=["post"], url_path="weather-plan")
+    def weather_plan(self, request, pk=None):
+        task = self.get_object()
+        if not task.weather_dependent:
+            return Response({"detail": "This task is not marked Weather permitting."}, status=status.HTTP_400_BAD_REQUEST)
+        if not task.due_at:
+            return Response({"detail": "Schedule this task before checking weather."}, status=status.HTTP_400_BAD_REQUEST)
+        event = task_weather_event(task, request.user)
+        try:
+            plan = build_household_weather_plan(event)
+        except TravelAssistError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        risk = (plan.get("current") or {}).get("risk")
+        task.weather_status = {
+            "LOW": SharedTask.WeatherStatus.CLEAR,
+            "MODERATE": SharedTask.WeatherStatus.WATCH,
+            "HIGH": SharedTask.WeatherStatus.BLOCKED,
+        }.get(risk, SharedTask.WeatherStatus.NOT_CHECKED)
+        current = plan.get("current") or {}
+        task.weather_note = f"{current.get('short_forecast') or 'Weather checked'} · {current.get('precipitation_probability', 0)}% precip"
+        task.save(update_fields=("weather_status", "weather_note", "updated_at"))
+        sync_task_to_household_calendars(task)
+        return Response(plan, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="weather-decision")
+    def weather_decision(self, request, pk=None):
+        task = self.get_object()
+        if not task.weather_dependent:
+            return Response({"detail": "This task is not marked Weather permitting."}, status=status.HTTP_400_BAD_REQUEST)
+        decision = str(request.data.get("decision") or "").upper()
+        if decision not in {"ACCEPT_SUGGESTED", "CUSTOM", "KEEP", "HOLD"}:
+            return Response({"detail": "Decision must be ACCEPT_SUGGESTED, CUSTOM, KEEP, or HOLD."}, status=status.HTTP_400_BAD_REQUEST)
+
+        new_due = None
+        if decision in {"ACCEPT_SUGGESTED", "CUSTOM"}:
+            new_due = parse_datetime(str(request.data.get("due_at") or ""))
+            if not new_due:
+                return Response({"detail": "A valid due_at is required for this decision."}, status=status.HTTP_400_BAD_REQUEST)
+            if timezone.is_naive(new_due):
+                new_due = timezone.make_aware(new_due)
+
+        if decision == "ACCEPT_SUGGESTED":
+            task.due_at = new_due
+            task.status = SharedTask.Status.OPEN
+            task.weather_status = SharedTask.WeatherStatus.CLEAR
+            task.weather_note = "User accepted SYNC's lower-risk weather window."
+        elif decision == "CUSTOM":
+            task.due_at = new_due
+            task.status = SharedTask.Status.OPEN
+            task.weather_status = SharedTask.WeatherStatus.NOT_CHECKED
+            task.weather_note = "User selected a custom time; weather should be checked again."
+        elif decision == "KEEP":
+            task.status = SharedTask.Status.OPEN
+            if task.weather_status == SharedTask.WeatherStatus.BLOCKED:
+                task.weather_status = SharedTask.WeatherStatus.WATCH
+            task.weather_note = "User chose to keep the current scheduled time after weather review."
+        else:
+            task.status = SharedTask.Status.WEATHER_HOLD
+            task.weather_status = SharedTask.WeatherStatus.BLOCKED
+            task.weather_note = "User placed this task on Weather Hold."
+
+        task.completed_at = None
+        task.save(update_fields=("due_at", "status", "weather_status", "weather_note", "completed_at", "updated_at"))
+        sync_task_to_household_calendars(task)
+        return Response(self.get_serializer(task).data, status=status.HTTP_200_OK)
 
 
 class ShoppingItemViewSet(HouseholdScopedViewSet):
