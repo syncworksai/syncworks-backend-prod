@@ -1,0 +1,19 @@
+name: Health Persistence Regression Test
+
+on:
+  push:
+    branches: [health-persistence-regression-test]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python manage.py test customer_health.test_workout_persistence customer_health.tests --verbosity 2
