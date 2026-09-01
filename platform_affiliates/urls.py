@@ -18,6 +18,11 @@ from platform_affiliates.views.godmode_payouts import (
     GodModePayoutBatchListCreateView,
     GodModePayoutBatchMarkPaidView,
 )
+from platform_affiliates.views.storefront import (
+    GodModeStorefrontKpiView,
+    StorefrontMerchantListView,
+    StorefrontTrackClickView,
+)
 from platform_affiliates.views.tracking import (
     ResolveAffiliateCodeView,
     TrackAffiliateClickView,
@@ -32,6 +37,10 @@ urlpatterns = [
 
     path("track-click/", TrackAffiliateClickView.as_view(), name="affiliate-track-click"),
     path("resolve-code/", ResolveAffiliateCodeView.as_view(), name="affiliate-resolve-code"),
+
+    path("storefront/merchants/", StorefrontMerchantListView.as_view(), name="storefront-merchants"),
+    path("storefront/track-click/", StorefrontTrackClickView.as_view(), name="storefront-track-click"),
+    path("storefront/godmode/kpis/", GodModeStorefrontKpiView.as_view(), name="storefront-godmode-kpis"),
 
     path("godmode/overview/", GodModeAffiliateOverviewView.as_view(), name="affiliate-godmode-overview"),
     path("godmode/affiliates/", GodModeAffiliateListCreateView.as_view(), name="affiliate-godmode-affiliates"),
