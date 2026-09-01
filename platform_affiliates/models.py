@@ -215,3 +215,11 @@ class AffiliateAuditLog(models.Model):
 
     def __str__(self) -> str:
         return self.action
+
+
+# Storefront merchant commerce is intentionally separate from the sales-affiliate ledger.
+from platform_affiliates.storefront_models import (  # noqa: E402,F401
+    StorefrontClick,
+    StorefrontEarning,
+    StorefrontMerchant,
+)
