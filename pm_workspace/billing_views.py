@@ -254,15 +254,44 @@ def my_tenant_account(request):
     tenant = PMTenant.objects.filter(user=request.user, status=PMTenant.Status.CONNECTED).prefetch_related("ledger_entries", "leases", "document_packets").order_by("-updated_at").first()
     if not tenant:
         return Response({"detail": "No connected tenant account was found."}, status=status.HTTP_404_NOT_FOUND)
+    lease = _active_lease(tenant)
     entries = tenant.ledger_entries.order_by("-entry_date", "-id")[:100]
+    documents = tenant.document_packets.exclude(packet_type=PROFILE_PACKET_TYPE).order_by("-updated_at", "-id")[:50]
     return Response({
+        "tenant": {
+            "id": tenant.id,
+            "name": f"{tenant.first_name} {tenant.last_name}".strip(),
+            "email": tenant.email,
+            "phone": tenant.phone,
+            "status": tenant.status,
+        },
+        "management": {
+            "name": tenant.workspace.name,
+            "phone": tenant.workspace.phone,
+            "email": tenant.workspace.tenant_email or tenant.workspace.office_email,
+        },
         "account": _tenant_account(tenant),
         "property_name": tenant.property_name,
         "unit_label": tenant.unit_label,
         "lease": {
-            "start_date": tenant.lease_start,
-            "end_date": tenant.lease_end,
-            "monthly_rent": tenant.monthly_rent,
+            "id": lease.id if lease else None,
+            "status": lease.status if lease else "",
+            "start_date": lease.start_date if lease else tenant.lease_start,
+            "end_date": lease.end_date if lease else tenant.lease_end,
+            "monthly_rent": lease.monthly_rent if lease else tenant.monthly_rent,
+            "security_deposit": lease.security_deposit if lease else None,
+            "section8": lease.section8 if lease else False,
+            "tenant_portion": lease.tenant_portion if lease else None,
+            "assistance_portion": lease.assistance_portion if lease else None,
         },
         "ledger": [{"id": e.id, "entry_date": e.entry_date, "entry_type": e.entry_type, "amount": str(e.amount), "category": e.category, "payment_method": e.payment_method, "reference": e.reference, "memo": e.memo} for e in entries],
+        "documents": [{
+            "id": packet.id,
+            "packet_type": packet.packet_type,
+            "template_name": packet.template_name,
+            "status": packet.status,
+            "sent_at": packet.sent_at,
+            "completed_at": packet.completed_at,
+            "updated_at": packet.updated_at,
+        } for packet in documents],
     })

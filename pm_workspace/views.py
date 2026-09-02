@@ -294,7 +294,7 @@ class PMTenantViewSet(viewsets.ModelViewSet):
             reply_to_email=workspace.reply_to_email or workspace.tenant_email or workspace.office_email,
             created_by=request.user,
         )
-        accept_url = f"{str(getattr(settings, 'FRONTEND_BASE_URL', 'https://syncworksapp.com')).rstrip('/')}/tenant/invite?code={invite.code}"
+        accept_url = f"{str(getattr(settings, 'FRONTEND_BASE_URL', 'https://syncworksapp.com')).rstrip('/')}/tenant/accept?code={invite.code}"
         subject = f"{workspace.name} invited you to SyncWorks"
         body = (
             f"Hello {tenant.first_name},\n\n"

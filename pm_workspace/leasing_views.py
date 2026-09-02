@@ -9,6 +9,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from .lifecycle_models import PMOccupancy
 from .models import PMDocumentPacket, PMLedgerEntry, PMLease, PMProspect, PMTenant, PMUnit, PMWorkspace
 from .serializers import (
     PMDocumentPacketSerializer,
@@ -138,6 +139,7 @@ class PMLeaseViewSet(viewsets.ModelViewSet):
             qs = qs.filter(tenant_id=tenant_id)
         return qs.order_by("-start_date", "-id")
 
+    @transaction.atomic
     def perform_create(self, serializer):
         workspace = requested_workspace(self.request)
         tenant = serializer.validated_data["tenant"]
@@ -148,8 +150,45 @@ class PMLeaseViewSet(viewsets.ModelViewSet):
         tenant.lease_end = lease.end_date
         tenant.monthly_rent = lease.monthly_rent
         if lease.unit:
+            active_occupancy = PMOccupancy.objects.select_for_update().filter(
+                workspace=workspace,
+                tenant=tenant,
+                status__in=[PMOccupancy.Status.ACTIVE, PMOccupancy.Status.NOTICE_GIVEN],
+            ).order_by("-move_in_date", "-id").first()
+            previous_unit = active_occupancy.unit if active_occupancy else None
+
             tenant.property_name = lease.unit.property.name
             tenant.unit_label = lease.unit.label
+            if active_occupancy:
+                active_occupancy.property = lease.unit.property
+                active_occupancy.unit = lease.unit
+                active_occupancy.lease = lease
+                active_occupancy.status = PMOccupancy.Status.ACTIVE
+                active_occupancy.move_in_date = tenant.move_in_date or lease.start_date
+                active_occupancy.save(update_fields=[
+                    "property",
+                    "unit",
+                    "lease",
+                    "status",
+                    "move_in_date",
+                    "updated_at",
+                ])
+            else:
+                PMOccupancy.objects.create(
+                    workspace=workspace,
+                    tenant=tenant,
+                    property=lease.unit.property,
+                    unit=lease.unit,
+                    lease=lease,
+                    status=PMOccupancy.Status.ACTIVE,
+                    move_in_date=tenant.move_in_date or lease.start_date,
+                    notes="Created from tenant lease onboarding.",
+                    created_by=self.request.user,
+                )
+
+            if previous_unit and previous_unit.id != lease.unit_id:
+                previous_unit.availability = PMUnit.Availability.AVAILABLE
+                previous_unit.save(update_fields=["availability", "updated_at"])
             lease.unit.availability = PMUnit.Availability.OCCUPIED
             lease.unit.save(update_fields=["availability", "updated_at"])
         tenant.save(update_fields=["lease_start", "lease_end", "monthly_rent", "property_name", "unit_label", "updated_at"])
