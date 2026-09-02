@@ -6,6 +6,7 @@ from .billing_policy_views import apply_company_billing_template, company_billin
 from .billing_views import generate_tenant_charges, my_tenant_account, portfolio_billing_summary, tenant_billing_profile
 from .communication_views import bulk_delete_ledger, investor_ledger, my_conversations, pm_conversations, reply_conversation, request_ledger_information, requester_reply, resolve_conversation
 from .deposit_views import apply_deposit, deposit_status
+from .dashboard_views import command_center
 from .document_builder_views import document_builder_bootstrap, document_builder_finalize, document_builder_prefill, document_builder_save
 from .document_views import PMPropertyDocumentViewSet, document_template_catalog, property_document_checklist
 from .lead_views import lead_convert_to_tenant, lead_detail, lead_note, lead_reply_email, leads
@@ -38,6 +39,7 @@ router.register(r"work-orders", PMWorkOrderViewSet, basename="pm-work-orders")
 legacy_ledger_list = PMLedgerEntryViewSet.as_view({"get": "list", "post": "create"})
 
 urlpatterns = [
+    path("dashboard/command-center/", command_center),
     path("tenants/<int:tenant_id>/complete-internally/", complete_tenant_onboarding_internally),
     path("tenants/<int:tenant_id>/complete-internally", complete_tenant_onboarding_internally),
     path("tenants/<int:tenant_id>/complete_internal/", complete_tenant_onboarding_internally),
