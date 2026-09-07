@@ -1,9 +1,12 @@
 from django.db import transaction
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from user_accounts.models.tickets import Ticket, TicketMessage
 
 from .models import PersonalCalendarEvent, PersonalCalendarEventAudit
 from .serializers import PersonalCalendarEventSerializer
@@ -111,6 +114,86 @@ class PersonalCalendarEventViewSet(viewsets.ModelViewSet):
                 actor=request.user,
                 action=PersonalCalendarEventAudit.Action.UPDATED,
                 changes={"status": PersonalCalendarEvent.Status.ACTIVE},
+            )
+        return Response(self.get_serializer(event).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="schedule-response")
+    def schedule_response(self, request, pk=None):
+        event = self.get_object()
+        if event.source != PersonalCalendarEvent.Source.TICKET:
+            raise serializers.ValidationError("Schedule responses are only available for SyncWorks service appointments.")
+
+        response_value = str(request.data.get("response") or "").strip().upper()
+        response_map = {
+            "ACCEPT": "ACCEPTED",
+            "ACCEPTED": "ACCEPTED",
+            "REQUEST_CHANGE": "REQUESTED_DIFFERENT_TIME",
+            "REQUESTED_DIFFERENT_TIME": "REQUESTED_DIFFERENT_TIME",
+            "DECLINE": "REQUESTED_DIFFERENT_TIME",
+            "DECLINED": "REQUESTED_DIFFERENT_TIME",
+        }
+        response_status = response_map.get(response_value)
+        if not response_status:
+            raise serializers.ValidationError({"response": "Use ACCEPT or REQUEST_CHANGE."})
+
+        metadata = dict(event.metadata or {})
+        schedule_change = metadata.get("schedule_change") if isinstance(metadata.get("schedule_change"), dict) else {}
+        if (
+            not schedule_change
+            or not bool(schedule_change.get("requires_response"))
+            or str(schedule_change.get("status") or "").upper() != "PENDING"
+        ):
+            raise serializers.ValidationError("There is no service schedule change waiting for a response.")
+
+        responded_at = timezone.now().isoformat()
+        response_note = str(request.data.get("note") or "").strip()[:500]
+        schedule_change = {
+            **schedule_change,
+            "status": response_status,
+            "requires_response": False,
+            "responded_at": responded_at,
+            "response_note": response_note,
+        }
+        metadata["schedule_change"] = schedule_change
+        history = list(metadata.get("schedule_history") or [])
+        if history:
+            history[-1] = {
+                **history[-1],
+                "status": response_status,
+                "responded_at": responded_at,
+                "response_note": response_note,
+            }
+            metadata["schedule_history"] = history[-20:]
+
+        ticket_id = metadata.get("ticket_id")
+        ticket = Ticket.objects.filter(pk=ticket_id, customer=request.user).first() if ticket_id else None
+        proposed_start = str(schedule_change.get("proposed_start") or "").strip()
+        if response_status == "ACCEPTED":
+            ticket_message = f"Customer accepted the service schedule{f' for {proposed_start}' if proposed_start else ''} from SyncWorks Calendar."
+        else:
+            ticket_message = f"Customer requested a different service time{f' from the proposed {proposed_start}' if proposed_start else ''} in SyncWorks Calendar."
+            if response_note:
+                ticket_message = f"{ticket_message} Note: {response_note}"
+
+        with transaction.atomic():
+            event.metadata = metadata
+            event.save(update_fields=("metadata", "updated_at"))
+            if ticket is not None:
+                TicketMessage.objects.create(
+                    ticket=ticket,
+                    sender=request.user,
+                    type=TicketMessage.MessageType.SYSTEM,
+                    body=ticket_message,
+                )
+            PersonalCalendarEventAudit.objects.create(
+                event=event,
+                actor=request.user,
+                action=PersonalCalendarEventAudit.Action.UPDATED,
+                changes={
+                    "fields": ["metadata.schedule_change"],
+                    "schedule_response": response_status,
+                    "ticket_message_created": bool(ticket),
+                },
             )
         return Response(self.get_serializer(event).data, status=status.HTTP_200_OK)
 

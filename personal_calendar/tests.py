@@ -5,6 +5,9 @@ from django.utils import timezone
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
+from user_accounts.models.tickets import Ticket, TicketMessage
+from user_accounts.models.workforce import TicketOperationalProfile
+
 from .models import PersonalCalendarEvent, PersonalCalendarEventAudit
 
 
@@ -102,3 +105,52 @@ class PersonalCalendarApiTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["title"], "Soon")
+
+    def test_service_schedule_response_is_written_back_to_ticket_conversation(self):
+        user, token = self.make_user("service-calendar@example.com")
+        first = timezone.now() + timedelta(days=2)
+        ticket = Ticket.objects.create(
+            customer=user,
+            work_title="HVAC service repair",
+            service_address="123 Main St",
+            service_zip="36104",
+            status=Ticket.Status.SCHEDULED,
+            scheduled_at=first,
+        )
+        event = PersonalCalendarEvent.objects.get(
+            owner=user,
+            source=PersonalCalendarEvent.Source.TICKET,
+            external_event_id=str(ticket.pk),
+        )
+        moved = first + timedelta(hours=3)
+        TicketOperationalProfile.objects.create(
+            ticket=ticket,
+            scheduled_start=moved,
+            scheduled_end=moved + timedelta(minutes=90),
+        )
+        event.refresh_from_db()
+        self.assertTrue(event.metadata["schedule_change"]["requires_response"])
+
+        self.authenticate(token)
+        response = self.client.post(
+            f"/api/v1/personal-calendar/events/{event.id}/schedule-response/",
+            {"response": "REQUEST_CHANGE", "note": "Afternoon works better."},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        event.refresh_from_db()
+        self.assertEqual(event.metadata["schedule_change"]["status"], "REQUESTED_DIFFERENT_TIME")
+        self.assertFalse(event.metadata["schedule_change"]["requires_response"])
+        message = TicketMessage.objects.get(ticket=ticket)
+        self.assertEqual(message.sender, user)
+        self.assertEqual(message.type, TicketMessage.MessageType.SYSTEM)
+        self.assertIn("requested a different service time", message.body)
+        self.assertIn("Afternoon works better", message.body)
+
+        duplicate = self.client.post(
+            f"/api/v1/personal-calendar/events/{event.id}/schedule-response/",
+            {"response": "ACCEPT"},
+            format="json",
+        )
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertEqual(TicketMessage.objects.filter(ticket=ticket).count(), 1)

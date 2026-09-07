@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "personal_calendar/**"
+      - "user_accounts/services/personal_calendar_sync.py"
+      - "user_accounts/test_personal_calendar_ticket_sync.py"
       - ".github/workflows/calendar-connections-ci.yml"
 
 jobs:
@@ -19,4 +21,4 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
       - run: python manage.py check
-      - run: python manage.py test personal_calendar
+      - run: python manage.py test personal_calendar user_accounts.test_personal_calendar_ticket_sync
