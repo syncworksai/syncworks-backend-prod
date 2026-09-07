@@ -18,6 +18,7 @@ class TicketPersonalCalendarSyncTests(TestCase):
         event = PersonalCalendarEvent.objects.get(owner=self.user, source="TICKET", external_event_id=str(ticket.pk))
         self.assertEqual(event.start_at, first)
         self.assertEqual(event.metadata["deep_link"], f"/tickets/{ticket.pk}")
+        self.assertEqual(event.metadata["schedule_change"]["status"], "ACCEPTED")
 
         moved = first + timedelta(hours=3)
         operations = TicketOperationalProfile.objects.create(ticket=ticket, scheduled_start=moved, scheduled_end=moved + timedelta(minutes=90))
@@ -25,12 +26,28 @@ class TicketPersonalCalendarSyncTests(TestCase):
         self.assertEqual(event.start_at, moved)
         self.assertEqual(event.end_at, moved + timedelta(minutes=90))
         self.assertEqual(PersonalCalendarEvent.objects.filter(owner=self.user, source="TICKET").count(), 1)
+        self.assertEqual(event.metadata["schedule_change"]["status"], "PENDING")
+        self.assertTrue(event.metadata["schedule_change"]["requires_response"])
+        self.assertEqual(len(event.metadata["schedule_history"]), 1)
 
         operations.scheduled_start = moved + timedelta(days=1)
         operations.scheduled_end = moved + timedelta(days=1, minutes=90)
         operations.save()
         event.refresh_from_db()
         self.assertEqual(event.start_at, moved + timedelta(days=1))
+        self.assertEqual(event.metadata["schedule_change"]["status"], "PENDING")
+        self.assertEqual(len(event.metadata["schedule_history"]), 2)
+
+    def test_non_schedule_ticket_update_does_not_create_new_schedule_proposal(self):
+        first = timezone.now() + timedelta(days=2)
+        ticket = Ticket.objects.create(customer=self.user, work_title="HVAC service repair", status="SCHEDULED", scheduled_at=first)
+        event = PersonalCalendarEvent.objects.get(owner=self.user, source="TICKET", external_event_id=str(ticket.pk))
+        ticket.work_title = "HVAC diagnostic"
+        ticket.save(update_fields=["work_title"])
+        event.refresh_from_db()
+        self.assertEqual(event.start_at, first)
+        self.assertEqual(event.metadata["schedule_change"]["status"], "ACCEPTED")
+        self.assertEqual(event.metadata["schedule_history"], [])
 
     def test_cancelled_ticket_cancels_calendar_event(self):
         ticket = Ticket.objects.create(customer=self.user, work_title="Plumbing visit", status="SCHEDULED", scheduled_at=timezone.now() + timedelta(days=1))
