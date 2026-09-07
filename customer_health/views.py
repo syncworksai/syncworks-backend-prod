@@ -17,6 +17,7 @@ from rest_framework.views import APIView
 from user_accounts.models.customer_settings import CustomerSettings
 
 from .models import CustomerHealthFeedback, CustomerHealthProfile
+from .calendar_sync import sync_health_plan_to_calendar
 from .serializers import (
     CustomerHealthFeedbackSerializer,
     CustomerHealthProfileSerializer,
@@ -497,7 +498,8 @@ class CustomerHealthMeView(APIView):
         )
 
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        profile = serializer.save()
+        sync_health_plan_to_calendar(profile)
 
         return Response(serializer.data)
 
