@@ -103,14 +103,49 @@ def build_usage_summary(user, days=30):
         "action_count": action_count,
         "module_count": area_count,
         "completed_actions": completed,
-        "top_areas": [
-            {"area": area, "count": count}
-            for area, count in areas.most_common(5)
-        ],
-        "top_actions": [
-            {"action": action, "count": count}
-            for action, count in actions.most_common(5)
-        ],
+        "top_areas": [{"area": area, "count": count} for area, count in areas.most_common(5)],
+        "top_actions": [{"action": action, "count": count} for action, count in actions.most_common(5)],
+    }
+
+
+def build_platform_usage_summary(days=30):
+    since = timezone.now() - timedelta(days=days)
+    rows = list(
+        AuditLog.objects.filter(
+            actor__isnull=False,
+            action__startswith=f"{USAGE_PREFIX}:",
+            created_at__gte=since,
+        ).only("actor_id", "action", "metadata", "created_at")
+    )
+    areas = Counter()
+    actions = Counter()
+    categories = Counter()
+    active_users_7d = set()
+    tracked_users = set()
+    completed = 0
+    seven_days_ago = timezone.now() - timedelta(days=7)
+    for row in rows:
+        tracked_users.add(row.actor_id)
+        if row.created_at >= seven_days_ago:
+            active_users_7d.add(row.actor_id)
+        parts = str(row.action or "").split(":", 2)
+        if len(parts) == 3:
+            areas[parts[1]] += 1
+            actions[parts[2]] += 1
+        category = str((row.metadata or {}).get("category") or "").strip().upper()
+        if category:
+            categories[category] += 1
+        if bool((row.metadata or {}).get("completed")):
+            completed += 1
+    return {
+        "period_days": days,
+        "tracked_users": len(tracked_users),
+        "active_users_7d": len(active_users_7d),
+        "action_count": len(rows),
+        "completed_actions": completed,
+        "top_areas": [{"area": area, "count": count} for area, count in areas.most_common(10)],
+        "top_actions": [{"action": action, "count": count} for action, count in actions.most_common(10)],
+        "top_categories": [{"category": category, "count": count} for category, count in categories.most_common(10)],
     }
 
 
@@ -139,3 +174,13 @@ class SyncUsageSummaryView(APIView):
 
     def get(self, request):
         return Response(build_usage_summary(request.user))
+
+
+class SyncGodModeUsageSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if not bool(getattr(user, "is_superuser", False) or getattr(user, "is_platform_admin", False)):
+            return Response({"detail": "God Mode access required."}, status=status.HTTP_403_FORBIDDEN)
+        return Response(build_platform_usage_summary())
