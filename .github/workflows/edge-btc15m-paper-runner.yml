@@ -1,0 +1,35 @@
+name: EDGE BTC15M Paper Runner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/edge-btc15m-paper-runner.yml"
+      - "platform_edge/btc15m.py"
+      - "platform_edge/btc15m_runner.py"
+      - "platform_edge/urls.py"
+  schedule:
+    # GitHub scheduled workflows have a five-minute minimum per cron expression.
+    # Five staggered schedules give this 15-minute experiment one observation target per minute.
+    - cron: "*/5 * * * *"
+    - cron: "1-59/5 * * * *"
+    - cron: "2-59/5 * * * *"
+    - cron: "3-59/5 * * * *"
+    - cron: "4-59/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: edge-btc15m-paper-runner
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Wake backend and run BTC 15m paper tick
+        run: |
+          curl --retry 2 --retry-delay 5 --max-time 90 -fsS \
+            -X POST \
+            -H "Content-Type: application/json" \
+            https://syncworks-api.onrender.com/api/v1/edge/system/btc15m/tick/
