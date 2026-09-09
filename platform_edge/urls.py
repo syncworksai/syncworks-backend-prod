@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .backtest_views import mlb_backtest
-from .btc15m import btc15m_dashboard, system_btc15m_tick
+from .btc15m_runner import btc15m_dashboard, system_btc15m_tick
 from .historical_views import replay_summary, sync_mlb_kalshi
 from .live_views import live_mlb_board
 from .portfolio_views import portfolio_live, portfolio_paper_tick
