@@ -21,7 +21,7 @@ from .marketplace_views import MarketplaceAvailabilityView, MarketplaceBookView
 from .notification_views import SyncNotificationRefreshView, SyncNotificationSettingsView, SyncPushDeviceView
 from .professional_services_views import BusinessProfessionalAppointmentsView, CustomerProfessionalAppointmentResponseView, CustomerProfessionalAppointmentsView, ProfessionalAvailabilityView, ProfessionalDiscoveryView, ProfessionalPracticeSettingsView, ProfessionalProviderDetailView, ProfessionalProvidersView, ProfessionalResourceDetailView, ProfessionalResourcesView
 from .production_readiness_views import ProductionReadinessAPIView
-from .usage_views import SyncUsageSummaryView, SyncUsageTrackView
+from .usage_views import SyncGodModeUsageSummaryView, SyncUsageSummaryView, SyncUsageTrackView
 from .workforce_views import BusinessOperationsSummaryView, BusinessWorkforceView, TicketOperationsView
 from .views import SyncAIActionDraftView, SyncAIChatView, SyncAIStatusView, SyncAITicketReplyExecuteView
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
@@ -34,6 +34,7 @@ urlpatterns = [
     path("chat/", SyncAIChatView.as_view(), name="sync-ai-chat"),
     path("usage/track/", SyncUsageTrackView.as_view(), name="sync-usage-track"),
     path("usage/summary/", SyncUsageSummaryView.as_view(), name="sync-usage-summary"),
+    path("usage/god-mode/summary/", SyncGodModeUsageSummaryView.as_view(), name="sync-god-mode-usage-summary"),
     path("local-intelligence/", SyncLocalIntelligenceView.as_view(), name="sync-local-intelligence"),
     path("briefing/", SyncRoleAwareBriefingView.as_view(), name="sync-role-aware-briefing"),
     path("briefing/god-mode/", SyncGodModeBriefingView.as_view(), name="sync-god-mode-briefing"),
