@@ -13,6 +13,7 @@ urlpatterns = [
     path("api/v1/personal-finance/", include("user_accounts.personal_finance_urls")),
     path("api/v1/identity/", include("user_accounts.identity_urls")),
     path("api/v1/social/", include("platform_social.urls")),
+    path("api/v1/sports/", include("platform_sports.urls")),
     path("api/v1/household/", include("platform_household.urls")),
     path("api/v1/pm-hub/", include("pm_workspace.urls")),
     path("api/v1/edge/", include("platform_edge.urls")),
