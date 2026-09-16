@@ -1,0 +1,44 @@
+name: SyncWorks Sports CI
+
+on:
+  pull_request:
+    paths:
+      - "platform_sports/**"
+      - "platform_social/**"
+      - "personal_calendar/**"
+      - "syncworksv7/settings_pm.py"
+      - "syncworksv7/urls.py"
+      - ".github/workflows/sports-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  sports-checks:
+    runs-on: ubuntu-latest
+    env:
+      DJANGO_DEBUG: "true"
+      DB_ENGINE: sqlite
+      DJANGO_SECRET_KEY: ci-sports-secret
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Django system check
+        run: python manage.py check
+
+      - name: Verify Sports migrations
+        run: python manage.py makemigrations platform_sports --check --dry-run
+
+      - name: Apply migrations
+        run: python manage.py migrate --noinput
+
+      - name: Run Sports API tests
+        run: python manage.py test platform_sports --verbosity 2
