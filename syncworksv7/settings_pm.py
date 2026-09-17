@@ -9,6 +9,12 @@ if "platform_edge.apps.PlatformEdgeConfig" not in INSTALLED_APPS:
 if "platform_social.apps.PlatformSocialConfig" not in INSTALLED_APPS:
     INSTALLED_APPS = [*INSTALLED_APPS, "platform_social.apps.PlatformSocialConfig"]
 
+if "platform_sports.apps.PlatformSportsConfig" not in INSTALLED_APPS:
+    INSTALLED_APPS = [*INSTALLED_APPS, "platform_sports.apps.PlatformSportsConfig"]
+
+if "platform_sports_analytics.apps.PlatformSportsAnalyticsConfig" not in INSTALLED_APPS:
+    INSTALLED_APPS = [*INSTALLED_APPS, "platform_sports_analytics.apps.PlatformSportsAnalyticsConfig"]
+
 if "platform_household.apps.PlatformHouseholdConfig" not in INSTALLED_APPS:
     INSTALLED_APPS = [*INSTALLED_APPS, "platform_household.apps.PlatformHouseholdConfig"]
 
