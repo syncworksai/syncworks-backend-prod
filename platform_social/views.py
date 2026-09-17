@@ -18,6 +18,7 @@ from .models import (
     EventMemberResponse,
     GroupEventInvitation,
     GroupMembership,
+    GroupMessage,
     SocialEvent,
     SocialGroup,
 )
@@ -28,6 +29,7 @@ from .serializers import (
     EventMemberResponseSerializer,
     GroupEventInvitationSerializer,
     GroupMembershipSerializer,
+    GroupMessageSerializer,
     SocialEventSerializer,
     SocialGroupSerializer,
     SocialUserSerializer,
@@ -182,6 +184,24 @@ def sync_social_event_calendars(event):
     existing.exclude(owner_id__in=desired_user_ids).update(status=PersonalCalendarEvent.Status.ARCHIVED)
     if event.status == SocialEvent.Status.CANCELLED:
         existing.update(status=PersonalCalendarEvent.Status.CANCELLED)
+
+
+def sync_sports_lineup_availability(response):
+    """Keep a declined team-game RSVP out of the saved batting order."""
+    if response.response != EventMemberResponse.Response.NO:
+        return
+    from platform_sports.models import SportsGame, SportsLineupSpot, SportsPlayer
+
+    game = SportsGame.objects.filter(social_event_id=response.event_id).first()
+    if not game:
+        return
+    player = SportsPlayer.objects.filter(
+        team_id=game.team_id,
+        user_id=response.user_id,
+        is_active=True,
+    ).first()
+    if player:
+        SportsLineupSpot.objects.filter(game=game, player=player).delete()
 
 
 class PeopleViewSet(viewsets.ReadOnlyModelViewSet):
@@ -360,6 +380,49 @@ class GroupMembershipViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(membership).data)
 
 
+class GroupMessageViewSet(viewsets.ModelViewSet):
+    serializer_class = GroupMessageSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        queryset = GroupMessage.objects.filter(
+            group_id__in=active_group_ids(self.request.user),
+            is_deleted=False,
+        ).select_related("group", "author")
+        group_id = self.request.query_params.get("group")
+        if group_id:
+            queryset = queryset.filter(group_id=group_id)
+        return queryset.order_by("created_at", "id")
+
+    def perform_create(self, serializer):
+        group = serializer.validated_data["group"]
+        if not GroupMembership.objects.filter(
+            group=group,
+            user=self.request.user,
+            status=GroupMembership.Status.ACTIVE,
+        ).exists():
+            raise serializers.ValidationError("You must be an active group member to post.")
+        serializer.save(author=self.request.user)
+
+    def perform_update(self, serializer):
+        message = self.get_object()
+        if message.author_id != self.request.user.id:
+            raise serializers.ValidationError("Only the author can edit this message.")
+        if "group" in serializer.validated_data and serializer.validated_data["group"].id != message.group_id:
+            raise serializers.ValidationError({"group": "A message cannot be moved to another group."})
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if instance.author_id != self.request.user.id and not can_manage_group(
+            self.request.user, instance.group_id
+        ):
+            raise serializers.ValidationError("You cannot remove this message.")
+        instance.body = ""
+        instance.is_deleted = True
+        instance.save(update_fields=("body", "is_deleted", "updated_at"))
+
+
 class SocialEventViewSet(viewsets.ModelViewSet):
     serializer_class = SocialEventSerializer
     permission_classes = [IsAuthenticated]
@@ -501,6 +564,7 @@ class EventMemberResponseViewSet(viewsets.ModelViewSet):
             )
         response = serializer.save(user=self.request.user, responded_at=timezone.now())
         upsert_social_calendar_event(event, self.request.user.id, active=response.response != EventMemberResponse.Response.NO)
+        sync_sports_lineup_availability(response)
 
     def perform_update(self, serializer):
         response = self.get_object()
@@ -510,6 +574,7 @@ class EventMemberResponseViewSet(viewsets.ModelViewSet):
             )
         response = serializer.save(responded_at=timezone.now())
         upsert_social_calendar_event(response.event, response.user_id, active=response.response != EventMemberResponse.Response.NO)
+        sync_sports_lineup_availability(response)
 
 
 class CollectionViewSet(viewsets.ModelViewSet):
