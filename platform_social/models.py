@@ -102,6 +102,32 @@ class GroupMembership(models.Model):
         indexes = [models.Index(fields=("group", "status", "role"), name="social_group_member_lookup")]
 
 
+class GroupMessage(models.Model):
+    group = models.ForeignKey(
+        SocialGroup,
+        on_delete=models.CASCADE,
+        related_name="messages",
+    )
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="social_group_messages",
+    )
+    body = models.TextField(max_length=2000)
+    is_deleted = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("created_at", "id")
+        indexes = [
+            models.Index(fields=("group", "created_at"), name="social_msg_group_time"),
+        ]
+
+    def __str__(self):
+        return f"{self.group.name} · {self.author_id} · {self.created_at:%Y-%m-%d %H:%M}"
+
+
 class SocialEvent(models.Model):
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
