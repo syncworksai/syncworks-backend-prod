@@ -7,6 +7,7 @@ from .models import (
     Connection,
     EventMemberResponse,
     GroupEventInvitation,
+    GroupMessage,
     GroupMembership,
     SocialEvent,
     SocialGroup,
@@ -54,6 +55,26 @@ class GroupMembershipSerializer(serializers.ModelSerializer):
         model = GroupMembership
         fields = ("id", "group", "user", "user_detail", "role", "status", "invited_by", "created_at", "updated_at")
         read_only_fields = ("id", "invited_by", "created_at", "updated_at")
+
+
+class GroupMessageSerializer(serializers.ModelSerializer):
+    author_detail = SocialUserSerializer(source="author", read_only=True)
+
+    class Meta:
+        model = GroupMessage
+        fields = (
+            "id", "group", "author", "author_detail", "body", "is_deleted",
+            "created_at", "updated_at",
+        )
+        read_only_fields = (
+            "id", "author", "author_detail", "is_deleted", "created_at", "updated_at",
+        )
+
+    def validate_body(self, value):
+        value = str(value or "").strip()
+        if not value:
+            raise serializers.ValidationError("Message cannot be empty.")
+        return value
 
 
 class SocialGroupSerializer(serializers.ModelSerializer):
