@@ -387,6 +387,29 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         players = {p.id: p for p in SportsPlayer.objects.filter(team=game.team, id__in=player_ids, is_active=True)}
         if len(players) != len(player_ids):
             return Response({"detail": "Every lineup player must be active on this team."}, status=status.HTTP_400_BAD_REQUEST)
+        if game.social_event_id:
+            linked_user_ids = [player.user_id for player in players.values() if player.user_id]
+            out_user_ids = set(
+                EventMemberResponse.objects.filter(
+                    event_id=game.social_event_id,
+                    group_id=game.team.group_id,
+                    user_id__in=linked_user_ids,
+                    response=EventMemberResponse.Response.NO,
+                ).values_list("user_id", flat=True)
+            )
+            if out_user_ids:
+                out_names = sorted(
+                    player.display_name
+                    for player in players.values()
+                    if player.user_id in out_user_ids
+                )
+                return Response(
+                    {
+                        "detail": "Players marked OUT cannot be added to this lineup.",
+                        "players": out_names,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         new_spots = []
         try:
             for row in spots:
