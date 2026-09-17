@@ -121,9 +121,11 @@ class GroupEventInvitationSerializer(serializers.ModelSerializer):
 
 
 class EventMemberResponseSerializer(serializers.ModelSerializer):
+    user_detail = SocialUserSerializer(source="user", read_only=True)
+
     class Meta:
         model = EventMemberResponse
-        fields = ("id", "event", "group", "user", "response", "responded_at", "created_at", "updated_at")
+        fields = ("id", "event", "group", "user", "user_detail", "response", "responded_at", "created_at", "updated_at")
         read_only_fields = ("id", "user", "responded_at", "created_at", "updated_at")
 
     def create(self, validated_data):
