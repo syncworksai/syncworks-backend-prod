@@ -9,6 +9,13 @@ from .league_views import (
     SportsOrganizationViewSet,
     SportsPlayerIdentityViewSet,
 )
+from .ops_views import (
+    SoftballStatLedgerEntryViewSet,
+    SportsPlayerProfileViewSet,
+    TeamFeeAssignmentViewSet,
+    TeamFeeViewSet,
+    TeamPaymentSettingsViewSet,
+)
 from .views import (
     SoftballPlateAppearanceViewSet,
     SportsGameViewSet,
@@ -21,6 +28,11 @@ router.register("teams", SportsTeamViewSet, basename="sports-teams")
 router.register("players", SportsPlayerViewSet, basename="sports-players")
 router.register("games", SportsGameViewSet, basename="sports-games")
 router.register("plate-appearances", SoftballPlateAppearanceViewSet, basename="sports-plate-appearances")
+router.register("player-profiles", SportsPlayerProfileViewSet, basename="sports-player-profiles")
+router.register("payment-settings", TeamPaymentSettingsViewSet, basename="sports-payment-settings")
+router.register("team-fees", TeamFeeViewSet, basename="sports-team-fees")
+router.register("fee-assignments", TeamFeeAssignmentViewSet, basename="sports-fee-assignments")
+router.register("stat-ledger", SoftballStatLedgerEntryViewSet, basename="sports-stat-ledger")
 
 router.register("organizations", SportsOrganizationViewSet, basename="sports-organizations")
 router.register("organization-memberships", SportsOrganizationMembershipViewSet, basename="sports-organization-memberships")
