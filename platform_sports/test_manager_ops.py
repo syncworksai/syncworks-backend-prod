@@ -6,7 +6,7 @@ from rest_framework.test import APITestCase
 from platform_social.models import GroupMembership, SocialGroup
 
 from .models import SportsPlayer, SportsTeam
-from .ops_models import SportsPlayerProfile, TeamFeeAssignment
+from .ops_models import SportsPlayerProfile, TeamFee, TeamFeeAssignment
 
 
 User = get_user_model()
@@ -39,6 +39,29 @@ class SportsManagerOpsApiTests(APITestCase):
         rows = mine.data if isinstance(mine.data, list) else mine.data["results"]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["player"], self.member_player.id)
+
+
+    def test_manager_fee_edit_updates_unpaid_roster_assignments(self):
+        fee = TeamFee.objects.create(
+            team=self.team,
+            title="League fee",
+            amount_cents=5000,
+            created_by=self.owner,
+        )
+        for player in (self.member_player, self.other_player):
+            TeamFeeAssignment.objects.create(fee=fee, player=player, amount_cents=5000)
+
+        response = self.client.patch(
+            reverse("sports-team-fees-detail", args=[fee.id]),
+            {"amount_cents": 6000},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["amount_cents"], 6000)
+        self.assertEqual(
+            set(TeamFeeAssignment.objects.filter(fee=fee).values_list("amount_cents", flat=True)),
+            {6000},
+        )
 
     def test_player_profile_contact_is_private_to_manager_and_that_player(self):
         SportsPlayerProfile.objects.create(player=self.other_player, email="private@example.com", phone="555-0100")
