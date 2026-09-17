@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Max, Q
 from django.shortcuts import get_object_or_404
@@ -13,6 +14,8 @@ from rest_framework.response import Response
 
 from platform_social.models import EventMemberResponse, GroupMembership, SocialEvent, SocialGroup
 from platform_social.views import ensure_group_event_responses, sync_social_event_calendars
+from user_accounts.models import Notification
+from user_accounts.services.notifications import notify
 
 from .models import SoftballPlateAppearance, SportsGame, SportsLineupSpot, SportsPlayer, SportsTeam
 from .serializers import (
@@ -22,6 +25,8 @@ from .serializers import (
     SportsPlayerSerializer,
     SportsTeamSerializer,
 )
+
+User = get_user_model()
 
 MANAGEMENT_ROLES = (
     GroupMembership.Role.OWNER,
@@ -281,6 +286,48 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
         )
         return Response(self.get_serializer(team).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
+    @action(detail=True, methods=["post"], url_path="remind-dues")
+    def remind_dues(self, request, pk=None):
+        team = self.get_object()
+        if not can_manage_team(request.user, team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        from .ops_models import TeamFeeAssignment
+
+        rows = TeamFeeAssignment.objects.filter(
+            fee__team=team,
+            status__in=(TeamFeeAssignment.Status.DUE, TeamFeeAssignment.Status.PARTIAL),
+            player__user__isnull=False,
+        ).select_related("player__user", "fee")
+        totals = defaultdict(int)
+        players = {}
+        for row in rows:
+            totals[row.player_id] += max(0, row.amount_cents - row.amount_paid_cents)
+            players[row.player_id] = row.player
+        sent = 0
+        for player_id, amount_cents in totals.items():
+            player = players[player_id]
+            if amount_cents <= 0 or not player.user_id:
+                continue
+            notify(
+                player.user,
+                f"{team.group.name} payment reminder",
+                f"Your current team balance is ${amount_cents / 100:.2f}. Open the team Dues tab for details and payment options.",
+                {
+                    "source": "SOCIAL",
+                    "sync_alert": True,
+                    "severity": "LOW",
+                    "group_id": team.group_id,
+                    "team_id": team.id,
+                    "player_id": player.id,
+                    "route": f"/connect/groups/{team.group_id}/sports",
+                    "kind": "TEAM_DUES",
+                },
+                actor=request.user,
+                type=Notification.TYPE_REMINDER,
+            )
+            sent += 1
+        return Response({"sent": sent})
+
     @action(detail=True, methods=["get"])
     def dashboard(self, request, pk=None):
         team = self.get_object()
@@ -329,6 +376,127 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
         if "team" in serializer.validated_data and serializer.validated_data["team"].id != player.team_id:
             raise serializers.ValidationError({"team": "A player cannot be moved between teams here."})
         serializer.save()
+
+    @action(detail=True, methods=["post"])
+    def invite(self, request, pk=None):
+        player = self.get_object()
+        if not can_manage_team(request.user, player.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+
+        email = str(request.data.get("email") or "").strip().lower()
+        if not email:
+            try:
+                email = str(player.manager_profile.email or "").strip().lower()
+            except Exception:
+                email = ""
+        target = player.user if player.user_id else (User.objects.filter(email__iexact=email).first() if email else None)
+        if not target:
+            return Response(
+                {"detail": "No SyncWorks account was found for that email.", "account_found": False},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        membership, created = GroupMembership.objects.get_or_create(
+            group=player.team.group,
+            user=target,
+            defaults={
+                "role": GroupMembership.Role.MEMBER,
+                "status": GroupMembership.Status.INVITED,
+                "invited_by": request.user,
+            },
+        )
+        if not created and membership.status != GroupMembership.Status.ACTIVE:
+            membership.role = GroupMembership.Role.MEMBER
+            membership.status = GroupMembership.Status.INVITED
+            membership.invited_by = request.user
+            membership.save(update_fields=("role", "status", "invited_by", "updated_at"))
+
+        duplicate = SportsPlayer.objects.filter(team=player.team, user=target).exclude(pk=player.pk).first()
+        if duplicate:
+            return Response(
+                {"detail": "That SyncWorks account is already linked to another player on this team."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        if player.user_id != target.id:
+            player.user = target
+            if not player.display_name:
+                player.display_name = f"{target.first_name} {target.last_name}".strip() or target.email
+            player.save(update_fields=("user", "display_name", "updated_at"))
+
+        notify(
+            target,
+            f"Team invitation: {player.team.group.name}",
+            f"You have been invited to join {player.team.group.name} in SyncWorks Social.",
+            {
+                "source": "SOCIAL",
+                "sync_alert": True,
+                "severity": "LOW",
+                "group_id": player.team.group_id,
+                "team_id": player.team_id,
+                "player_id": player.id,
+                "route": f"/connect/groups/{player.team.group_id}/sports",
+                "kind": "TEAM_INVITE",
+            },
+            actor=request.user,
+            type=Notification.TYPE_REMINDER,
+        )
+        return Response({
+            "account_found": True,
+            "membership_status": membership.status,
+            "player": self.get_serializer(player).data,
+        })
+
+    @action(detail=True, methods=["post"])
+    def remind(self, request, pk=None):
+        player = self.get_object()
+        if not can_manage_team(request.user, player.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        if not player.user_id:
+            return Response({"detail": "Link this player to a SyncWorks account first."}, status=status.HTTP_400_BAD_REQUEST)
+
+        kind = str(request.data.get("kind") or "GENERAL").upper()
+        if kind == "AVAILABILITY":
+            game = player.team.games.filter(
+                status=SportsGame.Status.SCHEDULED,
+                start_at__gte=timezone.now(),
+            ).order_by("start_at").first()
+            if game:
+                title = f"{player.team.group.name} game confirmation"
+                body = f"Please confirm IN, OUT or SUB for {game.start_at:%b %d} vs {game.opponent_name}."
+            else:
+                title = f"{player.team.group.name} reminder"
+                body = "Please check your team schedule and availability."
+        elif kind == "DUES":
+            from .ops_models import TeamFeeAssignment
+            rows = TeamFeeAssignment.objects.filter(
+                player=player,
+                status__in=(TeamFeeAssignment.Status.DUE, TeamFeeAssignment.Status.PARTIAL),
+            )
+            balance = sum(max(0, row.amount_cents - row.amount_paid_cents) for row in rows)
+            title = f"{player.team.group.name} payment reminder"
+            body = f"Your current team balance is ${balance / 100:.2f}. Open Dues for details."
+        else:
+            title = f"{player.team.group.name} reminder"
+            body = str(request.data.get("body") or "Please check the latest team information in SyncWorks.").strip()
+
+        notify(
+            player.user,
+            title,
+            body,
+            {
+                "source": "SOCIAL",
+                "sync_alert": True,
+                "severity": "LOW",
+                "group_id": player.team.group_id,
+                "team_id": player.team_id,
+                "player_id": player.id,
+                "route": f"/connect/groups/{player.team.group_id}/sports",
+                "kind": f"TEAM_{kind}",
+            },
+            actor=request.user,
+            type=Notification.TYPE_REMINDER,
+        )
+        return Response({"sent": True})
 
     def perform_destroy(self, instance):
         if not can_manage_team(self.request.user, instance.team):

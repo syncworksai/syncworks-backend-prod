@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from platform_social.models import GroupMembership, SocialGroup
+from user_accounts.models import Notification
 
 from .models import SportsPlayer, SportsTeam
 from .ops_models import SportsPlayerProfile, TeamFee, TeamFeeAssignment
@@ -62,6 +63,35 @@ class SportsManagerOpsApiTests(APITestCase):
             set(TeamFeeAssignment.objects.filter(fee=fee).values_list("amount_cents", flat=True)),
             {6000},
         )
+
+    def test_manager_can_invite_roster_player_by_profile_email(self):
+        pending_user = User.objects.create_user(
+            username="ops-pending",
+            email="pending-player@example.com",
+            password="pass12345",
+        )
+        manual = SportsPlayer.objects.create(
+            team=self.team,
+            display_name="Pending Player",
+            created_by=self.owner,
+        )
+        SportsPlayerProfile.objects.create(player=manual, email=pending_user.email)
+
+        response = self.client.post(reverse("sports-players-invite", args=[manual.id]), {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        manual.refresh_from_db()
+        self.assertEqual(manual.user_id, pending_user.id)
+        membership = GroupMembership.objects.get(group=self.group, user=pending_user)
+        self.assertEqual(membership.status, GroupMembership.Status.INVITED)
+        self.assertTrue(Notification.objects.filter(recipient=pending_user, data__kind="TEAM_INVITE").exists())
+
+    def test_manager_can_send_private_dues_reminder(self):
+        fee = TeamFee.objects.create(team=self.team, title="League fee", amount_cents=5000, created_by=self.owner)
+        TeamFeeAssignment.objects.create(fee=fee, player=self.member_player, amount_cents=5000)
+        response = self.client.post(reverse("sports-players-remind", args=[self.member_player.id]), {"kind": "DUES"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        note = Notification.objects.get(recipient=self.member, data__kind="TEAM_DUES")
+        self.assertIn("$50.00", note.body)
 
     def test_player_profile_contact_is_private_to_manager_and_that_player(self):
         SportsPlayerProfile.objects.create(player=self.other_player, email="private@example.com", phone="555-0100")
