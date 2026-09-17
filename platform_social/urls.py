@@ -7,6 +7,7 @@ from .views import (
     EventMemberResponseViewSet,
     GroupEventInvitationViewSet,
     GroupMembershipViewSet,
+    GroupMessageViewSet,
     PeopleViewSet,
     SocialEventViewSet,
     SocialGroupViewSet,
@@ -17,6 +18,7 @@ router.register("people", PeopleViewSet, basename="social-people")
 router.register("connections", ConnectionViewSet, basename="social-connections")
 router.register("groups", SocialGroupViewSet, basename="social-groups")
 router.register("memberships", GroupMembershipViewSet, basename="social-memberships")
+router.register("group-messages", GroupMessageViewSet, basename="social-group-messages")
 router.register("events", SocialEventViewSet, basename="social-events")
 router.register("event-invitations", GroupEventInvitationViewSet, basename="social-event-invitations")
 router.register("event-responses", EventMemberResponseViewSet, basename="social-event-responses")
