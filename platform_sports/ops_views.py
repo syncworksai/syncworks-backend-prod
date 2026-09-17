@@ -247,7 +247,21 @@ class TeamFeeViewSet(viewsets.ModelViewSet):
         fee = self.get_object()
         if not can_manage_team(self.request.user, fee.team):
             raise serializers.ValidationError("You do not manage this sports team.")
-        serializer.save()
+        previous_amount = fee.amount_cents
+        fee = serializer.save()
+        if fee.amount_cents != previous_amount:
+            for assignment in fee.assignments.exclude(
+                status__in=(TeamFeeAssignment.Status.PAID, TeamFeeAssignment.Status.WAIVED)
+            ):
+                assignment.amount_cents = fee.amount_cents
+                if assignment.amount_paid_cents >= fee.amount_cents and fee.amount_cents > 0:
+                    assignment.status = TeamFeeAssignment.Status.PAID
+                elif assignment.amount_paid_cents > 0:
+                    assignment.status = TeamFeeAssignment.Status.PARTIAL
+                else:
+                    assignment.status = TeamFeeAssignment.Status.DUE
+                assignment.updated_by = self.request.user
+                assignment.save()
 
     def perform_destroy(self, instance):
         if not can_manage_team(self.request.user, instance.team):
