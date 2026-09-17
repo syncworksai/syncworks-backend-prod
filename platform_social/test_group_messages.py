@@ -26,12 +26,14 @@ class GroupMessageApiTests(APITestCase):
         self.client.force_authenticate(self.owner)
         rows = self.client.get(reverse("social-group-messages-list"), {"group": self.group.id})
         self.assertEqual(rows.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(rows.data), 1)
+        payload = rows.data.get("results", rows.data) if isinstance(rows.data, dict) else rows.data
+        self.assertEqual(len(payload), 1)
 
         self.client.force_authenticate(self.outsider)
         hidden = self.client.get(reverse("social-group-messages-list"), {"group": self.group.id})
         self.assertEqual(hidden.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(hidden.data), 0)
+        hidden_payload = hidden.data.get("results", hidden.data) if isinstance(hidden.data, dict) else hidden.data
+        self.assertEqual(len(hidden_payload), 0)
 
     def test_manager_can_remove_group_message(self):
         self.client.force_authenticate(self.member)
