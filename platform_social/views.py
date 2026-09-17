@@ -393,7 +393,7 @@ class GroupMessageViewSet(viewsets.ModelViewSet):
         group_id = self.request.query_params.get("group")
         if group_id:
             queryset = queryset.filter(group_id=group_id)
-        return queryset.order_by("created_at", "id")[:250]
+        return queryset.order_by("created_at", "id")
 
     def perform_create(self, serializer):
         group = serializer.validated_data["group"]
