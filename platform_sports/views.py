@@ -243,6 +243,28 @@ def sync_game_social_event(game):
     return event
 
 
+def home_run_is_allowed(game):
+    rules = getattr(game, "rule_set", None)
+    if not rules or rules.home_run_rule == "UNLIMITED":
+        return True, ""
+    home_runs_for = game.plate_appearances.filter(result=SoftballPlateAppearance.Result.HOME_RUN).count()
+    if rules.home_run_rule == "FIXED":
+        limit = rules.home_run_limit
+        if limit is None or home_runs_for < limit:
+            return True, ""
+        return False, f"Home-run cap reached ({home_runs_for}/{limit}) for {rules.name}."
+    if rules.home_run_rule == "ONE_UP":
+        max_ahead = int(rules.home_run_max_ahead or 1)
+        allowed_total = int(game.home_runs_against or 0) + max_ahead
+        if home_runs_for < allowed_total:
+            return True, ""
+        return False, (
+            f"One-up rule: your team has {home_runs_for} HR and the opponent has "
+            f"{game.home_runs_against}. Opponent must tie/advance the HR count before another HR is legal."
+        )
+    return True, ""
+
+
 class SportsTeamViewSet(viewsets.ModelViewSet):
     serializer_class = SportsTeamSerializer
     permission_classes = [IsAuthenticated]
@@ -630,6 +652,13 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         result_value = str(request.data.get("result") or "").upper()
         if result_value not in SoftballPlateAppearance.Result.values:
             return Response({"detail": "Choose a valid plate-appearance result."}, status=status.HTTP_400_BAD_REQUEST)
+        if result_value == SoftballPlateAppearance.Result.HOME_RUN:
+            allowed, rule_message = home_run_is_allowed(base_game)
+            if not allowed:
+                return Response(
+                    {"detail": rule_message, "code": "HOME_RUN_RULE"},
+                    status=status.HTTP_409_CONFLICT,
+                )
         try:
             rbi = max(0, int(request.data.get("rbi", 0)))
             runs_scored = max(0, int(request.data.get("runs_scored", 0)))
@@ -725,6 +754,21 @@ class SportsGameViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Score cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
         game.runs_against = score
         game.save(update_fields=("runs_against", "updated_at"))
+        return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
+
+    @action(detail=True, methods=["post"], url_path="opponent-home-runs")
+    def opponent_home_runs(self, request, pk=None):
+        game = self.get_object()
+        if not can_manage_team(request.user, game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            value = int(request.data.get("home_runs_against"))
+        except (TypeError, ValueError):
+            return Response({"detail": "home_runs_against must be a whole number."}, status=status.HTTP_400_BAD_REQUEST)
+        if value < 0:
+            return Response({"detail": "Opponent home-run count cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
+        game.home_runs_against = value
+        game.save(update_fields=("home_runs_against", "updated_at"))
         return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
 
     @action(detail=True, methods=["post"])
