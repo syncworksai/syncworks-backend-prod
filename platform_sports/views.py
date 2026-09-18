@@ -880,6 +880,12 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         game.ended_at = timezone.now()
         game.save(update_fields=("runs_for", "runs_against", "status", "ended_at", "updated_at"))
         sync_game_social_event(game)
+        try:
+            from .league_views import sync_league_result_from_sports_game
+            sync_league_result_from_sports_game(game)
+        except Exception:
+            # Team scoring must remain usable even if a legacy/non-league record has no commissioner link.
+            pass
         return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
 
 
