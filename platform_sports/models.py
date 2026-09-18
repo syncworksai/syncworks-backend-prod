@@ -131,6 +131,16 @@ class SportsGame(models.Model):
     state = models.CharField(max_length=80, blank=True)
     notes = models.TextField(blank=True)
     innings_scheduled = models.PositiveSmallIntegerField(default=7)
+    class HomeRunRule(models.TextChoices):
+        UNLIMITED = "UNLIMITED", "Unlimited"
+        FIXED = "FIXED", "Fixed limit"
+        ONE_UP = "ONE_UP", "One-up / progressive"
+
+    home_run_rule = models.CharField(max_length=12, choices=HomeRunRule.choices, default=HomeRunRule.UNLIMITED)
+    home_run_limit = models.PositiveSmallIntegerField(null=True, blank=True)
+    home_run_one_up_allowance = models.PositiveSmallIntegerField(default=1)
+    opponent_home_runs = models.PositiveSmallIntegerField(default=0)
+    max_eh = models.PositiveSmallIntegerField(default=2)
     rule_set = models.ForeignKey(
         "platform_sports.SoftballRuleSet",
         on_delete=models.SET_NULL,
@@ -191,6 +201,25 @@ class SportsLineupSpot(models.Model):
 
     def __str__(self):
         return f"{self.batting_order}. {self.player.display_name}"
+
+
+class SportsGameInning(models.Model):
+    game = models.ForeignKey(SportsGame, on_delete=models.CASCADE, related_name="inning_lines")
+    inning = models.PositiveSmallIntegerField()
+    team_runs = models.PositiveSmallIntegerField(default=0)
+    opponent_runs = models.PositiveSmallIntegerField(default=0)
+    opponent_hits = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("inning", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("game", "inning"), name="sports_unique_game_inning"),
+        ]
+
+    def __str__(self):
+        return f"{self.game_id} · inning {self.inning}"
 
 
 class SoftballPlateAppearance(models.Model):
