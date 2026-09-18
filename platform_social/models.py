@@ -247,6 +247,10 @@ class Collection(models.Model):
         ordering = ("-created_at", "-id")
         indexes = [models.Index(fields=("group", "status"), name="social_collection_status")]
 
+    def save(self, *args, **kwargs):
+        self.platform_fee_bps = 100
+        super().save(*args, **kwargs)
+
 
 class CollectionShare(models.Model):
     class Status(models.TextChoices):
