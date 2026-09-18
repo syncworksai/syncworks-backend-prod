@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from platform_social.serializers import SocialUserSerializer
+from platform_social.serializers import SocialEventSerializer, SocialUserSerializer
 
 from .models import (
     SoftballPlateAppearance,
@@ -108,11 +108,12 @@ class SportsGameSerializer(serializers.ModelSerializer):
     home_runs_for = serializers.SerializerMethodField()
     home_run_allowed = serializers.SerializerMethodField()
     rule_set_detail = serializers.SerializerMethodField()
+    social_event_detail = SocialEventSerializer(source="social_event", read_only=True)
 
     class Meta:
         model = SportsGame
         fields = (
-            "id", "team", "team_name", "social_event", "game_type", "opponent_name",
+            "id", "team", "team_name", "social_event", "social_event_detail", "game_type", "opponent_name",
             "tournament_name", "round_label", "home_away", "start_at", "end_at", "timezone",
             "venue_name", "address_line1", "city", "state", "notes", "innings_scheduled",
             "rule_set", "rule_set_detail", "home_runs_for", "home_runs_against", "home_run_allowed",
@@ -121,7 +122,7 @@ class SportsGameSerializer(serializers.ModelSerializer):
             "plate_appearance_count", "lineup_spots", "inning_lines", "created_at", "updated_at",
         )
         read_only_fields = (
-            "id", "social_event", "status", "current_inning", "outs", "current_batter_order",
+            "id", "social_event", "social_event_detail", "status", "current_inning", "outs", "current_batter_order",
             "current_batter", "runs_for", "runs_against", "home_runs_for", "home_run_allowed",
             "rule_set_detail", "started_at", "ended_at", "created_by",
             "plate_appearance_count", "lineup_spots", "created_at", "updated_at",

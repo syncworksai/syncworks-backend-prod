@@ -176,16 +176,20 @@ class SportsPlayerProfileViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         player = serializer.validated_data["player"]
-        if not can_manage_team(self.request.user, player.team):
-            raise serializers.ValidationError("You do not manage this sports team.")
+        if not can_manage_team(self.request.user, player.team) and player.user_id != self.request.user.id:
+            raise serializers.ValidationError("You may only create your own player profile.")
         serializer.save()
 
     def perform_update(self, serializer):
         profile = self.get_object()
-        if not can_manage_team(self.request.user, profile.player.team):
-            raise serializers.ValidationError("You do not manage this sports team.")
+        manager = can_manage_team(self.request.user, profile.player.team)
+        owner = profile.player.user_id == self.request.user.id
+        if not manager and not owner:
+            raise serializers.ValidationError("You may only edit your own player profile.")
         if "player" in serializer.validated_data and serializer.validated_data["player"].id != profile.player_id:
             raise serializers.ValidationError({"player": "A profile cannot be moved to another player."})
+        if owner and not manager:
+            serializer.validated_data.pop("notes", None)
         serializer.save()
 
     def perform_destroy(self, instance):

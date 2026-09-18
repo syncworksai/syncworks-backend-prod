@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -191,3 +193,49 @@ class SoftballStatLedgerEntry(models.Model):
 
     def __str__(self):
         return f"{self.player} · {self.scope} · {self.season_name or 'stats'}"
+
+
+
+class SportsPlayerInvite(models.Model):
+    class Status(models.TextChoices):
+        INVITED = "INVITED", "Invited"
+        ACCEPTED = "ACCEPTED", "Accepted"
+        REVOKED = "REVOKED", "Revoked"
+
+    player = models.ForeignKey(
+        "platform_sports.SportsPlayer",
+        on_delete=models.CASCADE,
+        related_name="account_invites",
+    )
+    email = models.EmailField()
+    token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.INVITED)
+    invited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="sports_player_invites_sent",
+    )
+    accepted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="sports_player_invites_accepted",
+    )
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at", "-id")
+        indexes = [
+            models.Index(fields=("player", "status"), name="sports_player_invite_state"),
+            models.Index(fields=("email", "status"), name="sports_player_invite_email"),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.email = (self.email or "").strip().lower()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.player} · {self.email} · {self.status}"
