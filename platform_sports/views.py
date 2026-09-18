@@ -423,14 +423,15 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
         dues = []
         balance_cents = 0
 
+        all_rows = softball_stats_summary(team, "ALL") if team.sport == SportsTeam.Sport.SOFTBALL else []
+        league_rows = softball_stats_summary(team, "LEAGUE") if team.sport == SportsTeam.Sport.SOFTBALL else []
+        tournament_rows = softball_stats_summary(team, "TOURNAMENT") if team.sport == SportsTeam.Sport.SOFTBALL else []
+
         if player:
             profile_obj = SportsPlayerProfile.objects.filter(player=player).first()
             if profile_obj:
                 profile = SportsPlayerProfileSerializer(profile_obj, context={"request": request}).data
 
-            all_rows = softball_stats_summary(team, "ALL") if team.sport == SportsTeam.Sport.SOFTBALL else []
-            league_rows = softball_stats_summary(team, "LEAGUE") if team.sport == SportsTeam.Sport.SOFTBALL else []
-            tournament_rows = softball_stats_summary(team, "TOURNAMENT") if team.sport == SportsTeam.Sport.SOFTBALL else []
             stats["all"] = next((row for row in all_rows if int(row["player"]["id"]) == player.id), None)
             stats["league"] = next((row for row in league_rows if int(row["player"]["id"]) == player.id), None)
             stats["tournament"] = next((row for row in tournament_rows if int(row["player"]["id"]) == player.id), None)
@@ -502,6 +503,7 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
             "team": base["team"],
             "record": base["record"],
             "team_stats": base["team_stats"],
+            "team_player_stats": all_rows,
             "player": SportsPlayerSerializer(player).data if player else None,
             "profile": profile,
             "player_stats": stats,
@@ -592,10 +594,19 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         player = self.get_object()
-        if not can_manage_team(self.request.user, player.team):
-            raise serializers.ValidationError("You do not manage this sports team.")
+        manager = can_manage_team(self.request.user, player.team)
+        owner = player.user_id == self.request.user.id
+        if not manager and not owner:
+            raise serializers.ValidationError("You may only edit your own player profile.")
         if "team" in serializer.validated_data and serializer.validated_data["team"].id != player.team_id:
             raise serializers.ValidationError({"team": "A player cannot be moved between teams here."})
+        if owner and not manager:
+            allowed = {"display_name", "bats", "throws", "primary_position"}
+            blocked = [field for field in serializer.validated_data.keys() if field not in allowed]
+            if blocked:
+                raise serializers.ValidationError({
+                    "detail": "Players may edit their name, bats/throws and primary position. Team managers control jersey and roster assignment."
+                })
         serializer.save()
 
     @action(detail=True, methods=["post"])
