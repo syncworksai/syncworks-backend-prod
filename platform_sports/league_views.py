@@ -1,22 +1,32 @@
 from __future__ import annotations
 
+from datetime import timedelta
+from urllib.parse import quote
+
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.mail import EmailMultiAlternatives
 from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.utils.text import slugify
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from platform_social.models import GroupMembership
 
 from .league_models import (
     LeagueDivision,
+    LeagueGame,
     LeagueRosterEntry,
     LeagueSeason,
+    LeagueTournament,
+    LeagueTournamentBye,
+    LeagueTournamentEntry,
     LeagueTeamEntry,
     SportsOrganization,
     SportsOrganizationMembership,
@@ -25,16 +35,20 @@ from .league_models import (
 )
 from .league_serializers import (
     LeagueDivisionSerializer,
+    LeagueGameSerializer,
     LeagueRosterEntrySerializer,
     LeagueSeasonSerializer,
+    LeagueTournamentByeSerializer,
+    LeagueTournamentEntrySerializer,
+    LeagueTournamentSerializer,
     LeagueTeamEntrySerializer,
     SportsOrganizationMembershipSerializer,
     SportsOrganizationSerializer,
     SportsPlayerIdentitySerializer,
     SoftballRuleSetSerializer,
 )
-from .models import SportsPlayer
-from .views import can_manage_team
+from .models import SoftballPlateAppearance, SportsGame, SportsPlayer, SportsTeam
+from .views import AB_EXCLUDED_RESULTS, HIT_RESULTS, can_manage_team, sync_game_social_event
 
 User = get_user_model()
 ORG_MANAGEMENT_ROLES = (
@@ -74,6 +88,369 @@ def unique_org_slug(name):
         slug = f"{base}-{number}"
         number += 1
     return slug
+
+
+def _frontend_url():
+    return str(getattr(settings, "SYNCWORKS_FRONTEND_URL", "") or getattr(settings, "FRONTEND_URL", "") or "https://syncworksapp.com").rstrip("/")
+
+
+def _invite_urls(identity, roster):
+    path = f"/sports/invite/{identity.claim_token}?roster={roster.id}"
+    invite_url = f"{_frontend_url()}{path}"
+    encoded_next = quote(path, safe="")
+    encoded_email = quote(identity.email, safe="@+")
+    return {
+        "invite_url": invite_url,
+        "register_url": f"{_frontend_url()}/register?email={encoded_email}&next={encoded_next}",
+        "login_url": f"{_frontend_url()}/login?next={encoded_next}",
+    }
+
+
+def send_roster_invite_email(roster):
+    identity = roster.identity
+    urls = _invite_urls(identity, roster)
+    team_name = roster.team.group.name
+    league_name = roster.division.season.organization.name
+    division_name = roster.division.name
+    subject = f"Join {team_name} on SyncWorks"
+    text = (
+        f"You've been invited to {team_name} in {league_name} · {division_name}.\n\n"
+        f"Open your invitation: {urls['invite_url']}\n\n"
+        f"New to SyncWorks? Create your free account here: {urls['register_url']}\n"
+        f"Already have SyncWorks? Sign in here: {urls['login_url']}\n\n"
+        "After you sign in with this email, SyncWorks will link your player profile and team Social group."
+    )
+    html = f"""
+    <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a">
+      <h2 style="margin-bottom:8px">You're invited to {team_name}</h2>
+      <p>{league_name} · {division_name}</p>
+      <p>Your player invitation connects your roster profile, game schedule, team chat, lineup, stats and dues under one SyncWorks account.</p>
+      <p><a href="{urls['invite_url']}" style="display:inline-block;padding:12px 18px;background:#22d3ee;color:#020617;text-decoration:none;border-radius:10px;font-weight:700">Open team invitation</a></p>
+      <p style="font-size:13px;color:#475569">New to SyncWorks? The invitation page will take you through free signup, then return you to join the team automatically.</p>
+    </div>
+    """.strip()
+    msg = EmailMultiAlternatives(
+        subject=subject,
+        body=text,
+        from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "SyncWorks <no-reply@syncworksapp.com>"),
+        to=[identity.email],
+    )
+    msg.attach_alternative(html, "text/html")
+    msg.send(fail_silently=True)
+    return urls
+
+
+def round_robin_rounds(teams):
+    teams = list(teams)
+    if len(teams) < 2:
+        return []
+    if len(teams) % 2:
+        teams.append(None)
+    fixed = teams[0]
+    rotating = teams[1:]
+    rounds = []
+    for round_index in range(len(teams) - 1):
+        current = [fixed] + rotating
+        pairs = []
+        half = len(current) // 2
+        for index in range(half):
+            left = current[index]
+            right = current[-(index + 1)]
+            if left is None or right is None:
+                continue
+            if round_index % 2:
+                left, right = right, left
+            pairs.append((left, right))
+        rounds.append(pairs)
+        rotating = [rotating[-1]] + rotating[:-1]
+    return rounds
+
+
+def _aware_datetime(value):
+    parsed = parse_datetime(str(value or ""))
+    if not parsed:
+        return None
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
+
+
+def _game_type(source):
+    return SportsGame.GameType.TOURNAMENT if source == LeagueGame.Source.TOURNAMENT else SportsGame.GameType.LEAGUE
+
+
+def sync_league_game_records(league_game):
+    common = {
+        "start_at": league_game.start_at,
+        "end_at": league_game.end_at,
+        "timezone": league_game.timezone,
+        "venue_name": league_game.venue_name,
+        "address_line1": league_game.address_line1,
+        "city": league_game.city,
+        "state": league_game.state,
+        "rule_set": league_game.rule_set,
+        "game_type": _game_type(league_game.source),
+        "tournament_name": league_game.tournament.name if league_game.tournament_id else "",
+        "round_label": f"Round {league_game.round_number}" if league_game.round_number else "",
+    }
+    if league_game.home_sports_game_id:
+        game = league_game.home_sports_game
+        for key, value in common.items():
+            setattr(game, key, value)
+        game.opponent_name = league_game.away_team.group.name
+        game.home_away = SportsGame.HomeAway.HOME
+        game.runs_for = league_game.home_score
+        game.runs_against = league_game.away_score
+        if league_game.status == LeagueGame.Status.FINAL:
+            game.status = SportsGame.Status.FINAL
+        elif league_game.status == LeagueGame.Status.CANCELLED:
+            game.status = SportsGame.Status.CANCELLED
+        game.save()
+        sync_game_social_event(game)
+    if league_game.away_sports_game_id:
+        game = league_game.away_sports_game
+        for key, value in common.items():
+            setattr(game, key, value)
+        game.opponent_name = league_game.home_team.group.name
+        game.home_away = SportsGame.HomeAway.AWAY
+        game.runs_for = league_game.away_score
+        game.runs_against = league_game.home_score
+        if league_game.status == LeagueGame.Status.FINAL:
+            game.status = SportsGame.Status.FINAL
+        elif league_game.status == LeagueGame.Status.CANCELLED:
+            game.status = SportsGame.Status.CANCELLED
+        game.save()
+        sync_game_social_event(game)
+
+
+def create_league_game_records(league_game, user):
+    common = {
+        "game_type": _game_type(league_game.source),
+        "tournament_name": league_game.tournament.name if league_game.tournament_id else "",
+        "round_label": f"Round {league_game.round_number}" if league_game.round_number else "",
+        "start_at": league_game.start_at,
+        "end_at": league_game.end_at,
+        "timezone": league_game.timezone,
+        "venue_name": league_game.venue_name,
+        "address_line1": league_game.address_line1,
+        "city": league_game.city,
+        "state": league_game.state,
+        "rule_set": league_game.rule_set,
+        "created_by": user,
+    }
+    home_game = SportsGame.objects.create(
+        team=league_game.home_team,
+        opponent_name=league_game.away_team.group.name,
+        home_away=SportsGame.HomeAway.HOME,
+        **common,
+    )
+    away_game = SportsGame.objects.create(
+        team=league_game.away_team,
+        opponent_name=league_game.home_team.group.name,
+        home_away=SportsGame.HomeAway.AWAY,
+        **common,
+    )
+    sync_game_social_event(home_game)
+    sync_game_social_event(away_game)
+    league_game.home_sports_game = home_game
+    league_game.away_sports_game = away_game
+    league_game.save(update_fields=("home_sports_game", "away_sports_game", "updated_at"))
+    return league_game
+
+
+def sync_league_result_from_sports_game(game):
+    try:
+        league_game = game.league_home_record
+        is_home = True
+    except LeagueGame.DoesNotExist:
+        try:
+            league_game = game.league_away_record
+            is_home = False
+        except LeagueGame.DoesNotExist:
+            return None
+    if is_home:
+        league_game.home_score = game.runs_for
+        league_game.away_score = game.runs_against
+    else:
+        league_game.home_score = game.runs_against
+        league_game.away_score = game.runs_for
+    league_game.status = LeagueGame.Status.FINAL if game.status == SportsGame.Status.FINAL else league_game.status
+    league_game.save(update_fields=("home_score", "away_score", "status", "updated_at"))
+    sync_league_game_records(league_game)
+    return league_game
+
+
+def _build_game(division, home_team, away_team, user, start_at, payload, *, source=LeagueGame.Source.LEAGUE, tournament=None, week_number=None, round_number=None, bracket_slot=None):
+    rule_set = None
+    rule_set_id = payload.get("rule_set")
+    if rule_set_id:
+        rule_set = SoftballRuleSet.objects.filter(pk=rule_set_id, organization=division.season.organization).first()
+    game = LeagueGame.objects.create(
+        division=division,
+        tournament=tournament,
+        source=source,
+        home_team=home_team,
+        away_team=away_team,
+        rule_set=rule_set or (tournament.rule_set if tournament else None),
+        start_at=start_at,
+        end_at=start_at + timedelta(minutes=max(30, int(payload.get("game_minutes") or 60))),
+        timezone=str(payload.get("timezone") or "America/Chicago"),
+        venue_name=str(payload.get("venue_name") or ""),
+        field_name=str(payload.get("field_name") or ""),
+        address_line1=str(payload.get("address_line1") or ""),
+        city=str(payload.get("city") or ""),
+        state=str(payload.get("state") or ""),
+        week_number=week_number,
+        round_number=round_number,
+        bracket_slot=bracket_slot,
+        created_by=user,
+    )
+    game.full_clean()
+    return create_league_game_records(game, user)
+
+
+def division_standings(division):
+    entries = list(
+        LeagueTeamEntry.objects.filter(division=division, status=LeagueTeamEntry.Status.ACTIVE)
+        .select_related("team__group")
+    )
+    rows = {
+        entry.team_id: {
+            "team": SportsTeamSerializer(entry.team).data,
+            "wins": 0, "losses": 0, "ties": 0, "games": 0,
+            "runs_for": 0, "runs_against": 0, "opponents": [],
+        }
+        for entry in entries
+    }
+    finals = list(
+        LeagueGame.objects.filter(
+            division=division,
+            source=LeagueGame.Source.LEAGUE,
+            status=LeagueGame.Status.FINAL,
+        ).select_related("home_team__group", "away_team__group")
+    )
+    for game in finals:
+        home = rows.get(game.home_team_id)
+        away = rows.get(game.away_team_id)
+        if not home or not away:
+            continue
+        for row, scored, allowed, opponent_id in (
+            (home, game.home_score, game.away_score, game.away_team_id),
+            (away, game.away_score, game.home_score, game.home_team_id),
+        ):
+            row["games"] += 1
+            row["runs_for"] += int(scored or 0)
+            row["runs_against"] += int(allowed or 0)
+            row["opponents"].append(opponent_id)
+        if game.home_score > game.away_score:
+            home["wins"] += 1; away["losses"] += 1
+        elif game.away_score > game.home_score:
+            away["wins"] += 1; home["losses"] += 1
+        else:
+            home["ties"] += 1; away["ties"] += 1
+
+    for row in rows.values():
+        games = row["games"]
+        row["pct"] = round((row["wins"] + 0.5 * row["ties"]) / games, 3) if games else 0
+        row["run_diff"] = row["runs_for"] - row["runs_against"]
+        row["run_diff_per_game"] = round(row["run_diff"] / games, 2) if games else 0
+
+    for row in rows.values():
+        opp_pcts = [rows[team_id]["pct"] for team_id in row["opponents"] if team_id in rows]
+        row["strength_of_schedule"] = round(sum(opp_pcts) / len(opp_pcts), 3) if opp_pcts else 0
+        diff_norm = max(0, min(1, 0.5 + row["run_diff_per_game"] / 20))
+        row["power_score"] = round(100 * (0.55 * row["pct"] + 0.25 * diff_norm + 0.20 * row["strength_of_schedule"]), 1)
+        row.pop("opponents", None)
+
+    ordered = sorted(
+        rows.values(),
+        key=lambda row: (-row["pct"], -row["run_diff"], -row["runs_for"], row["team"]["team_name"].lower()),
+    )
+    for index, row in enumerate(ordered, start=1):
+        row["standing_rank"] = index
+    power = sorted(ordered, key=lambda row: (-row["power_score"], -row["pct"], -row["run_diff"]))
+    for index, row in enumerate(power, start=1):
+        row["power_rank"] = index
+    return ordered
+
+
+def division_team_stats(division):
+    standings = {row["team"]["id"]: row for row in division_standings(division)}
+    game_links = list(
+        LeagueGame.objects.filter(division=division, source=LeagueGame.Source.LEAGUE)
+        .select_related("home_team", "away_team")
+    )
+    team_game_ids = {}
+    for game in game_links:
+        if game.home_sports_game_id:
+            team_game_ids.setdefault(game.home_team_id, []).append(game.home_sports_game_id)
+        if game.away_sports_game_id:
+            team_game_ids.setdefault(game.away_team_id, []).append(game.away_sports_game_id)
+
+    teams = []
+    player_leaders = []
+    for entry in LeagueTeamEntry.objects.filter(division=division, status=LeagueTeamEntry.Status.ACTIVE).select_related("team__group"):
+        team = entry.team
+        game_ids = team_game_ids.get(team.id, [])
+        appearances = list(
+            SoftballPlateAppearance.objects.filter(game_id__in=game_ids)
+            .select_related("player", "game")
+        )
+        ab = hits = walks = sf = tb = hr = rbi = 0
+        player_rows = {}
+        for pa in appearances:
+            prow = player_rows.setdefault(pa.player_id, {"player": pa.player, "pa": 0, "ab": 0, "h": 0, "bb": 0, "sf": 0, "tb": 0, "hr": 0, "rbi": 0})
+            prow["pa"] += 1; prow["rbi"] += pa.rbi
+            rbi += pa.rbi
+            if pa.result not in AB_EXCLUDED_RESULTS:
+                ab += 1; prow["ab"] += 1
+            if pa.result in HIT_RESULTS:
+                hits += 1; prow["h"] += 1
+            if pa.result == SoftballPlateAppearance.Result.WALK:
+                walks += 1; prow["bb"] += 1
+            elif pa.result == SoftballPlateAppearance.Result.SAC_FLY:
+                sf += 1; prow["sf"] += 1
+            elif pa.result == SoftballPlateAppearance.Result.SINGLE:
+                tb += 1; prow["tb"] += 1
+            elif pa.result == SoftballPlateAppearance.Result.DOUBLE:
+                tb += 2; prow["tb"] += 2
+            elif pa.result == SoftballPlateAppearance.Result.TRIPLE:
+                tb += 3; prow["tb"] += 3
+            elif pa.result == SoftballPlateAppearance.Result.HOME_RUN:
+                tb += 4; hr += 1; prow["tb"] += 4; prow["hr"] += 1
+        avg = round(hits / ab, 3) if ab else 0
+        obp = round((hits + walks) / (ab + walks + sf), 3) if (ab + walks + sf) else 0
+        slg = round(tb / ab, 3) if ab else 0
+        standing = standings.get(team.id, {})
+        teams.append({
+            "team": SportsTeamSerializer(team).data,
+            "g": standing.get("games", 0),
+            "avg": avg, "obp": obp, "slg": slg, "ops": round(obp + slg, 3),
+            "h": hits, "hr": hr, "rbi": rbi,
+            "runs_for": standing.get("runs_for", 0),
+            "runs_against": standing.get("runs_against", 0),
+            "runs_per_game": round(standing.get("runs_for", 0) / standing.get("games", 1), 2) if standing.get("games") else 0,
+        })
+        for prow in player_rows.values():
+            pab = prow["ab"]; ph = prow["h"]; pbb = prow["bb"]; psf = prow["sf"]
+            pobp = (ph + pbb) / (pab + pbb + psf) if (pab + pbb + psf) else 0
+            pslg = prow["tb"] / pab if pab else 0
+            player_leaders.append({
+                "team_id": team.id,
+                "team_name": team.group.name,
+                "player": SportsPlayerSerializer(prow["player"]).data,
+                "pa": prow["pa"], "avg": round(ph / pab, 3) if pab else 0,
+                "ops": round(pobp + pslg, 3), "hr": prow["hr"], "rbi": prow["rbi"],
+            })
+    return {
+        "teams": sorted(teams, key=lambda row: (-row["ops"], -row["avg"], row["team"]["team_name"].lower())),
+        "leaders": {
+            "ops": sorted(player_leaders, key=lambda row: (-row["ops"], -row["pa"]))[:10],
+            "avg": sorted(player_leaders, key=lambda row: (-row["avg"], -row["pa"]))[:10],
+            "hr": sorted(player_leaders, key=lambda row: (-row["hr"], -row["pa"]))[:10],
+            "rbi": sorted(player_leaders, key=lambda row: (-row["rbi"], -row["pa"]))[:10],
+        },
+    }
 
 
 class SportsOrganizationViewSet(viewsets.ModelViewSet):
