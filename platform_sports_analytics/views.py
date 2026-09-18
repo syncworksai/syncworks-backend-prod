@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 from platform_social.models import GroupMembership, SocialGroup
 from platform_sports.models import SoftballPlateAppearance, SportsGame, SportsPlayer, SportsTeam
 from platform_sports.serializers import SportsPlayerSerializer
+from platform_sports.ops_models import SoftballStatLedgerEntry
 
 from .models import GameCastShare, SoftballPlayContext
 from .serializers import GameCastShareSerializer, SoftballPlayContextSerializer
@@ -277,6 +278,62 @@ def team_summary(rows):
     }
 
 
+def _player_split_row(appearances):
+    row = {
+        "g": set(), "pa": 0, "ab": 0, "h": 0, "single": 0, "double": 0,
+        "triple": 0, "hr": 0, "bb": 0, "sf": 0, "rbi": 0, "runs": 0, "tb": 0,
+    }
+    for pa in appearances:
+        row["g"].add(pa.game_id)
+        row["pa"] += 1
+        row["rbi"] += int(pa.rbi or 0)
+        row["runs"] += int(pa.runs_scored or 0)
+        if pa.result not in AB_EXCLUDED_RESULTS:
+            row["ab"] += 1
+        if pa.result in HIT_RESULTS:
+            row["h"] += 1
+        if pa.result == SoftballPlateAppearance.Result.SINGLE:
+            row["single"] += 1; row["tb"] += 1
+        elif pa.result == SoftballPlateAppearance.Result.DOUBLE:
+            row["double"] += 1; row["tb"] += 2
+        elif pa.result == SoftballPlateAppearance.Result.TRIPLE:
+            row["triple"] += 1; row["tb"] += 3
+        elif pa.result == SoftballPlateAppearance.Result.HOME_RUN:
+            row["hr"] += 1; row["tb"] += 4
+        elif pa.result == SoftballPlateAppearance.Result.WALK:
+            row["bb"] += 1
+        elif pa.result == SoftballPlateAppearance.Result.SAC_FLY:
+            row["sf"] += 1
+    g = len(row.pop("g"))
+    ab, h, bb, sf = row["ab"], row["h"], row["bb"], row["sf"]
+    row.update({
+        "g": g,
+        "avg": _ratio(h, ab),
+        "obp": _ratio(h + bb, ab + bb + sf),
+        "slg": _ratio(row["tb"], ab),
+    })
+    row["ops"] = round(row["obp"] + row["slg"], 3)
+    return row
+
+
+def _ledger_row(entry):
+    singles = max(0, int(entry.hits or 0) - int(entry.doubles or 0) - int(entry.triples or 0) - int(entry.home_runs or 0))
+    tb = singles + 2 * int(entry.doubles or 0) + 3 * int(entry.triples or 0) + 4 * int(entry.home_runs or 0)
+    ab, h, bb, sf = int(entry.ab or 0), int(entry.hits or 0), int(entry.walks or 0), int(entry.sac_flies or 0)
+    obp = _ratio(h + bb, ab + bb + sf)
+    slg = _ratio(tb, ab)
+    return {
+        "source": "LEDGER",
+        "season": entry.season_name or "Historical",
+        "scope": entry.scope,
+        "g": int(entry.games or 0), "pa": int(entry.pa or 0), "ab": ab, "h": h,
+        "single": singles, "double": int(entry.doubles or 0), "triple": int(entry.triples or 0),
+        "hr": int(entry.home_runs or 0), "bb": bb, "sf": sf, "rbi": int(entry.rbi or 0),
+        "runs": int(entry.runs or 0), "tb": tb,
+        "avg": _ratio(h, ab), "obp": obp, "slg": slg, "ops": round(obp + slg, 3),
+    }
+
+
 class PlayContextUpsertView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -315,6 +372,92 @@ class AdvancedTeamStatsView(APIView):
             return Response({"detail": "Advanced analytics are currently available for softball."}, status=status.HTTP_400_BAD_REQUEST)
         players = advanced_stats_for_team(team)
         return Response({"team": team_summary(players), "players": players, "inning_analytics": inning_analytics_for_team(team)})
+
+
+class PlayerCardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, player_id):
+        player = get_object_or_404(SportsPlayer.objects.select_related("team__group"), pk=player_id)
+        if not can_access_team(request.user, player.team):
+            return Response({"detail": "You do not have access to this player."}, status=status.HTTP_403_FORBIDDEN)
+
+        appearances = list(
+            SoftballPlateAppearance.objects.filter(player=player)
+            .exclude(game__status=SportsGame.Status.CANCELLED)
+            .select_related("game", "advanced_context")
+            .order_by("game__start_at", "sequence")
+        )
+        overall = _player_split_row(appearances)
+
+        split_map = {}
+        year_map = {}
+        for pa in appearances:
+            scope = pa.game.game_type
+            split_map.setdefault(scope, []).append(pa)
+            year = pa.game.start_at.year
+            year_map.setdefault(year, []).append(pa)
+
+        splits = [
+            {"scope": scope, **_player_split_row(rows)}
+            for scope, rows in sorted(split_map.items())
+        ]
+        years = [
+            {"year": year, **_player_split_row(rows)}
+            for year, rows in sorted(year_map.items(), reverse=True)
+        ]
+
+        spray = Counter()
+        ball_types = Counter()
+        outcome = Counter()
+        spray_total = 0
+        for pa in appearances:
+            outcome[pa.result] += 1
+            try:
+                context = pa.advanced_context
+            except SoftballPlayContext.DoesNotExist:
+                context = None
+            if context and context.spray_zone:
+                spray[context.spray_zone] += 1
+                spray_total += 1
+            if context and context.batted_ball_type:
+                ball_types[context.batted_ball_type] += 1
+
+        spray_probabilities = [
+            {"zone": zone, "count": count, "pct": round(count / spray_total, 3) if spray_total else 0.0}
+            for zone, count in spray.most_common()
+        ]
+        result_total = sum(outcome.values())
+        result_probabilities = [
+            {"result": result, "count": count, "pct": round(count / result_total, 3) if result_total else 0.0}
+            for result, count in outcome.most_common()
+        ]
+
+        ledger = [
+            _ledger_row(entry)
+            for entry in SoftballStatLedgerEntry.objects.filter(player=player).order_by("-season_name", "scope", "id")
+        ]
+
+        return Response({
+            "player": SportsPlayerSerializer(player).data,
+            "team": {
+                "id": player.team_id,
+                "name": player.team.group.name,
+                "season_name": player.team.season_name,
+                "league_name": player.team.league_name,
+                "division_name": player.team.division_name,
+            },
+            "overall": overall,
+            "splits": splits,
+            "years": years,
+            "historical": ledger,
+            "tendencies": {
+                "spray_total": spray_total,
+                "spray": spray_probabilities,
+                "batted_ball": [{"type": key, "count": value} for key, value in ball_types.most_common()],
+                "results": result_probabilities,
+            },
+        })
 
 
 class PlayerSprayView(APIView):

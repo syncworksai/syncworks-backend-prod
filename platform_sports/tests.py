@@ -10,7 +10,7 @@ from personal_calendar.models import PersonalCalendarEvent
 from platform_social.models import GroupMembership, SocialGroup
 
 from .league_models import SoftballRuleSet, SportsOrganization
-from .models import SoftballPlateAppearance, SportsGame, SportsLineupSpot, SportsPlayer, SportsTeam
+from .models import SoftballPlateAppearance, SportsGame, SportsLineupSpot, SportsPlayer, SportsSubstitution, SportsTeam
 
 User = get_user_model()
 
@@ -256,6 +256,31 @@ class SoftballSportsApiTests(APITestCase):
         self.assertEqual(self.game.runs_for, 0)
         self.assertEqual(self.game.current_batter_order, 1)
         self.assertFalse(SoftballPlateAppearance.objects.filter(game=self.game).exists())
+
+    def test_live_substitution_keeps_batting_slot_and_creates_bench_history(self):
+        bench = SportsPlayer.objects.create(
+            team=self.team,
+            display_name="Bench Player",
+            jersey_number="99",
+            sort_order=20,
+            created_by=self.owner,
+        )
+        self.client.post(reverse("sports-games-start", args=[self.game.id]), {}, format="json")
+        response = self.client.post(
+            reverse("sports-games-substitute", args=[self.game.id]),
+            {"batting_order": 2, "incoming_player": bench.id, "defensive_position": "MM"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        spot = SportsLineupSpot.objects.get(game=self.game, batting_order=2)
+        self.assertEqual(spot.player_id, bench.id)
+        self.assertEqual(spot.defensive_position, "MM")
+        sub = SportsSubstitution.objects.get(game=self.game)
+        self.assertEqual(sub.outgoing_player_id, self.players[1].id)
+        self.assertEqual(sub.incoming_player_id, bench.id)
+        self.assertEqual(sub.batting_order, 2)
+        self.assertTrue(any(row["id"] == self.players[1].id for row in response.data["bench_players"]))
+        self.assertTrue(response.data["can_manage"])
 
     def test_plain_member_cannot_enter_live_game_data(self):
         self.client.force_authenticate(user=self.member)

@@ -18,7 +18,7 @@ from user_accounts.models import Notification
 from user_accounts.services.notifications import notify
 
 from .emails import frontend_url, send_syncworks_team_invite
-from .models import SoftballPlateAppearance, SportsGame, SportsGameInning, SportsLineupSpot, SportsPlayer, SportsTeam
+from .models import SoftballPlateAppearance, SportsGame, SportsGameInning, SportsLineupSpot, SportsPlayer, SportsSubstitution, SportsTeam
 from .serializers import (
     SoftballPlateAppearanceSerializer,
     SportsGameSerializer,
@@ -883,7 +883,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         group_ids = active_group_ids(self.request.user)
         queryset = SportsGame.objects.filter(
             Q(team__group_id__in=group_ids) | Q(team__group__visibility=SocialGroup.Visibility.PUBLIC)
-        ).select_related("team__group", "social_event", "created_by").prefetch_related("lineup_spots__player", "inning_lines").distinct()
+        ).select_related("team__group", "social_event", "created_by").prefetch_related("lineup_spots__player", "substitutions__outgoing_player", "substitutions__incoming_player", "inning_lines").distinct()
         team_id = self.request.query_params.get("team")
         return queryset.filter(team_id=team_id) if team_id else queryset
 
@@ -970,6 +970,52 @@ class SportsGameViewSet(viewsets.ModelViewSet):
             SportsLineupSpot.objects.bulk_create(new_spots)
             game.current_batter_order = min(orders) if orders else 1
             game.save(update_fields=("current_batter_order", "updated_at"))
+        fresh = self.get_queryset().get(pk=game.pk)
+        return Response(self.get_serializer(fresh).data)
+
+    @action(detail=True, methods=["post"], url_path="substitute")
+    def substitute(self, request, pk=None):
+        game = self.get_object()
+        if not can_manage_team(request.user, game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        if game.status != SportsGame.Status.LIVE:
+            return Response({"detail": "Substitutions are available during a live game."}, status=status.HTTP_409_CONFLICT)
+        try:
+            batting_order = int(request.data.get("batting_order"))
+            incoming_player_id = int(request.data.get("incoming_player"))
+        except (TypeError, ValueError):
+            return Response({"detail": "Choose a batting slot and substitute."}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            locked = SportsGame.objects.select_for_update().get(pk=game.pk)
+            spot = get_object_or_404(
+                SportsLineupSpot.objects.select_for_update().select_related("player"),
+                game=locked,
+                batting_order=batting_order,
+            )
+            incoming = get_object_or_404(SportsPlayer, pk=incoming_player_id, team=locked.team, is_active=True)
+            if incoming.id == spot.player_id:
+                return Response({"detail": "That player is already in this batting slot."}, status=status.HTTP_400_BAD_REQUEST)
+            if SportsLineupSpot.objects.filter(game=locked, player=incoming).exclude(pk=spot.pk).exists():
+                return Response({"detail": "That player is already in the live lineup."}, status=status.HTTP_400_BAD_REQUEST)
+
+            outgoing = spot.player
+            new_position = str(request.data.get("defensive_position") or spot.defensive_position or incoming.primary_position or "").strip()[:40]
+            SportsSubstitution.objects.create(
+                game=locked,
+                outgoing_player=outgoing,
+                incoming_player=incoming,
+                batting_order=spot.batting_order,
+                defensive_position=new_position,
+                inning=max(1, int(locked.current_inning or 1)),
+                note=str(request.data.get("note") or "").strip()[:180],
+                created_by=request.user,
+            )
+            spot.player = incoming
+            spot.defensive_position = new_position
+            spot.is_starter = False
+            spot.save(update_fields=("player", "defensive_position", "is_starter", "updated_at"))
+
         fresh = self.get_queryset().get(pk=game.pk)
         return Response(self.get_serializer(fresh).data)
 

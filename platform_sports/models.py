@@ -193,6 +193,39 @@ class SportsLineupSpot(models.Model):
         return f"{self.batting_order}. {self.player.display_name}"
 
 
+class SportsSubstitution(models.Model):
+    game = models.ForeignKey(SportsGame, on_delete=models.CASCADE, related_name="substitutions")
+    outgoing_player = models.ForeignKey(
+        SportsPlayer, on_delete=models.PROTECT, related_name="substitutions_out"
+    )
+    incoming_player = models.ForeignKey(
+        SportsPlayer, on_delete=models.PROTECT, related_name="substitutions_in"
+    )
+    batting_order = models.PositiveSmallIntegerField()
+    defensive_position = models.CharField(max_length=40, blank=True)
+    inning = models.PositiveSmallIntegerField(default=1)
+    note = models.CharField(max_length=180, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="sports_substitutions_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("created_at", "id")
+        indexes = [
+            models.Index(fields=("game", "batting_order"), name="sports_sub_game_order"),
+        ]
+
+    def clean(self):
+        if self.outgoing_player_id == self.incoming_player_id:
+            raise ValidationError("Substitute must be a different player.")
+        if self.game_id:
+            if self.outgoing_player.team_id != self.game.team_id or self.incoming_player.team_id != self.game.team_id:
+                raise ValidationError("Both substitution players must belong to the game team.")
+
+
 class SportsGameInning(models.Model):
     game = models.ForeignKey(SportsGame, on_delete=models.CASCADE, related_name="inning_lines")
     inning = models.PositiveSmallIntegerField()
