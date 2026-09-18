@@ -8,6 +8,7 @@ from .models import (
     SportsGame,
     SportsGameInning,
     SportsLineupSpot,
+    SportsSubstitution,
     SportsPlayer,
     SportsTeam,
 )
@@ -65,6 +66,20 @@ class SportsLineupSpotSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "created_at", "updated_at")
 
 
+class SportsSubstitutionSerializer(serializers.ModelSerializer):
+    outgoing_player_detail = SportsPlayerSerializer(source="outgoing_player", read_only=True)
+    incoming_player_detail = SportsPlayerSerializer(source="incoming_player", read_only=True)
+
+    class Meta:
+        model = SportsSubstitution
+        fields = (
+            "id", "game", "outgoing_player", "outgoing_player_detail",
+            "incoming_player", "incoming_player_detail", "batting_order",
+            "defensive_position", "inning", "note", "created_by", "created_at",
+        )
+        read_only_fields = ("id", "created_by", "created_at")
+
+
 class SoftballPlateAppearanceSerializer(serializers.ModelSerializer):
     player_name = serializers.CharField(source="player.display_name", read_only=True)
     result_label = serializers.CharField(source="get_result_display", read_only=True)
@@ -102,6 +117,9 @@ class SportsGameInningSerializer(serializers.ModelSerializer):
 class SportsGameSerializer(serializers.ModelSerializer):
     team_name = serializers.CharField(source="team.group.name", read_only=True)
     lineup_spots = SportsLineupSpotSerializer(many=True, read_only=True)
+    substitutions = SportsSubstitutionSerializer(many=True, read_only=True)
+    bench_players = serializers.SerializerMethodField()
+    can_manage = serializers.SerializerMethodField()
     plate_appearance_count = serializers.IntegerField(source="plate_appearances.count", read_only=True)
     current_batter = serializers.SerializerMethodField()
     inning_lines = SportsGameInningSerializer(many=True, read_only=True)
@@ -119,14 +137,35 @@ class SportsGameSerializer(serializers.ModelSerializer):
             "rule_set", "rule_set_detail", "home_runs_for", "home_runs_against", "home_run_allowed",
             "status", "current_inning", "outs", "current_batter_order", "current_batter",
             "runs_for", "runs_against", "started_at", "ended_at", "created_by",
-            "plate_appearance_count", "lineup_spots", "inning_lines", "created_at", "updated_at",
+            "plate_appearance_count", "lineup_spots", "substitutions", "bench_players", "can_manage", "inning_lines", "created_at", "updated_at",
         )
         read_only_fields = (
             "id", "social_event", "social_event_detail", "status", "current_inning", "outs", "current_batter_order",
             "current_batter", "runs_for", "runs_against", "home_runs_for", "home_run_allowed",
             "rule_set_detail", "started_at", "ended_at", "created_by",
-            "plate_appearance_count", "lineup_spots", "created_at", "updated_at",
+            "plate_appearance_count", "lineup_spots", "substitutions", "bench_players", "can_manage", "created_at", "updated_at",
         )
+
+    def get_bench_players(self, obj):
+        lineup_ids = {spot.player_id for spot in obj.lineup_spots.all()}
+        players = obj.team.players.filter(is_active=True).exclude(id__in=lineup_ids).order_by("sort_order", "display_name", "id")
+        return SportsPlayerSerializer(players, many=True).data
+
+    def get_can_manage(self, obj):
+        request = self.context.get("request")
+        if not request or not getattr(request, "user", None) or not request.user.is_authenticated:
+            return False
+        from platform_social.models import GroupMembership
+        return GroupMembership.objects.filter(
+            group_id=obj.team.group_id,
+            user=request.user,
+            status=GroupMembership.Status.ACTIVE,
+            role__in=(
+                GroupMembership.Role.OWNER,
+                GroupMembership.Role.DIRECTOR,
+                GroupMembership.Role.MANAGER,
+            ),
+        ).exists()
 
     def get_home_runs_for(self, obj):
         return obj.plate_appearances.filter(result=SoftballPlateAppearance.Result.HOME_RUN).count()
