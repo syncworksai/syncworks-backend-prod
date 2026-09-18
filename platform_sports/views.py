@@ -988,6 +988,51 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         fresh = self.get_queryset().get(pk=game.pk)
         return Response(self.get_serializer(fresh).data)
 
+    @action(detail=True, methods=["post"], url_path="substitute")
+    @transaction.atomic
+    def substitute(self, request, pk=None):
+        base_game = self.get_object()
+        if not can_manage_team(request.user, base_game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        if base_game.status not in (SportsGame.Status.SCHEDULED, SportsGame.Status.LIVE):
+            return Response({"detail": "Substitutions are only available before or during a game."}, status=status.HTTP_409_CONFLICT)
+        try:
+            out_player_id = int(request.data.get("out_player"))
+            in_player_id = int(request.data.get("in_player"))
+        except (TypeError, ValueError):
+            return Response({"detail": "Choose the player leaving and the substitute entering."}, status=status.HTTP_400_BAD_REQUEST)
+        if out_player_id == in_player_id:
+            return Response({"detail": "Choose a different substitute."}, status=status.HTTP_400_BAD_REQUEST)
+
+        game = SportsGame.objects.select_for_update().get(pk=base_game.pk)
+        spot = SportsLineupSpot.objects.select_for_update().filter(game=game, player_id=out_player_id).first()
+        if not spot:
+            return Response({"detail": "The player leaving is not in the current lineup."}, status=status.HTTP_400_BAD_REQUEST)
+        incoming = SportsPlayer.objects.filter(pk=in_player_id, team=game.team, is_active=True).first()
+        if not incoming:
+            return Response({"detail": "The substitute must be an active player on this team."}, status=status.HTTP_400_BAD_REQUEST)
+        if SportsLineupSpot.objects.filter(game=game, player=incoming).exists():
+            return Response({"detail": "That player is already in the lineup."}, status=status.HTTP_409_CONFLICT)
+
+        position = str(request.data.get("defensive_position") or spot.defensive_position or incoming.primary_position or "").strip()[:40]
+        outgoing = spot.player
+        batting_order = spot.batting_order
+        spot.player = incoming
+        spot.defensive_position = position
+        spot.is_starter = False
+        spot.save(update_fields=("player", "defensive_position", "is_starter", "updated_at"))
+
+        fresh = self.get_queryset().get(pk=game.pk)
+        return Response({
+            "game": self.get_serializer(fresh).data,
+            "substitution": {
+                "batting_order": batting_order,
+                "out_player": SportsPlayerSerializer(outgoing).data,
+                "in_player": SportsPlayerSerializer(incoming).data,
+                "defensive_position": position,
+            },
+        })
+
     @action(detail=True, methods=["post"])
     def start(self, request, pk=None):
         game = self.get_object()
