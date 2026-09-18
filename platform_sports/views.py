@@ -657,7 +657,7 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
             )
 
         if existing_user:
-            GroupMembership.objects.update_or_create(
+            membership, membership_created = GroupMembership.objects.get_or_create(
                 group=player.team.group,
                 user=existing_user,
                 defaults={
@@ -666,6 +666,11 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
                     "invited_by": request.user,
                 },
             )
+            if not membership_created and membership.status != GroupMembership.Status.ACTIVE:
+                membership.role = GroupMembership.Role.MEMBER
+                membership.status = GroupMembership.Status.INVITED
+                membership.invited_by = request.user
+                membership.save(update_fields=("role", "status", "invited_by", "updated_at"))
             notify(
                 existing_user,
                 f"Team invitation: {player.team.group.name}",
