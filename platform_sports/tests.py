@@ -99,7 +99,7 @@ class SoftballSportsApiTests(APITestCase):
         self.game.save(update_fields=("rule_set", "status", "updated_at"))
         SoftballPlateAppearance.objects.create(
             game=self.game,
-            player=self.player,
+            player=self.players[0],
             sequence=1,
             inning=1,
             result=SoftballPlateAppearance.Result.HOME_RUN,
@@ -134,7 +134,7 @@ class SoftballSportsApiTests(APITestCase):
         self.game.save(update_fields=("rule_set", "status", "home_runs_against", "updated_at"))
         SoftballPlateAppearance.objects.create(
             game=self.game,
-            player=self.player,
+            player=self.players[0],
             sequence=1,
             inning=1,
             result=SoftballPlateAppearance.Result.HOME_RUN,
@@ -160,6 +160,27 @@ class SoftballSportsApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(allowed.status_code, status.HTTP_201_CREATED)
+
+    def test_defensive_position_change_preserves_batting_order(self):
+        before = list(
+            SportsLineupSpot.objects.filter(game=self.game)
+            .order_by("batting_order")
+            .values_list("player_id", "batting_order")
+        )
+        response = self.client.post(
+            reverse("sports-games-defensive-position", args=[self.game.id]),
+            {"player": self.players[1].id, "defensive_position": "MM"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        spot = SportsLineupSpot.objects.get(game=self.game, player=self.players[1])
+        self.assertEqual(spot.defensive_position, "MM")
+        after = list(
+            SportsLineupSpot.objects.filter(game=self.game)
+            .order_by("batting_order")
+            .values_list("player_id", "batting_order")
+        )
+        self.assertEqual(after, before)
 
     def test_game_creation_syncs_social_event_and_member_calendars(self):
         response = self.client.post(
