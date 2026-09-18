@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -85,6 +87,7 @@ class GroupMembership(models.Model):
 
     class Status(models.TextChoices):
         INVITED = "INVITED", "Invited"
+        REQUESTED = "REQUESTED", "Requested"
         ACTIVE = "ACTIVE", "Active"
         DECLINED = "DECLINED", "Declined"
         REMOVED = "REMOVED", "Removed"
@@ -263,3 +266,94 @@ class CollectionShare(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=("collection", "user"), name="social_unique_collection_share")]
         indexes = [models.Index(fields=("collection", "status"), name="social_share_status")]
+
+
+
+class GroupInviteLink(models.Model):
+    group = models.ForeignKey(SocialGroup, on_delete=models.CASCADE, related_name="invite_links")
+    token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    role = models.CharField(max_length=12, choices=GroupMembership.Role.choices, default=GroupMembership.Role.MEMBER)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="social_group_invite_links_created")
+    is_active = models.BooleanField(default=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    max_uses = models.PositiveIntegerField(null=True, blank=True)
+    uses_count = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at", "-id")
+        indexes = [
+            models.Index(fields=("group", "is_active"), name="social_group_link_active"),
+            models.Index(fields=("token", "is_active"), name="social_group_link_token"),
+        ]
+
+    @property
+    def usable(self):
+        if not self.is_active:
+            return False
+        if self.expires_at and self.expires_at <= timezone.now():
+            return False
+        if self.max_uses is not None and self.uses_count >= self.max_uses:
+            return False
+        return True
+
+
+class GroupPaymentSettings(models.Model):
+    group = models.OneToOneField(SocialGroup, on_delete=models.CASCADE, related_name="payment_settings")
+    cash_app_url = models.URLField(blank=True)
+    cash_app_label = models.CharField(max_length=80, blank=True)
+    venmo_url = models.URLField(blank=True)
+    venmo_label = models.CharField(max_length=80, blank=True)
+    zelle_instructions = models.CharField(max_length=240, blank=True)
+    stripe_payment_link = models.URLField(blank=True)
+    platform_fee_bps = models.PositiveSmallIntegerField(default=100)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="social_payment_settings_updated")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = "Group payment settings"
+
+    def save(self, *args, **kwargs):
+        # Collect is fixed at a 1% SyncWorks platform fee.
+        self.platform_fee_bps = 100
+        super().save(*args, **kwargs)
+
+
+class CollectionPayment(models.Model):
+    class Method(models.TextChoices):
+        STRIPE = "STRIPE", "Stripe"
+        CASH_APP = "CASH_APP", "Cash App"
+        VENMO = "VENMO", "Venmo"
+        ZELLE = "ZELLE", "Zelle"
+        OTHER = "OTHER", "Other"
+
+    class FeeStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        COLLECTED = "COLLECTED", "Collected"
+        WAIVED = "WAIVED", "Waived"
+
+    collection = models.ForeignKey(Collection, on_delete=models.CASCADE, related_name="payments")
+    share = models.ForeignKey(CollectionShare, on_delete=models.SET_NULL, null=True, blank=True, related_name="payments")
+    payer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="social_collection_payments")
+    method = models.CharField(max_length=12, choices=Method.choices)
+    gross_amount_cents = models.PositiveIntegerField()
+    platform_fee_bps = models.PositiveSmallIntegerField(default=100)
+    platform_fee_cents = models.PositiveIntegerField(default=0)
+    fee_status = models.CharField(max_length=12, choices=FeeStatus.choices, default=FeeStatus.PENDING)
+    external_reference = models.CharField(max_length=180, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="social_collection_payments_recorded")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-created_at", "-id")
+        indexes = [
+            models.Index(fields=("collection", "method", "created_at"), name="social_collect_payment"),
+            models.Index(fields=("fee_status", "created_at"), name="social_collect_fee_status"),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.platform_fee_bps = 100
+        self.platform_fee_cents = (int(self.gross_amount_cents or 0) * self.platform_fee_bps + 5000) // 10000
+        super().save(*args, **kwargs)
