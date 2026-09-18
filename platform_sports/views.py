@@ -780,6 +780,14 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
                 "invited_by": invite.invited_by,
             },
         )
+        team_events = SocialEvent.objects.filter(
+            organizer_group=player.team.group,
+            status__in=(SocialEvent.Status.PUBLISHED, SocialEvent.Status.DRAFT),
+        )
+        for event in team_events:
+            ensure_group_event_responses(event, player.team.group_id)
+            sync_social_event_calendars(event)
+
         profile, _ = SportsPlayerProfile.objects.get_or_create(player=player)
         if not profile.email:
             profile.email = email
