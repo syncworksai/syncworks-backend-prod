@@ -9,9 +9,93 @@ from rest_framework.test import APITestCase
 from personal_calendar.models import PersonalCalendarEvent
 from platform_social.models import GroupMembership, SocialGroup
 
+from .league_models import SoftballRuleSet, SportsOrganization
 from .models import SoftballPlateAppearance, SportsGame, SportsLineupSpot, SportsPlayer, SportsTeam
 
 User = get_user_model()
+
+    def test_fixed_home_run_rule_blocks_extra_hr(self):
+        organization = SportsOrganization.objects.create(
+            name="Rule Test League",
+            slug="rule-test-league",
+            sport="SOFTBALL",
+            created_by=self.owner,
+        )
+        rules = SoftballRuleSet.objects.create(
+            organization=organization,
+            name="Three HR",
+            competition_type="LEAGUE",
+            home_run_rule="FIXED",
+            home_run_limit=1,
+            created_by=self.owner,
+        )
+        self.game.rule_set = rules
+        self.game.status = SportsGame.Status.LIVE
+        self.game.save(update_fields=("rule_set", "status", "updated_at"))
+        SoftballPlateAppearance.objects.create(
+            game=self.game,
+            player=self.player,
+            sequence=1,
+            inning=1,
+            result=SoftballPlateAppearance.Result.HOME_RUN,
+            created_by=self.owner,
+        )
+        response = self.client.post(
+            reverse("sports-games-play", args=[self.game.id]),
+            {"result": "HR", "rbi": 1, "runs_scored": 1},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data["code"], "HOME_RUN_RULE")
+
+    def test_one_up_rule_uses_opponent_hr_count(self):
+        organization = SportsOrganization.objects.create(
+            name="One Up League",
+            slug="one-up-league",
+            sport="SOFTBALL",
+            created_by=self.owner,
+        )
+        rules = SoftballRuleSet.objects.create(
+            organization=organization,
+            name="San Diego",
+            competition_type="LEAGUE",
+            home_run_rule="ONE_UP",
+            home_run_max_ahead=1,
+            created_by=self.owner,
+        )
+        self.game.rule_set = rules
+        self.game.status = SportsGame.Status.LIVE
+        self.game.home_runs_against = 0
+        self.game.save(update_fields=("rule_set", "status", "home_runs_against", "updated_at"))
+        SoftballPlateAppearance.objects.create(
+            game=self.game,
+            player=self.player,
+            sequence=1,
+            inning=1,
+            result=SoftballPlateAppearance.Result.HOME_RUN,
+            created_by=self.owner,
+        )
+        blocked = self.client.post(
+            reverse("sports-games-play", args=[self.game.id]),
+            {"result": "HR", "rbi": 1, "runs_scored": 1},
+            format="json",
+        )
+        self.assertEqual(blocked.status_code, status.HTTP_409_CONFLICT)
+
+        opponent = self.client.post(
+            reverse("sports-games-opponent-home-runs", args=[self.game.id]),
+            {"home_runs_against": 1},
+            format="json",
+        )
+        self.assertEqual(opponent.status_code, status.HTTP_200_OK)
+
+        allowed = self.client.post(
+            reverse("sports-games-play", args=[self.game.id]),
+            {"result": "HR", "rbi": 1, "runs_scored": 1},
+            format="json",
+        )
+        self.assertEqual(allowed.status_code, status.HTTP_201_CREATED)
+
 
 
 class SoftballSportsApiTests(APITestCase):
