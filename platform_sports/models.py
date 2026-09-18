@@ -193,6 +193,25 @@ class SportsLineupSpot(models.Model):
         return f"{self.batting_order}. {self.player.display_name}"
 
 
+class SportsGameInning(models.Model):
+    game = models.ForeignKey(SportsGame, on_delete=models.CASCADE, related_name="inning_lines")
+    inning = models.PositiveSmallIntegerField()
+    team_runs = models.PositiveSmallIntegerField(default=0)
+    opponent_runs = models.PositiveSmallIntegerField(default=0)
+    opponent_hits = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("inning", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("game", "inning"), name="sports_unique_game_inning"),
+        ]
+
+    def __str__(self):
+        return f"{self.game_id} · inning {self.inning}"
+
+
 class SoftballPlateAppearance(models.Model):
     class Result(models.TextChoices):
         SINGLE = "1B", "Single"

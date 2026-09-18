@@ -6,6 +6,7 @@ from platform_social.serializers import SocialUserSerializer
 from .models import (
     SoftballPlateAppearance,
     SportsGame,
+    SportsGameInning,
     SportsLineupSpot,
     SportsPlayer,
     SportsTeam,
@@ -78,11 +79,32 @@ class SoftballPlateAppearanceSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "sequence", "created_by", "created_at")
 
 
+class SportsGameInningSerializer(serializers.ModelSerializer):
+    team_hits = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SportsGameInning
+        fields = ("id", "game", "inning", "team_runs", "opponent_runs", "team_hits", "opponent_hits", "created_at", "updated_at")
+        read_only_fields = ("id", "team_runs", "team_hits", "created_at", "updated_at")
+
+    def get_team_hits(self, obj):
+        return obj.game.plate_appearances.filter(
+            inning=obj.inning,
+            result__in=(
+                SoftballPlateAppearance.Result.SINGLE,
+                SoftballPlateAppearance.Result.DOUBLE,
+                SoftballPlateAppearance.Result.TRIPLE,
+                SoftballPlateAppearance.Result.HOME_RUN,
+            ),
+        ).count()
+
+
 class SportsGameSerializer(serializers.ModelSerializer):
     team_name = serializers.CharField(source="team.group.name", read_only=True)
     lineup_spots = SportsLineupSpotSerializer(many=True, read_only=True)
     plate_appearance_count = serializers.IntegerField(source="plate_appearances.count", read_only=True)
     current_batter = serializers.SerializerMethodField()
+    inning_lines = SportsGameInningSerializer(many=True, read_only=True)
     home_runs_for = serializers.SerializerMethodField()
     home_run_allowed = serializers.SerializerMethodField()
     rule_set_detail = serializers.SerializerMethodField()
@@ -96,7 +118,7 @@ class SportsGameSerializer(serializers.ModelSerializer):
             "rule_set", "rule_set_detail", "home_runs_for", "home_runs_against", "home_run_allowed",
             "status", "current_inning", "outs", "current_batter_order", "current_batter",
             "runs_for", "runs_against", "started_at", "ended_at", "created_by",
-            "plate_appearance_count", "lineup_spots", "created_at", "updated_at",
+            "plate_appearance_count", "lineup_spots", "inning_lines", "created_at", "updated_at",
         )
         read_only_fields = (
             "id", "social_event", "status", "current_inning", "outs", "current_batter_order",

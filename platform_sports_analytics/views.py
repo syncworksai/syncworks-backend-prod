@@ -239,11 +239,22 @@ def game_inning_grid(game):
     buckets = {}
     for pa in game.plate_appearances.order_by("sequence"):
         inning = int(pa.inning or 1)
-        bucket = buckets.setdefault(inning, {"inning": inning, "runs": 0, "hits": 0, "plays": 0})
+        bucket = buckets.setdefault(
+            inning,
+            {"inning": inning, "runs": 0, "hits": 0, "plays": 0, "opponent_runs": 0, "opponent_hits": 0},
+        )
         bucket["runs"] += int(pa.runs_scored or 0)
         bucket["plays"] += 1
         if pa.result in HIT_RESULTS:
             bucket["hits"] += 1
+    for line in game.inning_lines.order_by("inning"):
+        inning = int(line.inning or 1)
+        bucket = buckets.setdefault(
+            inning,
+            {"inning": inning, "runs": 0, "hits": 0, "plays": 0, "opponent_runs": 0, "opponent_hits": 0},
+        )
+        bucket["opponent_runs"] = int(line.opponent_runs or 0)
+        bucket["opponent_hits"] = int(line.opponent_hits or 0)
     return [buckets[key] for key in sorted(buckets)]
 
 
@@ -434,6 +445,10 @@ class PublicGameCastView(APIView):
                 "inning_grid": game_inning_grid(game),
                 "current_batter_order": game.current_batter_order,
                 "current_batter": SportsPlayerSerializer(current_spot.player).data if current_spot else None,
+                "inning_lines": [
+                    {"inning": line.inning, "team_runs": line.team_runs, "opponent_runs": line.opponent_runs, "opponent_hits": line.opponent_hits}
+                    for line in game.inning_lines.order_by("inning")
+                ],
                 "updated_at": game.updated_at,
             },
             "lineup": [
