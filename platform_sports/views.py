@@ -73,6 +73,51 @@ def can_manage_team(user, team):
     return can_manage_group(user, team.group_id)
 
 
+def rebuild_game_from_book(game):
+    appearances = list(game.plate_appearances.order_by("sequence"))
+    lineup = list(game.lineup_spots.order_by("batting_order"))
+
+    game.inning_lines.update(team_runs=0)
+    inning_totals = defaultdict(int)
+    for pa in appearances:
+        inning_totals[int(pa.inning or 1)] += int(pa.runs_scored or 0)
+    for inning_no, inning_runs in inning_totals.items():
+        line, _ = SportsGameInning.objects.get_or_create(game=game, inning=inning_no)
+        line.team_runs = inning_runs
+        line.save(update_fields=("team_runs", "updated_at"))
+
+    game.runs_for = sum(int(pa.runs_scored or 0) for pa in appearances)
+
+    if appearances:
+        last = appearances[-1]
+        current_inning = max(1, int(last.inning or 1))
+        outs_in_current = sum(
+            int(pa.outs_recorded or 0)
+            for pa in appearances
+            if int(pa.inning or 1) == current_inning
+        )
+        if outs_in_current >= 3:
+            game.current_inning = current_inning + 1
+            game.outs = 0
+        else:
+            game.current_inning = current_inning
+            game.outs = max(0, outs_in_current)
+
+        current_order = lineup[0].batting_order if lineup else 1
+        if lineup:
+            idx = next((i for i, spot in enumerate(lineup) if spot.player_id == last.player_id), -1)
+            if idx >= 0:
+                current_order = lineup[(idx + 1) % len(lineup)].batting_order
+        game.current_batter_order = current_order
+    else:
+        game.current_inning = 1
+        game.outs = 0
+        game.current_batter_order = lineup[0].batting_order if lineup else 1
+
+    game.save(update_fields=("runs_for", "current_inning", "outs", "current_batter_order", "updated_at"))
+    return game
+
+
 def user_can_access_team(user, team):
     if team.group.visibility == SocialGroup.Visibility.PUBLIC:
         return True
@@ -777,37 +822,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
             if not last:
                 return Response({"detail": "There is no play to undo."}, status=status.HTTP_409_CONFLICT)
             last.delete()
-            appearances = list(game.plate_appearances.order_by("sequence"))
-            lineup = list(game.lineup_spots.order_by("batting_order"))
-            runs_for = 0
-            inning = 1
-            outs = 0
-            last_player_id = None
-            for pa in appearances:
-                runs_for += pa.runs_scored
-                outs += pa.outs_recorded
-                if outs >= 3:
-                    outs = 0
-                    inning += 1
-                last_player_id = pa.player_id
-            current_order = lineup[0].batting_order if lineup else 1
-            if last_player_id and lineup:
-                idx = next((i for i, spot in enumerate(lineup) if spot.player_id == last_player_id), -1)
-                if idx >= 0:
-                    current_order = lineup[(idx + 1) % len(lineup)].batting_order
-            game.inning_lines.update(team_runs=0)
-            inning_totals = defaultdict(int)
-            for pa in appearances:
-                inning_totals[int(pa.inning)] += int(pa.runs_scored or 0)
-            for inning_no, inning_runs in inning_totals.items():
-                line, _ = SportsGameInning.objects.get_or_create(game=game, inning=inning_no)
-                line.team_runs = inning_runs
-                line.save(update_fields=("team_runs", "updated_at"))
-            game.runs_for = runs_for
-            game.current_inning = inning
-            game.outs = outs
-            game.current_batter_order = current_order
-            game.save(update_fields=("runs_for", "current_inning", "outs", "current_batter_order", "updated_at"))
+            rebuild_game_from_book(game)
         return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
 
     @action(detail=True, methods=["post"], url_path="inning-line")
@@ -880,6 +895,12 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         game.ended_at = timezone.now()
         game.save(update_fields=("runs_for", "runs_against", "status", "ended_at", "updated_at"))
         sync_game_social_event(game)
+        try:
+            from .league_views import sync_league_result_from_sports_game
+            sync_league_result_from_sports_game(game)
+        except Exception:
+            # Team scoring must remain usable even if a legacy/non-league record has no commissioner link.
+            pass
         return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
 
 
@@ -894,3 +915,33 @@ class SoftballPlateAppearanceViewSet(viewsets.ReadOnlyModelViewSet):
         ).select_related("game__team__group", "player", "created_by").distinct()
         game_id = self.request.query_params.get("game")
         return queryset.filter(game_id=game_id) if game_id else queryset
+
+    @action(detail=True, methods=["patch"])
+    @transaction.atomic
+    def correct(self, request, pk=None):
+        appearance = self.get_object()
+        if not can_manage_team(request.user, appearance.game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+
+        allowed = {"inning", "result", "outs_recorded", "rbi", "runs_scored", "notes"}
+        payload = {key: value for key, value in request.data.items() if key in allowed}
+        serializer = self.get_serializer(appearance, data=payload, partial=True)
+        serializer.is_valid(raise_exception=True)
+        corrected = serializer.save()
+
+        game = SportsGame.objects.select_for_update().get(pk=appearance.game_id)
+        rebuild_game_from_book(game)
+        if game.status == SportsGame.Status.FINAL:
+            try:
+                from .league_views import sync_league_result_from_sports_game
+                sync_league_result_from_sports_game(game)
+            except Exception:
+                pass
+        fresh_game = SportsGame.objects.select_related("team__group", "rule_set").prefetch_related(
+            "lineup_spots__player", "inning_lines", "plate_appearances"
+        ).get(pk=game.pk)
+
+        return Response({
+            "play": self.get_serializer(corrected).data,
+            "game": SportsGameSerializer(fresh_game).data,
+        })

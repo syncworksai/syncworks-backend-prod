@@ -2,8 +2,10 @@ from rest_framework.routers import DefaultRouter
 
 from .league_views import (
     LeagueDivisionViewSet,
+    LeagueGameViewSet,
     LeagueRosterEntryViewSet,
     LeagueSeasonViewSet,
+    LeagueTournamentViewSet,
     LeagueTeamEntryViewSet,
     SportsOrganizationMembershipViewSet,
     SportsOrganizationViewSet,
@@ -40,6 +42,8 @@ router.register("organization-memberships", SportsOrganizationMembershipViewSet,
 router.register("seasons", LeagueSeasonViewSet, basename="sports-seasons")
 router.register("divisions", LeagueDivisionViewSet, basename="sports-divisions")
 router.register("league-teams", LeagueTeamEntryViewSet, basename="sports-league-teams")
+router.register("league-games", LeagueGameViewSet, basename="sports-league-games")
+router.register("tournaments", LeagueTournamentViewSet, basename="sports-tournaments")
 router.register("league-rosters", LeagueRosterEntryViewSet, basename="sports-league-rosters")
 router.register("player-identities", SportsPlayerIdentityViewSet, basename="sports-player-identities")
 router.register("rule-sets", SoftballRuleSetViewSet, basename="sports-rule-sets")

@@ -37,3 +37,40 @@ class GameBookRulesTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.game.refresh_from_db()
         self.assertEqual(self.game.runs_against, 3)
+
+
+    def test_hit_can_record_runner_out_and_scorebook_can_be_corrected(self):
+        hit = self.client.post(
+            reverse("sports-games-play", args=[self.game.id]),
+            {"result": "1B", "outs_recorded": 1, "runs_scored": 0, "rbi": 0},
+            format="json",
+        )
+        self.assertEqual(hit.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(hit.data["play"]["result"], "1B")
+        self.assertEqual(hit.data["play"]["outs_recorded"], 1)
+
+        second = self.client.post(
+            reverse("sports-games-play", args=[self.game.id]),
+            {"result": "2B", "outs_recorded": 1, "runs_scored": 0, "rbi": 0},
+            format="json",
+        )
+        self.assertEqual(second.status_code, status.HTTP_201_CREATED)
+
+        third = self.client.post(
+            reverse("sports-games-play", args=[self.game.id]),
+            {"result": "OUT", "outs_recorded": 1, "runs_scored": 0, "rbi": 0},
+            format="json",
+        )
+        self.assertEqual(third.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(third.data["game"]["current_inning"], 2)
+        self.assertEqual(third.data["game"]["outs"], 0)
+
+        correction = self.client.patch(
+            reverse("sports-plate-appearances-correct", args=[third.data["play"]["id"]]),
+            {"inning": 2, "result": "OUT", "outs_recorded": 1, "runs_scored": 0, "rbi": 0},
+            format="json",
+        )
+        self.assertEqual(correction.status_code, status.HTTP_200_OK)
+        self.assertEqual(correction.data["play"]["inning"], 2)
+        self.assertEqual(correction.data["game"]["current_inning"], 2)
+        self.assertEqual(correction.data["game"]["outs"], 1)
