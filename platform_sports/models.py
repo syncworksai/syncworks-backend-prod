@@ -131,6 +131,14 @@ class SportsGame(models.Model):
     state = models.CharField(max_length=80, blank=True)
     notes = models.TextField(blank=True)
     innings_scheduled = models.PositiveSmallIntegerField(default=7)
+    rule_set = models.ForeignKey(
+        "platform_sports.SoftballRuleSet",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="games",
+    )
+    home_runs_against = models.PositiveSmallIntegerField(default=0)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.SCHEDULED)
     current_inning = models.PositiveSmallIntegerField(default=1)
     outs = models.PositiveSmallIntegerField(default=0)
