@@ -340,6 +340,41 @@ class SocialGroupViewSet(viewsets.ModelViewSet):
             link = GroupInviteLink.objects.create(group=group, role=role, created_by=request.user)
         return Response(GroupInviteLinkSerializer(link, context={"request": request}).data)
 
+    @action(detail=True, methods=["get"], url_path="members")
+    def members(self, request, pk=None):
+        group = self.get_object()
+        active_member = GroupMembership.objects.filter(
+            group=group,
+            user=request.user,
+            status=GroupMembership.Status.ACTIVE,
+        ).exists()
+        if group.visibility != SocialGroup.Visibility.PUBLIC and not active_member:
+            return Response(
+                {"detail": "You must be an active member to view this group directory."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        rows = GroupMembership.objects.filter(
+            group=group,
+            status=GroupMembership.Status.ACTIVE,
+        ).select_related("user").order_by("role", "user__first_name", "user__last_name", "id")
+        return Response([
+            {
+                "id": row.id,
+                "user": {
+                    "id": row.user_id,
+                    "display_name": (
+                        f"{getattr(row.user, 'first_name', '')} {getattr(row.user, 'last_name', '')}".strip()
+                        or "SyncWorks member"
+                    ),
+                    "first_name": getattr(row.user, "first_name", ""),
+                    "last_name": getattr(row.user, "last_name", ""),
+                },
+                "role": row.role,
+                "status": row.status,
+            }
+            for row in rows
+        ])
+
     @action(detail=True, methods=["get", "patch"], url_path="payment-settings")
     def payment_settings(self, request, pk=None):
         group = self.get_object()
