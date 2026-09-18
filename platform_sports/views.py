@@ -657,6 +657,12 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
             )
 
         if existing_user:
+            if player.user_id != existing_user.id:
+                player.user = existing_user
+                if not player.display_name:
+                    player.display_name = f"{existing_user.first_name} {existing_user.last_name}".strip() or existing_user.email
+                player.save(update_fields=("user", "display_name", "updated_at"))
+
             membership, membership_created = GroupMembership.objects.get_or_create(
                 group=player.team.group,
                 user=existing_user,
