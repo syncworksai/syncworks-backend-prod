@@ -220,7 +220,10 @@ class CollectionSerializer(serializers.ModelSerializer):
             "due_at", "status", "platform_fee_bps", "platform_fee_amount_cents",
             "collected_amount_cents", "payment_options", "shares", "created_at", "updated_at",
         )
-        read_only_fields = ("id", "created_by", "collected_amount_cents", "shares", "created_at", "updated_at")
+        read_only_fields = (
+            "id", "created_by", "platform_fee_bps", "platform_fee_amount_cents",
+            "collected_amount_cents", "payment_options", "shares", "created_at", "updated_at",
+        )
 
     def get_collected_amount_cents(self, obj):
         return sum(share.amount_paid_cents for share in obj.shares.all())
