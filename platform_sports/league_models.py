@@ -368,3 +368,146 @@ class LeagueRosterEntry(models.Model):
 
     def __str__(self):
         return f"{self.team} · {self.identity}"
+
+
+
+class LeagueTournament(models.Model):
+    class Format(models.TextChoices):
+        SINGLE_ELIM = "SINGLE_ELIM", "Single elimination"
+        ROUND_ROBIN = "ROUND_ROBIN", "Round robin"
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        ACTIVE = "ACTIVE", "Active"
+        COMPLETE = "COMPLETE", "Complete"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    organization = models.ForeignKey(SportsOrganization, on_delete=models.CASCADE, related_name="tournaments")
+    season = models.ForeignKey(LeagueSeason, on_delete=models.SET_NULL, null=True, blank=True, related_name="tournaments")
+    division = models.ForeignKey(LeagueDivision, on_delete=models.SET_NULL, null=True, blank=True, related_name="tournaments")
+    rule_set = models.ForeignKey(SoftballRuleSet, on_delete=models.SET_NULL, null=True, blank=True, related_name="tournaments")
+    name = models.CharField(max_length=180)
+    format = models.CharField(max_length=20, choices=Format.choices, default=Format.SINGLE_ELIM)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    starts_on = models.DateField(null=True, blank=True)
+    ends_on = models.DateField(null=True, blank=True)
+    venue_name = models.CharField(max_length=180, blank=True)
+    address_line1 = models.CharField(max_length=220, blank=True)
+    city = models.CharField(max_length=100, blank=True)
+    state = models.CharField(max_length=80, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sports_tournaments_created")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-starts_on", "name", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "name"), name="sports_unique_org_tournament_name"),
+        ]
+
+    def clean(self):
+        if self.season_id and self.season.organization_id != self.organization_id:
+            raise ValidationError({"season": "Tournament season must belong to the selected organization."})
+        if self.division_id and self.division.season.organization_id != self.organization_id:
+            raise ValidationError({"division": "Tournament division must belong to the selected organization."})
+        if self.rule_set_id and self.rule_set.organization_id != self.organization_id:
+            raise ValidationError({"rule_set": "Tournament rules must belong to the selected organization."})
+        if self.starts_on and self.ends_on and self.ends_on < self.starts_on:
+            raise ValidationError({"ends_on": "Tournament end date cannot be before its start date."})
+
+    def __str__(self):
+        return f"{self.organization.name} · {self.name}"
+
+
+class LeagueTournamentEntry(models.Model):
+    tournament = models.ForeignKey(LeagueTournament, on_delete=models.CASCADE, related_name="entries")
+    team = models.ForeignKey("platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="tournament_entries")
+    seed = models.PositiveSmallIntegerField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("seed", "team__group__name", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("tournament", "team"), name="sports_unique_tournament_team"),
+        ]
+
+    def __str__(self):
+        return f"{self.tournament.name} · {self.team}"
+
+
+class LeagueTournamentBye(models.Model):
+    tournament = models.ForeignKey(LeagueTournament, on_delete=models.CASCADE, related_name="byes")
+    round_number = models.PositiveSmallIntegerField()
+    team = models.ForeignKey("platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="tournament_byes")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("round_number", "team__group__name", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("tournament", "round_number", "team"), name="sports_unique_tournament_round_bye"),
+        ]
+
+
+class LeagueGame(models.Model):
+    class Source(models.TextChoices):
+        LEAGUE = "LEAGUE", "League"
+        TOURNAMENT = "TOURNAMENT", "Tournament"
+
+    class Status(models.TextChoices):
+        SCHEDULED = "SCHEDULED", "Scheduled"
+        LIVE = "LIVE", "Live"
+        FINAL = "FINAL", "Final"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    division = models.ForeignKey(LeagueDivision, on_delete=models.CASCADE, related_name="league_games")
+    tournament = models.ForeignKey(LeagueTournament, on_delete=models.CASCADE, null=True, blank=True, related_name="games")
+    source = models.CharField(max_length=12, choices=Source.choices, default=Source.LEAGUE)
+    home_team = models.ForeignKey("platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="league_home_games")
+    away_team = models.ForeignKey("platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="league_away_games")
+    home_sports_game = models.OneToOneField("platform_sports.SportsGame", on_delete=models.SET_NULL, null=True, blank=True, related_name="league_home_record")
+    away_sports_game = models.OneToOneField("platform_sports.SportsGame", on_delete=models.SET_NULL, null=True, blank=True, related_name="league_away_record")
+    rule_set = models.ForeignKey(SoftballRuleSet, on_delete=models.SET_NULL, null=True, blank=True, related_name="league_games")
+    start_at = models.DateTimeField()
+    end_at = models.DateTimeField(null=True, blank=True)
+    timezone = models.CharField(max_length=64, default="America/Chicago")
+    venue_name = models.CharField(max_length=180, blank=True)
+    field_name = models.CharField(max_length=100, blank=True)
+    address_line1 = models.CharField(max_length=220, blank=True)
+    city = models.CharField(max_length=100, blank=True)
+    state = models.CharField(max_length=80, blank=True)
+    week_number = models.PositiveSmallIntegerField(null=True, blank=True)
+    round_number = models.PositiveSmallIntegerField(null=True, blank=True)
+    bracket_slot = models.PositiveSmallIntegerField(null=True, blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.SCHEDULED)
+    home_score = models.PositiveSmallIntegerField(default=0)
+    away_score = models.PositiveSmallIntegerField(default=0)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="league_games_created")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("start_at", "id")
+        indexes = [
+            models.Index(fields=("division", "status", "start_at"), name="sports_league_game_lookup"),
+            models.Index(fields=("tournament", "round_number"), name="sports_tournament_round"),
+        ]
+
+    def clean(self):
+        if self.home_team_id == self.away_team_id:
+            raise ValidationError({"away_team": "A team cannot play itself."})
+        active_ids = set(
+            LeagueTeamEntry.objects.filter(
+                division=self.division,
+                status=LeagueTeamEntry.Status.ACTIVE,
+                team_id__in=(self.home_team_id, self.away_team_id),
+            ).values_list("team_id", flat=True)
+        )
+        if self.home_team_id not in active_ids or self.away_team_id not in active_ids:
+            raise ValidationError("Both teams must be active in the selected division.")
+        if self.tournament_id and self.tournament.organization_id != self.division.season.organization_id:
+            raise ValidationError({"tournament": "Tournament must belong to the same organization as the division."})
+
+    def __str__(self):
+        return f"{self.home_team} vs {self.away_team}"
