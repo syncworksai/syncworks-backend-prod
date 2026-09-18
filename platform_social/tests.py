@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -171,6 +172,24 @@ class SocialApiPermissionTests(APITestCase):
         self.assertEqual(member_calendar.title, "Updated Invitational")
         self.assertEqual(member_calendar.start_at, updated_start)
         self.assertEqual(PersonalCalendarEvent.objects.filter(owner=self.member, metadata__social_event_id=self.event.id).count(), 1)
+
+
+    def test_event_manager_can_upload_flyer_image(self):
+        self.authenticate(self.organizer)
+        image = SimpleUploadedFile(
+            "flyer.gif",
+            b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;",
+            content_type="image/gif",
+        )
+        response = self.client.patch(
+            reverse("social-events-detail", args=[self.event.pk]),
+            {"flyer_image": image},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["flyer_image_url"])
+        self.event.refresh_from_db()
+        self.assertTrue(bool(self.event.flyer_image))
 
     def test_plain_member_cannot_edit_collection(self):
         self.authenticate(self.member)
