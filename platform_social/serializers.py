@@ -3,12 +3,15 @@ from rest_framework import serializers
 
 from .models import (
     Collection,
+    CollectionPayment,
     CollectionShare,
     Connection,
     EventMemberResponse,
     GroupEventInvitation,
+    GroupInviteLink,
     GroupMessage,
     GroupMembership,
+    GroupPaymentSettings,
     SocialEvent,
     SocialGroup,
 )
@@ -50,11 +53,43 @@ class ConnectionSerializer(serializers.ModelSerializer):
 
 class GroupMembershipSerializer(serializers.ModelSerializer):
     user_detail = SocialUserSerializer(source="user", read_only=True)
+    invited_by_detail = SocialUserSerializer(source="invited_by", read_only=True)
+    group_name = serializers.CharField(source="group.name", read_only=True)
 
     class Meta:
         model = GroupMembership
-        fields = ("id", "group", "user", "user_detail", "role", "status", "invited_by", "created_at", "updated_at")
-        read_only_fields = ("id", "invited_by", "created_at", "updated_at")
+        fields = (
+            "id", "group", "group_name", "user", "user_detail", "role", "status",
+            "invited_by", "invited_by_detail", "created_at", "updated_at",
+        )
+        read_only_fields = ("id", "invited_by", "invited_by_detail", "group_name", "created_at", "updated_at")
+
+
+class GroupInviteLinkSerializer(serializers.ModelSerializer):
+    group_name = serializers.CharField(source="group.name", read_only=True)
+    created_by_detail = SocialUserSerializer(source="created_by", read_only=True)
+    usable = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = GroupInviteLink
+        fields = (
+            "id", "group", "group_name", "token", "role", "created_by", "created_by_detail",
+            "is_active", "expires_at", "max_uses", "uses_count", "usable", "created_at", "updated_at",
+        )
+        read_only_fields = (
+            "id", "token", "created_by", "created_by_detail", "uses_count", "usable", "created_at", "updated_at",
+        )
+
+
+class GroupPaymentSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GroupPaymentSettings
+        fields = (
+            "id", "group", "cash_app_url", "cash_app_label", "venmo_url", "venmo_label",
+            "zelle_instructions", "stripe_payment_link", "platform_fee_bps", "updated_by",
+            "created_at", "updated_at",
+        )
+        read_only_fields = ("id", "platform_fee_bps", "updated_by", "created_at", "updated_at")
 
 
 class GroupMessageSerializer(serializers.ModelSerializer):
@@ -157,17 +192,48 @@ class CollectionShareSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "amount_paid_cents", "status", "created_at", "updated_at")
 
 
+class CollectionPaymentSerializer(serializers.ModelSerializer):
+    payer_detail = SocialUserSerializer(source="payer", read_only=True)
+
+    class Meta:
+        model = CollectionPayment
+        fields = (
+            "id", "collection", "share", "payer", "payer_detail", "method",
+            "gross_amount_cents", "platform_fee_bps", "platform_fee_cents", "fee_status",
+            "external_reference", "created_by", "created_at",
+        )
+        read_only_fields = (
+            "id", "platform_fee_bps", "platform_fee_cents", "fee_status", "created_by", "created_at",
+        )
+
+
 class CollectionSerializer(serializers.ModelSerializer):
     shares = CollectionShareSerializer(many=True, read_only=True)
     collected_amount_cents = serializers.SerializerMethodField()
+    payment_options = serializers.SerializerMethodField()
+    platform_fee_amount_cents = serializers.SerializerMethodField()
 
     class Meta:
         model = Collection
         fields = (
             "id", "group", "event", "created_by", "title", "description", "total_amount_cents", "split_method",
-            "due_at", "status", "platform_fee_bps", "collected_amount_cents", "shares", "created_at", "updated_at",
+            "due_at", "status", "platform_fee_bps", "platform_fee_amount_cents",
+            "collected_amount_cents", "payment_options", "shares", "created_at", "updated_at",
         )
         read_only_fields = ("id", "created_by", "collected_amount_cents", "shares", "created_at", "updated_at")
 
     def get_collected_amount_cents(self, obj):
         return sum(share.amount_paid_cents for share in obj.shares.all())
+
+    def get_platform_fee_amount_cents(self, obj):
+        return (int(obj.total_amount_cents or 0) * 100 + 5000) // 10000
+
+    def get_payment_options(self, obj):
+        try:
+            settings = obj.group.payment_settings
+        except GroupPaymentSettings.DoesNotExist:
+            return {
+                "cash_app_url": "", "cash_app_label": "", "venmo_url": "", "venmo_label": "",
+                "zelle_instructions": "", "stripe_payment_link": "", "platform_fee_bps": 100,
+            }
+        return GroupPaymentSettingsSerializer(settings).data
