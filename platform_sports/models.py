@@ -131,16 +131,6 @@ class SportsGame(models.Model):
     state = models.CharField(max_length=80, blank=True)
     notes = models.TextField(blank=True)
     innings_scheduled = models.PositiveSmallIntegerField(default=7)
-    class HomeRunRule(models.TextChoices):
-        UNLIMITED = "UNLIMITED", "Unlimited"
-        FIXED = "FIXED", "Fixed limit"
-        ONE_UP = "ONE_UP", "One-up / progressive"
-
-    home_run_rule = models.CharField(max_length=12, choices=HomeRunRule.choices, default=HomeRunRule.UNLIMITED)
-    home_run_limit = models.PositiveSmallIntegerField(null=True, blank=True)
-    home_run_one_up_allowance = models.PositiveSmallIntegerField(default=1)
-    opponent_home_runs = models.PositiveSmallIntegerField(default=0)
-    max_eh = models.PositiveSmallIntegerField(default=2)
     rule_set = models.ForeignKey(
         "platform_sports.SoftballRuleSet",
         on_delete=models.SET_NULL,
