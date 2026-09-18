@@ -777,7 +777,7 @@ class LeagueRosterEntryViewSet(viewsets.ModelViewSet):
                     "created_by": request.user,
                 },
             )
-            GroupMembership.objects.get_or_create(
+            GroupMembership.objects.update_or_create(
                 group=team.group,
                 user=identity.user,
                 defaults={
@@ -811,7 +811,99 @@ class LeagueRosterEntryViewSet(viewsets.ModelViewSet):
             roster.invited_at = timezone.now()
             roster.save()
 
-        return Response(self.get_serializer(roster).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+        urls = send_roster_invite_email(roster)
+        payload = self.get_serializer(roster).data
+        payload.update({
+            "invite_url": urls["invite_url"],
+            "account_exists": bool(identity.user_id),
+            "email_sent": True,
+        })
+        return Response(payload, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="invite-preview", permission_classes=[AllowAny])
+    def invite_preview(self, request):
+        token = str(request.query_params.get("token") or "").strip()
+        roster_id = request.query_params.get("roster")
+        identity = get_object_or_404(SportsPlayerIdentity, claim_token=token)
+        roster_qs = identity.roster_entries.select_related(
+            "team__group", "division__season__organization"
+        ).exclude(status=LeagueRosterEntry.Status.REMOVED)
+        if roster_id:
+            roster_qs = roster_qs.filter(pk=roster_id)
+        roster = roster_qs.first()
+        if not roster:
+            return Response({"detail": "This team invitation is no longer active."}, status=status.HTTP_404_NOT_FOUND)
+        email = identity.email
+        local, _, domain = email.partition("@")
+        masked = (local[:1] + "***@" + domain) if domain else "***"
+        urls = _invite_urls(identity, roster)
+        return Response({
+            "roster": roster.id,
+            "team_id": roster.team_id,
+            "group_id": roster.team.group_id,
+            "team_name": roster.team.group.name,
+            "league_name": roster.division.season.organization.name,
+            "season_name": roster.division.season.name,
+            "division_name": roster.division.name,
+            "player_name": identity.display_name or "",
+            "email_masked": masked,
+            "account_exists": bool(identity.user_id),
+            "status": roster.status,
+            "register_url": urls["register_url"],
+            "login_url": urls["login_url"],
+        })
+
+    @action(detail=False, methods=["post"], url_path="claim-token")
+    @transaction.atomic
+    def claim_token(self, request):
+        token = str(request.data.get("token") or "").strip()
+        roster_id = request.data.get("roster")
+        identity = get_object_or_404(SportsPlayerIdentity, claim_token=token)
+        email = str(getattr(request.user, "email", "") or "").strip().lower()
+        if not email or email != identity.email:
+            return Response(
+                {"detail": "Sign in with the email address that received this team invitation."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        roster_qs = identity.roster_entries.select_related(
+            "team__group", "division__season__organization"
+        ).exclude(status=LeagueRosterEntry.Status.REMOVED)
+        if roster_id:
+            roster_qs = roster_qs.filter(pk=roster_id)
+        roster = roster_qs.first()
+        if not roster:
+            return Response({"detail": "This team invitation is no longer active."}, status=status.HTTP_404_NOT_FOUND)
+
+        identity.claim(request.user)
+        player, _ = SportsPlayer.objects.get_or_create(
+            team=roster.team,
+            user=request.user,
+            defaults={
+                "display_name": identity.display_name or email,
+                "jersey_number": roster.jersey_number,
+                "created_by": roster.invited_by or request.user,
+            },
+        )
+        GroupMembership.objects.update_or_create(
+            group=roster.team.group,
+            user=request.user,
+            defaults={
+                "role": GroupMembership.Role.MEMBER,
+                "status": GroupMembership.Status.ACTIVE,
+                "invited_by": roster.invited_by,
+            },
+        )
+        roster.sports_player = player
+        roster.status = LeagueRosterEntry.Status.ACTIVE
+        roster.accepted_at = roster.accepted_at or timezone.now()
+        roster.save(update_fields=("sports_player", "status", "accepted_at", "updated_at"))
+        return Response({
+            "claimed": True,
+            "team_id": roster.team_id,
+            "group_id": roster.team.group_id,
+            "route": f"/connect/groups/{roster.team.group_id}/sports",
+            "roster": self.get_serializer(roster).data,
+        })
 
     @action(detail=False, methods=["post"], url_path="claim-mine")
     @transaction.atomic
@@ -838,7 +930,7 @@ class LeagueRosterEntryViewSet(viewsets.ModelViewSet):
                     "created_by": roster.invited_by or request.user,
                 },
             )
-            GroupMembership.objects.get_or_create(
+            GroupMembership.objects.update_or_create(
                 group=roster.team.group,
                 user=request.user,
                 defaults={
