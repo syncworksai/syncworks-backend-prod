@@ -408,8 +408,8 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
         from .league_models import LeagueTeamEntry
         from .league_serializers import LeagueDivisionSerializer, LeagueSeasonSerializer, SportsOrganizationSerializer
         from .league_views import division_standings, division_team_stats
-        from .ops_models import SportsPlayerProfile, TeamFeeAssignment
-        from .ops_serializers import SportsPlayerProfileSerializer, TeamFeeAssignmentSerializer
+        from .ops_models import SportsPlayerProfile, TeamFeeAssignment, TeamPaymentSettings
+        from .ops_serializers import SportsPlayerProfileSerializer, TeamFeeAssignmentSerializer, TeamPaymentSettingsSerializer
         from .ops_views import softball_stats_summary
 
         team = self.get_object()
@@ -465,6 +465,9 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
                     "responded_at": response_obj.responded_at,
                 }
 
+        payment_settings_obj = TeamPaymentSettings.objects.filter(team=team).first()
+        payment_settings = TeamPaymentSettingsSerializer(payment_settings_obj).data if payment_settings_obj else None
+
         league_context = None
         entry = (
             LeagueTeamEntry.objects.filter(
@@ -509,6 +512,7 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
             "player_stats": stats,
             "dues": dues,
             "balance_cents": balance_cents,
+            "payment_settings": payment_settings,
             "next_game": SportsGameSerializer(next_game).data if next_game else None,
             "next_game_response": response,
             "league": league_context,
