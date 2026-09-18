@@ -195,6 +195,87 @@ class LeagueTeamEntry(models.Model):
         return f"{self.division} · {self.team}"
 
 
+class SoftballRuleSet(models.Model):
+    class CompetitionType(models.TextChoices):
+        LEAGUE = "LEAGUE", "League"
+        TOURNAMENT = "TOURNAMENT", "Tournament"
+        OTHER = "OTHER", "Other"
+
+    class HomeRunRule(models.TextChoices):
+        UNLIMITED = "UNLIMITED", "Unlimited"
+        FIXED = "FIXED", "Fixed cap"
+        ONE_UP = "ONE_UP", "One-up / San Diego"
+
+    organization = models.ForeignKey(
+        SportsOrganization,
+        on_delete=models.CASCADE,
+        related_name="softball_rule_sets",
+    )
+    season = models.ForeignKey(
+        LeagueSeason,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="softball_rule_sets",
+    )
+    division = models.ForeignKey(
+        LeagueDivision,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="softball_rule_sets",
+    )
+    name = models.CharField(max_length=140)
+    competition_type = models.CharField(
+        max_length=12,
+        choices=CompetitionType.choices,
+        default=CompetitionType.LEAGUE,
+    )
+    innings = models.PositiveSmallIntegerField(default=7)
+    home_run_rule = models.CharField(
+        max_length=12,
+        choices=HomeRunRule.choices,
+        default=HomeRunRule.UNLIMITED,
+    )
+    home_run_limit = models.PositiveSmallIntegerField(null=True, blank=True)
+    home_run_max_ahead = models.PositiveSmallIntegerField(default=1)
+    notes = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="softball_rule_sets_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("organization__name", "competition_type", "name", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("organization", "name"),
+                name="sports_unique_org_ruleset_name",
+            )
+        ]
+        indexes = [
+            models.Index(fields=("organization", "competition_type", "is_active"), name="sports_ruleset_lookup"),
+        ]
+
+    def clean(self):
+        if self.season_id and self.season.organization_id != self.organization_id:
+            raise ValidationError({"season": "Rule-set season must belong to the selected organization."})
+        if self.division_id:
+            if self.division.season.organization_id != self.organization_id:
+                raise ValidationError({"division": "Rule-set division must belong to the selected organization."})
+            if self.season_id and self.division.season_id != self.season_id:
+                raise ValidationError({"division": "Rule-set division must belong to the selected season."})
+        if self.home_run_rule == self.HomeRunRule.FIXED and self.home_run_limit is None:
+            raise ValidationError({"home_run_limit": "Enter a home-run cap for a fixed rule."})
+
+    def __str__(self):
+        return f"{self.organization.name} · {self.name}"
+
+
 class SportsPlayerIdentity(models.Model):
     email = models.EmailField(unique=True)
     user = models.OneToOneField(

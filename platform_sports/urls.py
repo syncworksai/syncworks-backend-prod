@@ -8,6 +8,7 @@ from .league_views import (
     SportsOrganizationMembershipViewSet,
     SportsOrganizationViewSet,
     SportsPlayerIdentityViewSet,
+    SoftballRuleSetViewSet,
 )
 from .ops_views import (
     SoftballStatLedgerEntryViewSet,
@@ -41,5 +42,6 @@ router.register("divisions", LeagueDivisionViewSet, basename="sports-divisions")
 router.register("league-teams", LeagueTeamEntryViewSet, basename="sports-league-teams")
 router.register("league-rosters", LeagueRosterEntryViewSet, basename="sports-league-rosters")
 router.register("player-identities", SportsPlayerIdentityViewSet, basename="sports-player-identities")
+router.register("rule-sets", SoftballRuleSetViewSet, basename="sports-rule-sets")
 
 urlpatterns = router.urls

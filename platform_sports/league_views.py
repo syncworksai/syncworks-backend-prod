@@ -21,6 +21,7 @@ from .league_models import (
     SportsOrganization,
     SportsOrganizationMembership,
     SportsPlayerIdentity,
+    SoftballRuleSet,
 )
 from .league_serializers import (
     LeagueDivisionSerializer,
@@ -30,6 +31,7 @@ from .league_serializers import (
     SportsOrganizationMembershipSerializer,
     SportsOrganizationSerializer,
     SportsPlayerIdentitySerializer,
+    SoftballRuleSetSerializer,
 )
 from .models import SportsPlayer
 from .views import can_manage_team
@@ -398,6 +400,47 @@ class LeagueRosterEntryViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError("League admin or team manager access is required.")
         instance.status = LeagueRosterEntry.Status.REMOVED
         instance.save(update_fields=("status", "updated_at"))
+
+
+class SoftballRuleSetViewSet(viewsets.ModelViewSet):
+    serializer_class = SoftballRuleSetSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = SoftballRuleSet.objects.filter(
+            Q(organization__is_public=True)
+            | Q(
+                organization__memberships__user=self.request.user,
+                organization__memberships__status=SportsOrganizationMembership.Status.ACTIVE,
+            )
+        ).select_related("organization", "season", "division", "created_by").distinct()
+        organization_id = self.request.query_params.get("organization")
+        season_id = self.request.query_params.get("season")
+        division_id = self.request.query_params.get("division")
+        competition_type = self.request.query_params.get("competition_type")
+        if organization_id:
+            queryset = queryset.filter(organization_id=organization_id)
+        if season_id:
+            queryset = queryset.filter(Q(season_id=season_id) | Q(season__isnull=True))
+        if division_id:
+            queryset = queryset.filter(Q(division_id=division_id) | Q(division__isnull=True))
+        if competition_type:
+            queryset = queryset.filter(competition_type=competition_type)
+        return queryset
+
+    def perform_create(self, serializer):
+        organization = serializer.validated_data["organization"]
+        if not can_manage_organization(self.request.user, organization):
+            raise serializers.ValidationError("Commissioner or league admin access is required.")
+        rules = serializer.save(created_by=self.request.user)
+        rules.full_clean()
+
+    def perform_update(self, serializer):
+        rules = self.get_object()
+        if not can_manage_organization(self.request.user, rules.organization):
+            raise serializers.ValidationError("Commissioner or league admin access is required.")
+        saved = serializer.save()
+        saved.full_clean()
 
 
 class SportsPlayerIdentityViewSet(viewsets.ReadOnlyModelViewSet):

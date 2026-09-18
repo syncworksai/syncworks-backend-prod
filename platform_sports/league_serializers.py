@@ -10,6 +10,7 @@ from .league_models import (
     SportsOrganization,
     SportsOrganizationMembership,
     SportsPlayerIdentity,
+    SoftballRuleSet,
 )
 from .serializers import SportsPlayerSerializer, SportsTeamSerializer
 
@@ -87,6 +88,39 @@ class LeagueTeamEntrySerializer(serializers.ModelSerializer):
             "status", "seed", "joined_at", "updated_at",
         )
         read_only_fields = ("id", "joined_at", "updated_at")
+
+
+class SoftballRuleSetSerializer(serializers.ModelSerializer):
+    organization_name = serializers.CharField(source="organization.name", read_only=True)
+    season_name = serializers.CharField(source="season.name", read_only=True)
+    division_name = serializers.CharField(source="division.name", read_only=True)
+
+    class Meta:
+        model = SoftballRuleSet
+        fields = (
+            "id", "organization", "organization_name", "season", "season_name",
+            "division", "division_name", "name", "competition_type", "innings",
+            "home_run_rule", "home_run_limit", "home_run_max_ahead", "notes",
+            "is_active", "created_by", "created_at", "updated_at",
+        )
+        read_only_fields = ("id", "created_by", "created_at", "updated_at")
+
+    def validate(self, attrs):
+        instance = self.instance
+        organization = attrs.get("organization", getattr(instance, "organization", None))
+        season = attrs.get("season", getattr(instance, "season", None))
+        division = attrs.get("division", getattr(instance, "division", None))
+        home_run_rule = attrs.get("home_run_rule", getattr(instance, "home_run_rule", SoftballRuleSet.HomeRunRule.UNLIMITED))
+        home_run_limit = attrs.get("home_run_limit", getattr(instance, "home_run_limit", None))
+        if season and organization and season.organization_id != organization.id:
+            raise serializers.ValidationError({"season": "Season must belong to this organization."})
+        if division and organization and division.season.organization_id != organization.id:
+            raise serializers.ValidationError({"division": "Division must belong to this organization."})
+        if division and season and division.season_id != season.id:
+            raise serializers.ValidationError({"division": "Division must belong to this season."})
+        if home_run_rule == SoftballRuleSet.HomeRunRule.FIXED and home_run_limit is None:
+            raise serializers.ValidationError({"home_run_limit": "Enter a fixed home-run cap."})
+        return attrs
 
 
 class SportsPlayerIdentitySerializer(serializers.ModelSerializer):
