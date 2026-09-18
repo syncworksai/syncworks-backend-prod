@@ -11,6 +11,7 @@ from personal_calendar.models import PersonalCalendarEvent
 
 from .models import (
     Collection,
+    CollectionShare,
     EventMemberResponse,
     GroupEventInvitation,
     GroupMembership,
@@ -250,6 +251,37 @@ class SocialApiPermissionTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_active_member_can_view_safe_group_directory(self):
+        self.authenticate(self.member)
+        response = self.client.get(reverse("social-groups-members", args=[self.team.pk]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 3)
+        self.assertTrue(all("email" not in row["user"] for row in response.data))
+        self.assertTrue(any(row["user"]["id"] == self.owner.id for row in response.data))
+
+    def test_collection_shares_are_private_to_members_but_visible_to_managers(self):
+        CollectionShare.objects.create(
+            collection=self.collection,
+            user=self.member,
+            amount_due_cents=20000,
+        )
+        CollectionShare.objects.create(
+            collection=self.collection,
+            user=self.owner,
+            amount_due_cents=20000,
+        )
+
+        self.authenticate(self.member)
+        member_response = self.client.get(reverse("social-collections-detail", args=[self.collection.pk]))
+        self.assertEqual(member_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(member_response.data["shares"]), 1)
+        self.assertEqual(member_response.data["shares"][0]["user"], self.member.id)
+
+        self.authenticate(self.manager)
+        manager_response = self.client.get(reverse("social-collections-detail", args=[self.collection.pk]))
+        self.assertEqual(manager_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(manager_response.data["shares"]), 2)
 
     def test_manager_can_update_collection_amount(self):
         self.authenticate(self.manager)

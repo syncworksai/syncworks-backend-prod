@@ -217,7 +217,7 @@ class CollectionPaymentSerializer(serializers.ModelSerializer):
 
 
 class CollectionSerializer(serializers.ModelSerializer):
-    shares = CollectionShareSerializer(many=True, read_only=True)
+    shares = serializers.SerializerMethodField()
     collected_amount_cents = serializers.SerializerMethodField()
     payment_options = serializers.SerializerMethodField()
     platform_fee_amount_cents = serializers.SerializerMethodField()
@@ -233,6 +233,24 @@ class CollectionSerializer(serializers.ModelSerializer):
             "id", "created_by", "platform_fee_bps", "platform_fee_amount_cents",
             "collected_amount_cents", "payment_options", "shares", "created_at", "updated_at",
         )
+
+    def get_shares(self, obj):
+        queryset = obj.shares.select_related("user")
+        request = self.context.get("request")
+        if request and getattr(request, "user", None) and request.user.is_authenticated:
+            manager = GroupMembership.objects.filter(
+                group=obj.group,
+                user=request.user,
+                status=GroupMembership.Status.ACTIVE,
+                role__in=(
+                    GroupMembership.Role.OWNER,
+                    GroupMembership.Role.DIRECTOR,
+                    GroupMembership.Role.MANAGER,
+                ),
+            ).exists()
+            if not manager:
+                queryset = queryset.filter(user=request.user)
+        return CollectionShareSerializer(queryset, many=True).data
 
     def get_collected_amount_cents(self, obj):
         return sum(share.amount_paid_cents for share in obj.shares.all())
