@@ -83,6 +83,9 @@ class SportsGameSerializer(serializers.ModelSerializer):
     lineup_spots = SportsLineupSpotSerializer(many=True, read_only=True)
     plate_appearance_count = serializers.IntegerField(source="plate_appearances.count", read_only=True)
     current_batter = serializers.SerializerMethodField()
+    home_runs_for = serializers.SerializerMethodField()
+    home_run_allowed = serializers.SerializerMethodField()
+    rule_set_detail = serializers.SerializerMethodField()
 
     class Meta:
         model = SportsGame
@@ -90,15 +93,45 @@ class SportsGameSerializer(serializers.ModelSerializer):
             "id", "team", "team_name", "social_event", "game_type", "opponent_name",
             "tournament_name", "round_label", "home_away", "start_at", "end_at", "timezone",
             "venue_name", "address_line1", "city", "state", "notes", "innings_scheduled",
+            "rule_set", "rule_set_detail", "home_runs_for", "home_runs_against", "home_run_allowed",
             "status", "current_inning", "outs", "current_batter_order", "current_batter",
             "runs_for", "runs_against", "started_at", "ended_at", "created_by",
-            "plate_appearance_count", "lineup_spots", "created_at", "updated_at",
+            "plate_appearance_count", "lineup_spots", "home_runs_for", "home_run_allowed", "rule_set_detail", "created_at", "updated_at",
         )
         read_only_fields = (
             "id", "social_event", "status", "current_inning", "outs", "current_batter_order",
             "current_batter", "runs_for", "runs_against", "started_at", "ended_at", "created_by",
             "plate_appearance_count", "lineup_spots", "created_at", "updated_at",
         )
+
+    def get_home_runs_for(self, obj):
+        return obj.plate_appearances.filter(result=SoftballPlateAppearance.Result.HOME_RUN).count()
+
+    def get_home_run_allowed(self, obj):
+        rules = getattr(obj, "rule_set", None)
+        if not rules or rules.home_run_rule == "UNLIMITED":
+            return True
+        home_runs_for = self.get_home_runs_for(obj)
+        if rules.home_run_rule == "FIXED":
+            return rules.home_run_limit is None or home_runs_for < rules.home_run_limit
+        if rules.home_run_rule == "ONE_UP":
+            return home_runs_for < (int(obj.home_runs_against or 0) + int(rules.home_run_max_ahead or 1))
+        return True
+
+    def get_rule_set_detail(self, obj):
+        rules = getattr(obj, "rule_set", None)
+        if not rules:
+            return None
+        return {
+            "id": rules.id,
+            "name": rules.name,
+            "competition_type": rules.competition_type,
+            "innings": rules.innings,
+            "home_run_rule": rules.home_run_rule,
+            "home_run_limit": rules.home_run_limit,
+            "home_run_max_ahead": rules.home_run_max_ahead,
+            "notes": rules.notes,
+        }
 
     def get_current_batter(self, obj):
         spot = next(
