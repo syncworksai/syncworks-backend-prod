@@ -161,6 +161,7 @@ class SocialEvent(models.Model):
     prizes = models.TextField(blank=True)
     rules = models.TextField(blank=True)
     flyer_url = models.URLField(blank=True)
+    flyer_image = models.ImageField(upload_to="social/event_flyers/%Y/%m/", blank=True, null=True)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
     version = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
