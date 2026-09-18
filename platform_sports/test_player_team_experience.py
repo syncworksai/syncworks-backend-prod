@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.test import override_settings
@@ -119,7 +121,7 @@ class PlayerTeamExperienceTests(APITestCase):
         game = SportsGame.objects.create(
             team=self.team,
             opponent_name="Vaughn Forest Church",
-            start_at=timezone.now() + timezone.timedelta(days=4),
+            start_at=timezone.now() + timedelta(days=4),
             venue_name="Dean Fain Park",
             address_line1="8700 Minnie Brown Rd",
             city="Montgomery",
