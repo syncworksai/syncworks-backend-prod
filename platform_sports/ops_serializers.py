@@ -32,6 +32,26 @@ class SportsPlayerProfileSerializer(serializers.ModelSerializer):
         return request.build_absolute_uri(url) if request else url
 
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        if request and instance.player.user_id == getattr(request.user, "id", None):
+            from platform_social.models import GroupMembership
+            manager = GroupMembership.objects.filter(
+                group_id=instance.player.team.group_id,
+                user=request.user,
+                status=GroupMembership.Status.ACTIVE,
+                role__in=(
+                    GroupMembership.Role.OWNER,
+                    GroupMembership.Role.DIRECTOR,
+                    GroupMembership.Role.MANAGER,
+                ),
+            ).exists()
+            if not manager:
+                data.pop("notes", None)
+        return data
+
+
 class TeamPaymentSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = TeamPaymentSettings
