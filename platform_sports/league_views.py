@@ -496,8 +496,26 @@ class SportsOrganizationViewSet(viewsets.ModelViewSet):
             "divisions": LeagueDivisionSerializer(divisions, many=True).data,
             "team_count": LeagueTeamEntry.objects.filter(division__season__organization=organization, status=LeagueTeamEntry.Status.ACTIVE).values("team_id").distinct().count(),
             "active_roster_count": LeagueRosterEntry.objects.filter(division__season__organization=organization, status=LeagueRosterEntry.Status.ACTIVE).count(),
+            "scheduled_game_count": LeagueGame.objects.filter(division__season__organization=organization).exclude(status=LeagueGame.Status.CANCELLED).count(),
+            "tournament_count": LeagueTournament.objects.filter(organization=organization).exclude(status=LeagueTournament.Status.CANCELLED).count(),
             "can_manage": can_manage_organization(request.user, organization),
         })
+
+    @action(detail=True, methods=["get"], url_path="available-teams")
+    def available_teams(self, request, pk=None):
+        organization = self.get_object()
+        if not can_manage_organization(request.user, organization):
+            return Response({"detail": "Commissioner or league admin access is required."}, status=status.HTTP_403_FORBIDDEN)
+        group_ids = GroupMembership.objects.filter(
+            user=request.user,
+            status=GroupMembership.Status.ACTIVE,
+        ).values_list("group_id", flat=True)
+        teams = SportsTeam.objects.filter(
+            sport=organization.sport,
+        ).filter(
+            Q(group_id__in=group_ids) | Q(group__visibility="PUBLIC")
+        ).select_related("group").distinct().order_by("group__name")
+        return Response(SportsTeamSerializer(teams, many=True).data)
 
 
 class SportsOrganizationMembershipViewSet(viewsets.ModelViewSet):
@@ -583,6 +601,76 @@ class LeagueDivisionViewSet(viewsets.ModelViewSet):
         if "season" in serializer.validated_data and serializer.validated_data["season"].organization_id != division.season.organization_id:
             raise serializers.ValidationError({"season": "Division cannot be moved to another organization."})
         serializer.save()
+
+
+    @action(detail=True, methods=["get"], url_path="standings")
+    def standings(self, request, pk=None):
+        division = self.get_object()
+        rows = division_standings(division)
+        return Response({
+            "division": LeagueDivisionSerializer(division).data,
+            "standings": rows,
+            "power_formula": "55% win pct + 25% normalized run differential/game + 20% strength of schedule",
+        })
+
+    @action(detail=True, methods=["get"], url_path="league-stats")
+    def league_stats(self, request, pk=None):
+        division = self.get_object()
+        return Response(division_team_stats(division))
+
+    @action(detail=True, methods=["post"], url_path="build-schedule")
+    @transaction.atomic
+    def build_schedule(self, request, pk=None):
+        division = self.get_object()
+        if not can_manage_division(request.user, division):
+            return Response({"detail": "Commissioner or league admin access is required."}, status=status.HTTP_403_FORBIDDEN)
+        if LeagueGame.objects.filter(division=division, source=LeagueGame.Source.LEAGUE).exclude(status=LeagueGame.Status.CANCELLED).exists():
+            return Response({"detail": "This division already has a league schedule. Edit the existing schedule instead of generating duplicates."}, status=status.HTTP_409_CONFLICT)
+
+        entries = list(
+            LeagueTeamEntry.objects.filter(division=division, status=LeagueTeamEntry.Status.ACTIVE)
+            .select_related("team__group").order_by("seed", "team__group__name")
+        )
+        sports_teams = [entry.team for entry in entries]
+        if len(sports_teams) < 2:
+            return Response({"detail": "Add at least two active teams before building a schedule."}, status=status.HTTP_400_BAD_REQUEST)
+        start_at = _aware_datetime(request.data.get("start_at"))
+        if not start_at:
+            return Response({"detail": "start_at must be an ISO date/time."}, status=status.HTTP_400_BAD_REQUEST)
+
+        fields = request.data.get("fields") or []
+        if isinstance(fields, str):
+            fields = [value.strip() for value in fields.split(",") if value.strip()]
+        fields = list(fields) or [str(request.data.get("field_name") or "Field TBD")]
+        slot_minutes = max(30, int(request.data.get("slot_minutes") or 60))
+        days_between_rounds = max(1, int(request.data.get("days_between_rounds") or 7))
+        games_per_matchup = min(4, max(1, int(request.data.get("games_per_matchup") or 1)))
+
+        generated = []
+        base_rounds = round_robin_rounds(sports_teams)
+        round_number = 0
+        for cycle in range(games_per_matchup):
+            for pairs in base_rounds:
+                round_number += 1
+                round_start = start_at + timedelta(days=(round_number - 1) * days_between_rounds)
+                for index, (first, second) in enumerate(pairs):
+                    home, away = (second, first) if cycle % 2 else (first, second)
+                    field_name = fields[index % len(fields)]
+                    slot_index = index // len(fields)
+                    game_start = round_start + timedelta(minutes=slot_index * slot_minutes)
+                    payload = dict(request.data)
+                    payload["field_name"] = field_name
+                    game = _build_game(
+                        division, home, away, request.user, game_start, payload,
+                        source=LeagueGame.Source.LEAGUE,
+                        week_number=round_number,
+                    )
+                    generated.append(game)
+
+        return Response({
+            "created": len(generated),
+            "games": LeagueGameSerializer(generated, many=True).data,
+        }, status=status.HTTP_201_CREATED)
 
 
 class LeagueTeamEntryViewSet(viewsets.ModelViewSet):
