@@ -277,6 +277,249 @@ def team_summary(rows):
     }
 
 
+def _card_totals():
+    return {
+        "g": set(),
+        "manual_games": 0,
+        "pa": 0,
+        "ab": 0,
+        "h": 0,
+        "single": 0,
+        "double": 0,
+        "triple": 0,
+        "hr": 0,
+        "bb": 0,
+        "sf": 0,
+        "roe": 0,
+        "fc": 0,
+        "k": 0,
+        "rbi": 0,
+        "runs": 0,
+        "tb": 0,
+    }
+
+
+def _add_pa_to_card(row, pa):
+    row["g"].add(pa.game_id)
+    row["pa"] += 1
+    row["rbi"] += int(pa.rbi or 0)
+    row["runs"] += int(pa.runs_scored or 0)
+    if pa.result not in AB_EXCLUDED_RESULTS:
+        row["ab"] += 1
+    if pa.result in HIT_RESULTS:
+        row["h"] += 1
+    if pa.result == SoftballPlateAppearance.Result.SINGLE:
+        row["single"] += 1
+        row["tb"] += 1
+    elif pa.result == SoftballPlateAppearance.Result.DOUBLE:
+        row["double"] += 1
+        row["tb"] += 2
+    elif pa.result == SoftballPlateAppearance.Result.TRIPLE:
+        row["triple"] += 1
+        row["tb"] += 3
+    elif pa.result == SoftballPlateAppearance.Result.HOME_RUN:
+        row["hr"] += 1
+        row["tb"] += 4
+    elif pa.result == SoftballPlateAppearance.Result.WALK:
+        row["bb"] += 1
+    elif pa.result == SoftballPlateAppearance.Result.SAC_FLY:
+        row["sf"] += 1
+    elif pa.result == SoftballPlateAppearance.Result.REACHED_ON_ERROR:
+        row["roe"] += 1
+    elif pa.result == SoftballPlateAppearance.Result.FIELDERS_CHOICE:
+        row["fc"] += 1
+    elif pa.result == SoftballPlateAppearance.Result.STRIKEOUT:
+        row["k"] += 1
+
+
+def _add_ledger_to_card(row, entry):
+    singles = max(0, int(entry.hits or 0) - int(entry.doubles or 0) - int(entry.triples or 0) - int(entry.home_runs or 0))
+    row["manual_games"] += int(entry.games or 0)
+    row["pa"] += int(entry.pa or 0)
+    row["ab"] += int(entry.ab or 0)
+    row["h"] += int(entry.hits or 0)
+    row["single"] += singles
+    row["double"] += int(entry.doubles or 0)
+    row["triple"] += int(entry.triples or 0)
+    row["hr"] += int(entry.home_runs or 0)
+    row["bb"] += int(entry.walks or 0)
+    row["sf"] += int(entry.sac_flies or 0)
+    row["rbi"] += int(entry.rbi or 0)
+    row["runs"] += int(entry.runs or 0)
+    row["tb"] += singles + (int(entry.doubles or 0) * 2) + (int(entry.triples or 0) * 3) + (int(entry.home_runs or 0) * 4)
+
+
+def _finish_card_row(row):
+    data = dict(row)
+    games = data.pop("g")
+    data["g"] = len(games) + int(data.pop("manual_games", 0))
+    data["avg"] = _ratio(data["h"], data["ab"])
+    data["obp"] = _ratio(data["h"] + data["bb"], data["ab"] + data["bb"] + data["sf"])
+    data["slg"] = _ratio(data["tb"], data["ab"])
+    data["ops"] = round(data["obp"] + data["slg"], 3)
+    return data
+
+
+def player_card_for_player(player, exclude_game_id=None, request=None):
+    from platform_sports.ops_models import SoftballStatLedgerEntry, SportsPlayerProfile
+
+    season_name = (player.team.season_name or "").strip() or "Current season"
+    buckets = defaultdict(_card_totals)
+
+    appearances = (
+        SoftballPlateAppearance.objects.filter(player=player)
+        .exclude(game__status=SportsGame.Status.CANCELLED)
+        .select_related("game", "advanced_context")
+        .order_by("game__start_at", "sequence")
+    )
+
+    for pa in appearances:
+        scope = (
+            "TOURNAMENT"
+            if pa.game.game_type == SportsGame.GameType.TOURNAMENT
+            else "LEAGUE"
+            if pa.game.game_type == SportsGame.GameType.LEAGUE
+            else "OTHER"
+        )
+        season = (player.team.season_name or "").strip() or str(pa.game.start_at.year)
+        _add_pa_to_card(buckets[(season, scope)], pa)
+        _add_pa_to_card(buckets[(season, "ALL")], pa)
+
+    for entry in SoftballStatLedgerEntry.objects.filter(player=player).order_by("season_name", "scope", "id"):
+        season = (entry.season_name or "").strip() or "Historical"
+        scope = entry.scope
+        _add_ledger_to_card(buckets[(season, scope)], entry)
+        _add_ledger_to_card(buckets[(season, "ALL")], entry)
+
+    season_rows = [
+        {
+            "season": season,
+            "scope": scope,
+            **_finish_card_row(row),
+        }
+        for (season, scope), row in buckets.items()
+    ]
+    season_rows.sort(key=lambda row: (row["season"] != season_name, row["season"], {"ALL": 0, "LEAGUE": 1, "TOURNAMENT": 2, "OTHER": 3}.get(row["scope"], 9)))
+
+    tendency_appearances = appearances
+    if exclude_game_id:
+        tendency_appearances = tendency_appearances.exclude(game_id=exclude_game_id)
+    tendency_appearances = list(tendency_appearances.order_by("-game__start_at", "-sequence"))
+
+    spray = Counter()
+    batted_ball = Counter()
+    outcome = Counter()
+    recent = []
+    for pa in tendency_appearances:
+        outcome[pa.result] += 1
+        try:
+            context = pa.advanced_context
+        except SoftballPlayContext.DoesNotExist:
+            context = None
+        if context:
+            if context.spray_zone:
+                spray[context.spray_zone] += 1
+            if context.batted_ball_type:
+                batted_ball[context.batted_ball_type] += 1
+        if len(recent) < 8:
+            recent.append({
+                "game": pa.game_id,
+                "date": pa.game.start_at,
+                "opponent": pa.game.opponent_name,
+                "game_type": pa.game.game_type,
+                "result": pa.result,
+                "inning": pa.inning,
+                "rbi": pa.rbi,
+                "runs": pa.runs_scored,
+            })
+
+    pa_count = len(tendency_appearances)
+    hits = sum(outcome[value] for value in HIT_RESULTS)
+    xbh = outcome[SoftballPlateAppearance.Result.DOUBLE] + outcome[SoftballPlateAppearance.Result.TRIPLE] + outcome[SoftballPlateAppearance.Result.HOME_RUN]
+    outs = sum(outcome[value] for value in OUT_RESULTS)
+    reach = hits + outcome[SoftballPlateAppearance.Result.WALK] + outcome[SoftballPlateAppearance.Result.REACHED_ON_ERROR]
+    spray_total = sum(spray.values())
+    field_zone_counts = {
+        "left": spray["LEFT_LINE"] + spray["LEFT"] + spray["INFIELD_LEFT"],
+        "left_center": spray["LEFT_CENTER"],
+        "center": spray["CENTER"] + spray["INFIELD_MIDDLE"],
+        "right_center": spray["RIGHT_CENTER"],
+        "right": spray["RIGHT_LINE"] + spray["RIGHT"] + spray["INFIELD_RIGHT"],
+    }
+    field_zones = {
+        key: {
+            "count": count,
+            "pct": round((count / spray_total) * 100, 1) if spray_total else 0.0,
+        }
+        for key, count in field_zone_counts.items()
+    }
+    batted_total = sum(batted_ball.values())
+
+    profile_photo_url = ""
+    profile = SportsPlayerProfile.objects.filter(player=player).first()
+    if profile and profile.profile_photo:
+        raw_url = profile.profile_photo.url
+        profile_photo_url = request.build_absolute_uri(raw_url) if request else raw_url
+
+    current_rows = [row for row in season_rows if row["season"] == season_name]
+    current = {
+        scope.lower(): next((row for row in current_rows if row["scope"] == scope), None)
+        for scope in ("ALL", "LEAGUE", "TOURNAMENT")
+    }
+
+    return {
+        "player": SportsPlayerSerializer(player).data,
+        "profile_photo_url": profile_photo_url,
+        "team": {
+            "id": player.team_id,
+            "group_id": player.team.group_id,
+            "name": player.team.group.name,
+            "season_name": player.team.season_name,
+            "league_name": player.team.league_name,
+            "division_name": player.team.division_name,
+        },
+        "current": current,
+        "seasons": season_rows,
+        "tendencies": {
+            "sample_pa": pa_count,
+            "spray_sample": spray_total,
+            "hit_pct": round((hits / pa_count) * 100, 1) if pa_count else 0.0,
+            "reach_pct": round((reach / pa_count) * 100, 1) if pa_count else 0.0,
+            "xbh_pct": round((xbh / pa_count) * 100, 1) if pa_count else 0.0,
+            "out_pct": round((outs / pa_count) * 100, 1) if pa_count else 0.0,
+            "hr_pct": round((outcome[SoftballPlateAppearance.Result.HOME_RUN] / pa_count) * 100, 1) if pa_count else 0.0,
+            "spray": dict(spray),
+            "field_zones": field_zones,
+            "batted_ball": {
+                key: {
+                    "count": count,
+                    "pct": round((count / batted_total) * 100, 1) if batted_total else 0.0,
+                }
+                for key, count in batted_ball.items()
+            },
+            "recent": recent,
+        },
+    }
+
+
+class PlayerCardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, player_id):
+        player = get_object_or_404(
+            SportsPlayer.objects.select_related("team__group"),
+            pk=player_id,
+        )
+        if not can_access_team(request.user, player.team):
+            return Response({"detail": "You do not have access to this player."}, status=status.HTTP_403_FORBIDDEN)
+        exclude_game = request.query_params.get("exclude_game")
+        try:
+            exclude_game_id = int(exclude_game) if exclude_game else None
+        except (TypeError, ValueError):
+            exclude_game_id = None
+        return Response(player_card_for_player(player, exclude_game_id=exclude_game_id, request=request))
+
+
 class PlayContextUpsertView(APIView):
     permission_classes = [IsAuthenticated]
 
