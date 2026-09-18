@@ -239,11 +239,22 @@ def game_inning_grid(game):
     buckets = {}
     for pa in game.plate_appearances.order_by("sequence"):
         inning = int(pa.inning or 1)
-        bucket = buckets.setdefault(inning, {"inning": inning, "runs": 0, "hits": 0, "plays": 0})
+        bucket = buckets.setdefault(
+            inning,
+            {"inning": inning, "runs": 0, "hits": 0, "plays": 0, "opponent_runs": 0, "opponent_hits": 0},
+        )
         bucket["runs"] += int(pa.runs_scored or 0)
         bucket["plays"] += 1
         if pa.result in HIT_RESULTS:
             bucket["hits"] += 1
+    for line in game.inning_lines.order_by("inning"):
+        inning = int(line.inning or 1)
+        bucket = buckets.setdefault(
+            inning,
+            {"inning": inning, "runs": 0, "hits": 0, "plays": 0, "opponent_runs": 0, "opponent_hits": 0},
+        )
+        bucket["opponent_runs"] = int(line.opponent_runs or 0)
+        bucket["opponent_hits"] = int(line.opponent_hits or 0)
     return [buckets[key] for key in sorted(buckets)]
 
 
