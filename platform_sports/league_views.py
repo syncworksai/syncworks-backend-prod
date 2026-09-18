@@ -103,7 +103,7 @@ def _invite_urls(identity, roster):
     return {
         "invite_url": invite_url,
         "register_url": f"{_frontend_url()}/register?email={encoded_email}&next={encoded_next}",
-        "login_url": f"{_frontend_url()}/login?next={encoded_next}",
+        "login_url": f"{_frontend_url()}/login?email={encoded_email}&next={encoded_next}",
     }
 
 
