@@ -9,7 +9,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from platform_social.models import EventMemberResponse, GroupMembership, SocialEvent, SocialGroup
@@ -17,6 +17,7 @@ from platform_social.views import ensure_group_event_responses, sync_social_even
 from user_accounts.models import Notification
 from user_accounts.services.notifications import notify
 
+from .emails import frontend_url, send_syncworks_team_invite
 from .models import SoftballPlateAppearance, SportsGame, SportsGameInning, SportsLineupSpot, SportsPlayer, SportsTeam
 from .serializers import (
     SoftballPlateAppearanceSerializer,
@@ -488,7 +489,10 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def invite(self, request, pk=None):
+        from .ops_models import SportsPlayerInvite, SportsPlayerProfile
+
         player = self.get_object()
         if not can_manage_team(request.user, player.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
@@ -499,62 +503,174 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
                 email = str(player.manager_profile.email or "").strip().lower()
             except Exception:
                 email = ""
-        target = player.user if player.user_id else (User.objects.filter(email__iexact=email).first() if email else None)
-        if not target:
-            return Response(
-                {"detail": "No SyncWorks account was found for that email.", "account_found": False},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        if not email or "@" not in email:
+            return Response({"detail": "Add a valid player email before sending the invitation."}, status=status.HTTP_400_BAD_REQUEST)
 
-        membership, created = GroupMembership.objects.get_or_create(
-            group=player.team.group,
-            user=target,
-            defaults={
-                "role": GroupMembership.Role.MEMBER,
-                "status": GroupMembership.Status.INVITED,
-                "invited_by": request.user,
-            },
-        )
-        if not created and membership.status != GroupMembership.Status.ACTIVE:
-            membership.role = GroupMembership.Role.MEMBER
-            membership.status = GroupMembership.Status.INVITED
-            membership.invited_by = request.user
-            membership.save(update_fields=("role", "status", "invited_by", "updated_at"))
-
-        duplicate = SportsPlayer.objects.filter(team=player.team, user=target).exclude(pk=player.pk).first()
+        duplicate = SportsPlayer.objects.filter(team=player.team, user__email__iexact=email).exclude(pk=player.pk).first()
         if duplicate:
             return Response(
-                {"detail": "That SyncWorks account is already linked to another player on this team."},
+                {"detail": "That email is already linked to another player on this team."},
                 status=status.HTTP_409_CONFLICT,
             )
-        if player.user_id != target.id:
-            player.user = target
-            if not player.display_name:
-                player.display_name = f"{target.first_name} {target.last_name}".strip() or target.email
-            player.save(update_fields=("user", "display_name", "updated_at"))
 
-        notify(
-            target,
-            f"Team invitation: {player.team.group.name}",
-            f"You have been invited to join {player.team.group.name} in SyncWorks Social.",
-            {
-                "source": "SOCIAL",
-                "sync_alert": True,
-                "severity": "LOW",
-                "group_id": player.team.group_id,
-                "team_id": player.team_id,
-                "player_id": player.id,
-                "route": f"/connect/groups/{player.team.group_id}/sports",
-                "kind": "TEAM_INVITE",
-            },
-            actor=request.user,
-            type=Notification.TYPE_REMINDER,
+        profile, _ = SportsPlayerProfile.objects.get_or_create(player=player)
+        if not profile.email:
+            profile.email = email
+            profile.save(update_fields=("email", "updated_at"))
+
+        existing_user = User.objects.filter(email__iexact=email).first()
+        invite = SportsPlayerInvite.objects.filter(
+            player=player,
+            email=email,
+            status=SportsPlayerInvite.Status.INVITED,
+        ).order_by("-created_at").first()
+        if not invite:
+            invite = SportsPlayerInvite.objects.create(
+                player=player,
+                email=email,
+                invited_by=request.user,
+            )
+
+        if existing_user:
+            GroupMembership.objects.update_or_create(
+                group=player.team.group,
+                user=existing_user,
+                defaults={
+                    "role": GroupMembership.Role.MEMBER,
+                    "status": GroupMembership.Status.INVITED,
+                    "invited_by": request.user,
+                },
+            )
+            notify(
+                existing_user,
+                f"Team invitation: {player.team.group.name}",
+                f"You have been invited to join {player.team.group.name}. Open the invite to claim your player profile.",
+                {
+                    "source": "SOCIAL",
+                    "sync_alert": True,
+                    "severity": "LOW",
+                    "group_id": player.team.group_id,
+                    "team_id": player.team_id,
+                    "player_id": player.id,
+                    "route": f"/sports/team-invite/{invite.token}",
+                    "kind": "TEAM_INVITE",
+                },
+                actor=request.user,
+                type=Notification.TYPE_REMINDER,
+            )
+
+        invite_url = f"{frontend_url()}/sports/team-invite/{invite.token}"
+        context = "Softball team"
+        if player.team.league_name:
+            context = player.team.league_name
+            if player.team.division_name:
+                context += f" · {player.team.division_name}"
+        send_syncworks_team_invite(
+            to_email=email,
+            team_name=player.team.group.name,
+            context_line=context,
+            invite_url=invite_url,
+            account_exists=bool(existing_user),
         )
         return Response({
-            "account_found": True,
-            "membership_status": membership.status,
+            "email_sent": True,
+            "account_found": bool(existing_user),
+            "invite_url": invite_url,
+            "membership_status": (
+                GroupMembership.Status.INVITED if existing_user else "ACCOUNT_REQUIRED"
+            ),
             "player": self.get_serializer(player).data,
         })
+
+    @action(detail=False, methods=["get"], url_path="invite-preview", permission_classes=[AllowAny])
+    def invite_preview(self, request):
+        from .ops_models import SportsPlayerInvite
+        token = str(request.query_params.get("token") or "").strip()
+        invite = SportsPlayerInvite.objects.filter(
+            token=token,
+            status=SportsPlayerInvite.Status.INVITED,
+        ).select_related("player__team__group", "player__user").first()
+        if not invite:
+            return Response({"detail": "This player invitation is no longer active."}, status=status.HTTP_404_NOT_FOUND)
+
+        local, _, domain = invite.email.partition("@")
+        masked = (local[:1] + "***@" + domain) if domain else "***"
+        return Response({
+            "token": str(invite.token),
+            "player_id": invite.player_id,
+            "player_name": invite.player.display_name,
+            "jersey_number": invite.player.jersey_number,
+            "position": invite.player.primary_position,
+            "team_id": invite.player.team_id,
+            "group_id": invite.player.team.group_id,
+            "team_name": invite.player.team.group.name,
+            "league_name": invite.player.team.league_name,
+            "division_name": invite.player.team.division_name,
+            "season_name": invite.player.team.season_name,
+            "email_masked": masked,
+            "account_exists": User.objects.filter(email__iexact=invite.email).exists(),
+            "register_url": f"{frontend_url()}/register?email={invite.email}&next=/sports/team-invite/{invite.token}",
+            "login_url": f"{frontend_url()}/login?email={invite.email}&next=/sports/team-invite/{invite.token}",
+        })
+
+    @action(detail=False, methods=["post"], url_path="claim-invite")
+    @transaction.atomic
+    def claim_invite(self, request):
+        from .ops_models import SportsPlayerInvite, SportsPlayerProfile
+
+        token = str(request.data.get("token") or "").strip()
+        invite = SportsPlayerInvite.objects.select_for_update().filter(
+            token=token,
+            status=SportsPlayerInvite.Status.INVITED,
+        ).select_related("player__team__group").first()
+        if not invite:
+            return Response({"detail": "This player invitation is no longer active."}, status=status.HTTP_404_NOT_FOUND)
+
+        email = str(getattr(request.user, "email", "") or "").strip().lower()
+        if not email or email != invite.email:
+            return Response(
+                {"detail": "Sign in with the email address that received this team invitation."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        player = invite.player
+        duplicate = SportsPlayer.objects.filter(team=player.team, user=request.user).exclude(pk=player.pk).first()
+        if duplicate:
+            return Response(
+                {"detail": "This SyncWorks account is already linked to another player on the team."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        player.user = request.user
+        if not player.display_name:
+            player.display_name = f"{request.user.first_name} {request.user.last_name}".strip() or email
+        player.save(update_fields=("user", "display_name", "updated_at"))
+
+        GroupMembership.objects.update_or_create(
+            group=player.team.group,
+            user=request.user,
+            defaults={
+                "role": GroupMembership.Role.MEMBER,
+                "status": GroupMembership.Status.ACTIVE,
+                "invited_by": invite.invited_by,
+            },
+        )
+        profile, _ = SportsPlayerProfile.objects.get_or_create(player=player)
+        if not profile.email:
+            profile.email = email
+            profile.save(update_fields=("email", "updated_at"))
+
+        invite.status = SportsPlayerInvite.Status.ACCEPTED
+        invite.accepted_by = request.user
+        invite.accepted_at = timezone.now()
+        invite.save(update_fields=("status", "accepted_by", "accepted_at", "updated_at"))
+
+        return Response({
+            "claimed": True,
+            "player": self.get_serializer(player).data,
+            "route": f"/connect/groups/{player.team.group_id}/sports",
+        })
+
 
     @action(detail=True, methods=["post"])
     def remind(self, request, pk=None):
