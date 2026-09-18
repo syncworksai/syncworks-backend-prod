@@ -17,7 +17,7 @@ from platform_social.views import ensure_group_event_responses, sync_social_even
 from user_accounts.models import Notification
 from user_accounts.services.notifications import notify
 
-from .models import SoftballPlateAppearance, SportsGame, SportsLineupSpot, SportsPlayer, SportsTeam
+from .models import SoftballPlateAppearance, SportsGame, SportsGameInning, SportsLineupSpot, SportsPlayer, SportsTeam
 from .serializers import (
     SoftballPlateAppearanceSerializer,
     SportsGameSerializer,
@@ -711,16 +711,6 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         if result_value not in SoftballPlateAppearance.Result.values:
             return Response({"detail": "Choose a valid plate-appearance result."}, status=status.HTTP_400_BAD_REQUEST)
         if result_value == SoftballPlateAppearance.Result.HOME_RUN:
-            team_hr = base_game.plate_appearances.filter(result=SoftballPlateAppearance.Result.HOME_RUN).count()
-            if base_game.home_run_rule == SportsGame.HomeRunRule.FIXED:
-                limit = int(base_game.home_run_limit or 0)
-                if team_hr >= limit:
-                    return Response({"detail": "Home run limit reached for this game.", "code": "HR_LIMIT"}, status=status.HTTP_409_CONFLICT)
-            elif base_game.home_run_rule == SportsGame.HomeRunRule.ONE_UP:
-                ceiling = int(base_game.opponent_home_runs or 0) + int(base_game.home_run_one_up_allowance or 1)
-                if team_hr >= ceiling:
-                    return Response({"detail": "One-up home run limit reached. Opponent must hit another home run first.", "code": "HR_ONE_UP"}, status=status.HTTP_409_CONFLICT)
-        if result_value == SoftballPlateAppearance.Result.HOME_RUN:
             allowed, rule_message = home_run_is_allowed(base_game)
             if not allowed:
                 return Response(
@@ -841,19 +831,6 @@ class SportsGameViewSet(viewsets.ModelViewSet):
             "game": self.get_serializer(self.get_queryset().get(pk=game.pk)).data,
             "inning": SportsGameInningSerializer(line).data,
         })
-
-    @action(detail=True, methods=["post"], url_path="opponent-home-runs")
-    def opponent_home_runs(self, request, pk=None):
-        game = self.get_object()
-        if not can_manage_team(request.user, game.team):
-            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
-        try:
-            value = max(0, int(request.data.get("opponent_home_runs", 0)))
-        except (TypeError, ValueError):
-            return Response({"detail": "Opponent home runs must be a whole number."}, status=status.HTTP_400_BAD_REQUEST)
-        game.opponent_home_runs = value
-        game.save(update_fields=("opponent_home_runs", "updated_at"))
-        return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
 
     @action(detail=True, methods=["post"], url_path="opponent-score")
     def opponent_score(self, request, pk=None):
