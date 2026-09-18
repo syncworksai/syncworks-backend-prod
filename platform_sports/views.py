@@ -931,6 +931,12 @@ class SoftballPlateAppearanceViewSet(viewsets.ReadOnlyModelViewSet):
 
         game = SportsGame.objects.select_for_update().get(pk=appearance.game_id)
         rebuild_game_from_book(game)
+        if game.status == SportsGame.Status.FINAL:
+            try:
+                from .league_views import sync_league_result_from_sports_game
+                sync_league_result_from_sports_game(game)
+            except Exception:
+                pass
         fresh_game = SportsGame.objects.select_related("team__group", "rule_set").prefetch_related(
             "lineup_spots__player", "inning_lines", "plate_appearances"
         ).get(pk=game.pk)
