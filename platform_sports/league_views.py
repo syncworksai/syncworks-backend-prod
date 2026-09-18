@@ -19,6 +19,7 @@ from rest_framework.response import Response
 
 from platform_social.models import GroupMembership
 
+from .emails import send_syncworks_team_invite
 from .league_models import (
     LeagueDivision,
     LeagueGame,
@@ -113,31 +114,15 @@ def send_roster_invite_email(roster):
     team_name = roster.team.group.name
     league_name = roster.division.season.organization.name
     division_name = roster.division.name
-    subject = f"Join {team_name} on SyncWorks"
-    text = (
-        f"You've been invited to {team_name} in {league_name} · {division_name}.\n\n"
-        f"Open your invitation: {urls['invite_url']}\n\n"
-        f"New to SyncWorks? Create your free account here: {urls['register_url']}\n"
-        f"Already have SyncWorks? Sign in here: {urls['login_url']}\n\n"
-        "After you sign in with this email, SyncWorks will link your player profile and team Social group."
+    season_name = roster.division.season.name
+    context = " · ".join(value for value in (league_name, division_name, season_name) if value)
+    send_syncworks_team_invite(
+        to_email=identity.email,
+        team_name=team_name,
+        context_line=context or "Sports team",
+        invite_url=urls["invite_url"],
+        account_exists=bool(identity.user_id),
     )
-    html = f"""
-    <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a">
-      <h2 style="margin-bottom:8px">You're invited to {team_name}</h2>
-      <p>{league_name} · {division_name}</p>
-      <p>Your player invitation connects your roster profile, game schedule, team chat, lineup, stats and dues under one SyncWorks account.</p>
-      <p><a href="{urls['invite_url']}" style="display:inline-block;padding:12px 18px;background:#22d3ee;color:#020617;text-decoration:none;border-radius:10px;font-weight:700">Open team invitation</a></p>
-      <p style="font-size:13px;color:#475569">New to SyncWorks? The invitation page will take you through free signup, then return you to join the team automatically.</p>
-    </div>
-    """.strip()
-    msg = EmailMultiAlternatives(
-        subject=subject,
-        body=text,
-        from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "SyncWorks <no-reply@syncworksapp.com>"),
-        to=[identity.email],
-    )
-    msg.attach_alternative(html, "text/html")
-    msg.send(fail_silently=True)
     return urls
 
 
