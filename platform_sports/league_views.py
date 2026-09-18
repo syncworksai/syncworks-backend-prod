@@ -48,6 +48,7 @@ from .league_serializers import (
     SoftballRuleSetSerializer,
 )
 from .models import SoftballPlateAppearance, SportsGame, SportsPlayer, SportsTeam
+from .serializers import SportsPlayerSerializer, SportsTeamSerializer
 from .views import AB_EXCLUDED_RESULTS, HIT_RESULTS, can_manage_team, sync_game_social_event
 
 User = get_user_model()
@@ -364,7 +365,7 @@ def division_standings(division):
 
     ordered = sorted(
         rows.values(),
-        key=lambda row: (-row["pct"], -row["run_diff"], -row["runs_for"], row["team"]["team_name"].lower()),
+        key=lambda row: (-row["pct"], -row["run_diff"], -row["runs_for"], row["team"]["group_name"].lower()),
     )
     for index, row in enumerate(ordered, start=1):
         row["standing_rank"] = index
@@ -443,7 +444,7 @@ def division_team_stats(division):
                 "ops": round(pobp + pslg, 3), "hr": prow["hr"], "rbi": prow["rbi"],
             })
     return {
-        "teams": sorted(teams, key=lambda row: (-row["ops"], -row["avg"], row["team"]["team_name"].lower())),
+        "teams": sorted(teams, key=lambda row: (-row["ops"], -row["avg"], row["team"]["group_name"].lower())),
         "leaders": {
             "ops": sorted(player_leaders, key=lambda row: (-row["ops"], -row["pa"]))[:10],
             "avg": sorted(player_leaders, key=lambda row: (-row["avg"], -row["pa"]))[:10],
