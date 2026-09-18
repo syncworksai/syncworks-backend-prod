@@ -21,6 +21,7 @@ from .models import SoftballPlateAppearance, SportsGame, SportsLineupSpot, Sport
 from .serializers import (
     SoftballPlateAppearanceSerializer,
     SportsGameSerializer,
+    SportsGameInningSerializer,
     SportsLineupSpotSerializer,
     SportsPlayerSerializer,
     SportsTeamSerializer,
@@ -355,6 +356,48 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
         team = self.get_object()
         return Response(team_dashboard(team))
 
+    @action(detail=True, methods=["get"], url_path="inning-stats")
+    def inning_stats(self, request, pk=None):
+        team = self.get_object()
+        games = list(team.games.exclude(status=SportsGame.Status.CANCELLED).prefetch_related("plate_appearances", "inning_lines"))
+        completed = [game for game in games if game.status == SportsGame.Status.FINAL]
+        source = completed or games
+        inning_rows = defaultdict(lambda: {"runs": 0, "hits": 0, "games": 0})
+        hit_values = {
+            SoftballPlateAppearance.Result.SINGLE,
+            SoftballPlateAppearance.Result.DOUBLE,
+            SoftballPlateAppearance.Result.TRIPLE,
+            SoftballPlateAppearance.Result.HOME_RUN,
+        }
+        for game in source:
+            appearances = list(game.plate_appearances.all())
+            innings_present = set()
+            for pa in appearances:
+                row = inning_rows[int(pa.inning)]
+                row["runs"] += int(pa.runs_scored or 0)
+                row["hits"] += 1 if pa.result in hit_values else 0
+                innings_present.add(int(pa.inning))
+            for inning in innings_present:
+                inning_rows[inning]["games"] += 1
+        rows = []
+        for inning, values in sorted(inning_rows.items()):
+            games_count = values["games"] or 1
+            rows.append({
+                "inning": inning,
+                "runs": values["runs"],
+                "hits": values["hits"],
+                "games": values["games"],
+                "avg_runs": round(values["runs"] / games_count, 2),
+                "avg_hits": round(values["hits"] / games_count, 2),
+            })
+        game_count = len(completed)
+        return Response({
+            "games": game_count,
+            "avg_runs_per_game": round(sum(game.runs_for for game in completed) / game_count, 2) if game_count else 0,
+            "avg_runs_against_per_game": round(sum(game.runs_against for game in completed) / game_count, 2) if game_count else 0,
+            "innings": rows,
+        })
+
     @action(detail=True, methods=["get"])
     def stats(self, request, pk=None):
         team = self.get_object()
@@ -535,7 +578,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         group_ids = active_group_ids(self.request.user)
         queryset = SportsGame.objects.filter(
             Q(team__group_id__in=group_ids) | Q(team__group__visibility=SocialGroup.Visibility.PUBLIC)
-        ).select_related("team__group", "social_event", "created_by").prefetch_related("lineup_spots__player").distinct()
+        ).select_related("team__group", "social_event", "created_by").prefetch_related("lineup_spots__player", "inning_lines").distinct()
         team_id = self.request.query_params.get("team")
         return queryset.filter(team_id=team_id) if team_id else queryset
 
@@ -668,6 +711,16 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         if result_value not in SoftballPlateAppearance.Result.values:
             return Response({"detail": "Choose a valid plate-appearance result."}, status=status.HTTP_400_BAD_REQUEST)
         if result_value == SoftballPlateAppearance.Result.HOME_RUN:
+            team_hr = base_game.plate_appearances.filter(result=SoftballPlateAppearance.Result.HOME_RUN).count()
+            if base_game.home_run_rule == SportsGame.HomeRunRule.FIXED:
+                limit = int(base_game.home_run_limit or 0)
+                if team_hr >= limit:
+                    return Response({"detail": "Home run limit reached for this game.", "code": "HR_LIMIT"}, status=status.HTTP_409_CONFLICT)
+            elif base_game.home_run_rule == SportsGame.HomeRunRule.ONE_UP:
+                ceiling = int(base_game.opponent_home_runs or 0) + int(base_game.home_run_one_up_allowance or 1)
+                if team_hr >= ceiling:
+                    return Response({"detail": "One-up home run limit reached. Opponent must hit another home run first.", "code": "HR_ONE_UP"}, status=status.HTTP_409_CONFLICT)
+        if result_value == SoftballPlateAppearance.Result.HOME_RUN:
             allowed, rule_message = home_run_is_allowed(base_game)
             if not allowed:
                 return Response(
@@ -708,6 +761,9 @@ class SportsGameViewSet(viewsets.ModelViewSet):
                 notes=str(request.data.get("notes") or "").strip(),
                 created_by=request.user,
             )
+            inning_line, _ = SportsGameInning.objects.get_or_create(game=game, inning=game.current_inning)
+            inning_line.team_runs = max(0, int(inning_line.team_runs or 0) + runs_scored)
+            inning_line.save(update_fields=("team_runs", "updated_at"))
             game.runs_for += runs_scored
             game.outs += outs_recorded
             if game.outs >= 3:
@@ -749,11 +805,54 @@ class SportsGameViewSet(viewsets.ModelViewSet):
                 idx = next((i for i, spot in enumerate(lineup) if spot.player_id == last_player_id), -1)
                 if idx >= 0:
                     current_order = lineup[(idx + 1) % len(lineup)].batting_order
+            game.inning_lines.update(team_runs=0)
+            inning_totals = defaultdict(int)
+            for pa in appearances:
+                inning_totals[int(pa.inning)] += int(pa.runs_scored or 0)
+            for inning_no, inning_runs in inning_totals.items():
+                line, _ = SportsGameInning.objects.get_or_create(game=game, inning=inning_no)
+                line.team_runs = inning_runs
+                line.save(update_fields=("team_runs", "updated_at"))
             game.runs_for = runs_for
             game.current_inning = inning
             game.outs = outs
             game.current_batter_order = current_order
             game.save(update_fields=("runs_for", "current_inning", "outs", "current_batter_order", "updated_at"))
+        return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
+
+    @action(detail=True, methods=["post"], url_path="inning-line")
+    def inning_line(self, request, pk=None):
+        game = self.get_object()
+        if not can_manage_team(request.user, game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            inning = max(1, int(request.data.get("inning")))
+            opponent_runs = max(0, int(request.data.get("opponent_runs", 0)))
+            opponent_hits = max(0, int(request.data.get("opponent_hits", 0)))
+        except (TypeError, ValueError):
+            return Response({"detail": "Inning, runs and hits must be whole numbers."}, status=status.HTTP_400_BAD_REQUEST)
+        line, _ = SportsGameInning.objects.get_or_create(game=game, inning=inning)
+        line.opponent_runs = opponent_runs
+        line.opponent_hits = opponent_hits
+        line.save(update_fields=("opponent_runs", "opponent_hits", "updated_at"))
+        game.runs_against = sum(game.inning_lines.values_list("opponent_runs", flat=True))
+        game.save(update_fields=("runs_against", "updated_at"))
+        return Response({
+            "game": self.get_serializer(self.get_queryset().get(pk=game.pk)).data,
+            "inning": SportsGameInningSerializer(line).data,
+        })
+
+    @action(detail=True, methods=["post"], url_path="opponent-home-runs")
+    def opponent_home_runs(self, request, pk=None):
+        game = self.get_object()
+        if not can_manage_team(request.user, game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            value = max(0, int(request.data.get("opponent_home_runs", 0)))
+        except (TypeError, ValueError):
+            return Response({"detail": "Opponent home runs must be a whole number."}, status=status.HTTP_400_BAD_REQUEST)
+        game.opponent_home_runs = value
+        game.save(update_fields=("opponent_home_runs", "updated_at"))
         return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
 
     @action(detail=True, methods=["post"], url_path="opponent-score")
