@@ -14,6 +14,71 @@ from .models import SoftballPlateAppearance, SportsGame, SportsLineupSpot, Sport
 
 User = get_user_model()
 
+class SoftballSportsApiTests(APITestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            username="sports-owner",
+            email="sports-owner@example.com",
+            password="pass12345",
+        )
+        self.member = User.objects.create_user(
+            username="sports-member",
+            email="sports-member@example.com",
+            password="pass12345",
+        )
+        self.group = SocialGroup.objects.create(
+            name="Bed Springs Test",
+            kind=SocialGroup.Kind.TEAM,
+            created_by=self.owner,
+        )
+        GroupMembership.objects.create(
+            group=self.group,
+            user=self.owner,
+            role=GroupMembership.Role.OWNER,
+            status=GroupMembership.Status.ACTIVE,
+            invited_by=self.owner,
+        )
+        GroupMembership.objects.create(
+            group=self.group,
+            user=self.member,
+            role=GroupMembership.Role.MEMBER,
+            status=GroupMembership.Status.ACTIVE,
+            invited_by=self.owner,
+        )
+        self.team = SportsTeam.objects.create(
+            group=self.group,
+            sport=SportsTeam.Sport.SOFTBALL,
+            season_name="Fall 2026",
+            created_by=self.owner,
+        )
+        self.players = [
+            SportsPlayer.objects.create(
+                team=self.team,
+                display_name=name,
+                jersey_number=str(number),
+                sort_order=index,
+                created_by=self.owner,
+            )
+            for index, (name, number) in enumerate(
+                (("Player One", 7), ("Player Two", 2), ("Player Three", 13)),
+                start=1,
+            )
+        ]
+        self.game = SportsGame.objects.create(
+            team=self.team,
+            opponent_name="Visitors",
+            start_at=timezone.now() + timedelta(days=1),
+            created_by=self.owner,
+        )
+        for order, player in enumerate(self.players, start=1):
+            SportsLineupSpot.objects.create(
+                game=self.game,
+                player=player,
+                batting_order=order,
+                defensive_position=("2B", "SS", "OF")[order - 1],
+            )
+        self.client.force_authenticate(user=self.owner)
+
     def test_fixed_home_run_rule_blocks_extra_hr(self):
         organization = SportsOrganization.objects.create(
             name="Rule Test League",
@@ -95,73 +160,6 @@ User = get_user_model()
             format="json",
         )
         self.assertEqual(allowed.status_code, status.HTTP_201_CREATED)
-
-
-
-class SoftballSportsApiTests(APITestCase):
-    def setUp(self):
-        self.owner = User.objects.create_user(
-            username="sports-owner",
-            email="sports-owner@example.com",
-            password="pass12345",
-        )
-        self.member = User.objects.create_user(
-            username="sports-member",
-            email="sports-member@example.com",
-            password="pass12345",
-        )
-        self.group = SocialGroup.objects.create(
-            name="Bed Springs Test",
-            kind=SocialGroup.Kind.TEAM,
-            created_by=self.owner,
-        )
-        GroupMembership.objects.create(
-            group=self.group,
-            user=self.owner,
-            role=GroupMembership.Role.OWNER,
-            status=GroupMembership.Status.ACTIVE,
-            invited_by=self.owner,
-        )
-        GroupMembership.objects.create(
-            group=self.group,
-            user=self.member,
-            role=GroupMembership.Role.MEMBER,
-            status=GroupMembership.Status.ACTIVE,
-            invited_by=self.owner,
-        )
-        self.team = SportsTeam.objects.create(
-            group=self.group,
-            sport=SportsTeam.Sport.SOFTBALL,
-            season_name="Fall 2026",
-            created_by=self.owner,
-        )
-        self.players = [
-            SportsPlayer.objects.create(
-                team=self.team,
-                display_name=name,
-                jersey_number=str(number),
-                sort_order=index,
-                created_by=self.owner,
-            )
-            for index, (name, number) in enumerate(
-                (("Player One", 7), ("Player Two", 2), ("Player Three", 13)),
-                start=1,
-            )
-        ]
-        self.game = SportsGame.objects.create(
-            team=self.team,
-            opponent_name="Visitors",
-            start_at=timezone.now() + timedelta(days=1),
-            created_by=self.owner,
-        )
-        for order, player in enumerate(self.players, start=1):
-            SportsLineupSpot.objects.create(
-                game=self.game,
-                player=player,
-                batting_order=order,
-                defensive_position=("2B", "SS", "OF")[order - 1],
-            )
-        self.client.force_authenticate(user=self.owner)
 
     def test_game_creation_syncs_social_event_and_member_calendars(self):
         response = self.client.post(
