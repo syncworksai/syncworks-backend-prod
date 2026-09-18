@@ -402,6 +402,116 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
         team = self.get_object()
         return Response(team_dashboard(team))
 
+
+    @action(detail=True, methods=["get"], url_path="player-center")
+    def player_center(self, request, pk=None):
+        from .league_models import LeagueTeamEntry
+        from .league_serializers import LeagueDivisionSerializer, LeagueSeasonSerializer, SportsOrganizationSerializer
+        from .league_views import division_standings, division_team_stats
+        from .ops_models import SportsPlayerProfile, TeamFeeAssignment
+        from .ops_serializers import SportsPlayerProfileSerializer, TeamFeeAssignmentSerializer
+        from .ops_views import softball_stats_summary
+
+        team = self.get_object()
+        if not user_can_access_team(request.user, team):
+            return Response({"detail": "You cannot access this team."}, status=status.HTTP_403_FORBIDDEN)
+
+        base = team_dashboard(team)
+        player = team.players.filter(user=request.user, is_active=True).select_related("user").first()
+        profile = None
+        stats = {"all": None, "league": None, "tournament": None}
+        dues = []
+        balance_cents = 0
+
+        if player:
+            profile_obj = SportsPlayerProfile.objects.filter(player=player).first()
+            if profile_obj:
+                profile = SportsPlayerProfileSerializer(profile_obj, context={"request": request}).data
+
+            all_rows = softball_stats_summary(team, "ALL") if team.sport == SportsTeam.Sport.SOFTBALL else []
+            league_rows = softball_stats_summary(team, "LEAGUE") if team.sport == SportsTeam.Sport.SOFTBALL else []
+            tournament_rows = softball_stats_summary(team, "TOURNAMENT") if team.sport == SportsTeam.Sport.SOFTBALL else []
+            stats["all"] = next((row for row in all_rows if int(row["player"]["id"]) == player.id), None)
+            stats["league"] = next((row for row in league_rows if int(row["player"]["id"]) == player.id), None)
+            stats["tournament"] = next((row for row in tournament_rows if int(row["player"]["id"]) == player.id), None)
+
+            due_rows = TeamFeeAssignment.objects.filter(player=player).select_related("fee", "player__user")
+            dues = TeamFeeAssignmentSerializer(due_rows, many=True).data
+            balance_cents = sum(
+                max(0, int(row.amount_cents or 0) - int(row.amount_paid_cents or 0))
+                for row in due_rows
+                if row.status in (TeamFeeAssignment.Status.DUE, TeamFeeAssignment.Status.PARTIAL)
+            )
+
+        next_game = (
+            team.games.filter(status=SportsGame.Status.LIVE).select_related("social_event").first()
+            or team.games.filter(
+                status=SportsGame.Status.SCHEDULED,
+                start_at__gte=timezone.now(),
+            ).select_related("social_event").order_by("start_at").first()
+        )
+        response = None
+        if next_game and next_game.social_event_id:
+            response_obj = EventMemberResponse.objects.filter(
+                event_id=next_game.social_event_id,
+                group_id=team.group_id,
+                user=request.user,
+            ).first()
+            if response_obj:
+                response = {
+                    "id": response_obj.id,
+                    "response": response_obj.response,
+                    "responded_at": response_obj.responded_at,
+                }
+
+        league_context = None
+        entry = (
+            LeagueTeamEntry.objects.filter(
+                team=team,
+                status=LeagueTeamEntry.Status.ACTIVE,
+                division__season__is_current=True,
+            )
+            .select_related("division__season__organization")
+            .order_by("-division__season__starts_on", "id")
+            .first()
+            or LeagueTeamEntry.objects.filter(team=team, status=LeagueTeamEntry.Status.ACTIVE)
+            .select_related("division__season__organization")
+            .order_by("-division__season__starts_on", "id")
+            .first()
+        )
+        if entry:
+            standing_rows = division_standings(entry.division)
+            league_stats = division_team_stats(entry.division)
+            league_context = {
+                "organization": SportsOrganizationSerializer(entry.division.season.organization).data,
+                "season": LeagueSeasonSerializer(entry.division.season).data,
+                "division": LeagueDivisionSerializer(entry.division).data,
+                "standings": standing_rows,
+                "team_standing": next(
+                    (row for row in standing_rows if int(row["team"]["id"]) == team.id),
+                    None,
+                ),
+                "team_stats": next(
+                    (row for row in league_stats.get("teams", []) if int(row["team"]["id"]) == team.id),
+                    None,
+                ),
+                "leaders": league_stats.get("leaders", {}),
+            }
+
+        return Response({
+            "team": base["team"],
+            "record": base["record"],
+            "team_stats": base["team_stats"],
+            "player": SportsPlayerSerializer(player).data if player else None,
+            "profile": profile,
+            "player_stats": stats,
+            "dues": dues,
+            "balance_cents": balance_cents,
+            "next_game": SportsGameSerializer(next_game).data if next_game else None,
+            "next_game_response": response,
+            "league": league_context,
+        })
+
     @action(detail=True, methods=["get"], url_path="inning-stats")
     def inning_stats(self, request, pk=None):
         team = self.get_object()
