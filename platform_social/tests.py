@@ -252,6 +252,14 @@ class SocialApiPermissionTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_active_member_can_view_safe_group_directory(self):
+        self.authenticate(self.member)
+        response = self.client.get(reverse("social-groups-members", args=[self.team.pk]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 3)
+        self.assertTrue(all("email" not in row["user"] for row in response.data))
+        self.assertTrue(any(row["user"]["id"] == self.owner.id for row in response.data))
+
     def test_collection_shares_are_private_to_members_but_visible_to_managers(self):
         CollectionShare.objects.create(
             collection=self.collection,
