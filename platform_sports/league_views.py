@@ -959,6 +959,273 @@ class LeagueRosterEntryViewSet(viewsets.ModelViewSet):
         instance.save(update_fields=("status", "updated_at"))
 
 
+class LeagueGameViewSet(viewsets.ModelViewSet):
+    serializer_class = LeagueGameSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = LeagueGame.objects.filter(
+            Q(division__season__organization__is_public=True)
+            | Q(
+                division__season__organization__memberships__user=self.request.user,
+                division__season__organization__memberships__status=SportsOrganizationMembership.Status.ACTIVE,
+            )
+            | Q(home_team__group__memberships__user=self.request.user, home_team__group__memberships__status=GroupMembership.Status.ACTIVE)
+            | Q(away_team__group__memberships__user=self.request.user, away_team__group__memberships__status=GroupMembership.Status.ACTIVE)
+        ).select_related(
+            "division__season__organization", "home_team__group", "away_team__group",
+            "tournament", "rule_set", "home_sports_game", "away_sports_game",
+        ).distinct()
+        division = self.request.query_params.get("division")
+        tournament = self.request.query_params.get("tournament")
+        source = self.request.query_params.get("source")
+        if division:
+            queryset = queryset.filter(division_id=division)
+        if tournament:
+            queryset = queryset.filter(tournament_id=tournament)
+        if source:
+            queryset = queryset.filter(source=source)
+        return queryset
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        division = serializer.validated_data["division"]
+        if not can_manage_division(self.request.user, division):
+            raise serializers.ValidationError("Commissioner or league admin access is required.")
+        game = serializer.save(created_by=self.request.user)
+        game.full_clean()
+        create_league_game_records(game, self.request.user)
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        game = self.get_object()
+        if not can_manage_division(self.request.user, game.division):
+            raise serializers.ValidationError("Commissioner or league admin access is required.")
+        saved = serializer.save()
+        saved.full_clean()
+        sync_league_game_records(saved)
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        if not can_manage_division(self.request.user, instance.division):
+            raise serializers.ValidationError("Commissioner or league admin access is required.")
+        instance.status = LeagueGame.Status.CANCELLED
+        instance.save(update_fields=("status", "updated_at"))
+        sync_league_game_records(instance)
+
+
+class LeagueTournamentViewSet(viewsets.ModelViewSet):
+    serializer_class = LeagueTournamentSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = LeagueTournament.objects.filter(
+            Q(organization__is_public=True)
+            | Q(
+                organization__memberships__user=self.request.user,
+                organization__memberships__status=SportsOrganizationMembership.Status.ACTIVE,
+            )
+        ).select_related(
+            "organization", "season", "division", "rule_set", "created_by",
+        ).prefetch_related("entries__team__group", "byes__team__group", "games").distinct()
+        organization = self.request.query_params.get("organization")
+        season = self.request.query_params.get("season")
+        division = self.request.query_params.get("division")
+        if organization:
+            queryset = queryset.filter(organization_id=organization)
+        if season:
+            queryset = queryset.filter(season_id=season)
+        if division:
+            queryset = queryset.filter(division_id=division)
+        return queryset
+
+    def perform_create(self, serializer):
+        organization = serializer.validated_data["organization"]
+        if not can_manage_organization(self.request.user, organization):
+            raise serializers.ValidationError("Commissioner or league admin access is required.")
+        tournament = serializer.save(created_by=self.request.user)
+        tournament.full_clean()
+
+    def perform_update(self, serializer):
+        tournament = self.get_object()
+        if not can_manage_organization(self.request.user, tournament.organization):
+            raise serializers.ValidationError("Commissioner or league admin access is required.")
+        saved = serializer.save()
+        saved.full_clean()
+
+    @action(detail=True, methods=["post"], url_path="add-team")
+    def add_team(self, request, pk=None):
+        tournament = self.get_object()
+        if not can_manage_organization(request.user, tournament.organization):
+            return Response({"detail": "Commissioner or league admin access is required."}, status=status.HTTP_403_FORBIDDEN)
+        team = get_object_or_404(SportsTeam.objects.select_related("group"), pk=request.data.get("team"), sport=tournament.organization.sport)
+        if tournament.division_id and not LeagueTeamEntry.objects.filter(
+            division=tournament.division,
+            team=team,
+            status=LeagueTeamEntry.Status.ACTIVE,
+        ).exists():
+            return Response({"detail": "Add this team to the tournament division first."}, status=status.HTTP_400_BAD_REQUEST)
+        seed = request.data.get("seed")
+        try:
+            seed = int(seed) if seed not in (None, "") else None
+        except (TypeError, ValueError):
+            return Response({"detail": "Seed must be a whole number."}, status=status.HTTP_400_BAD_REQUEST)
+        entry, created = LeagueTournamentEntry.objects.update_or_create(
+            tournament=tournament,
+            team=team,
+            defaults={"seed": seed, "is_active": True},
+        )
+        return Response(LeagueTournamentEntrySerializer(entry).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=True, methods=["get"])
+    def bracket(self, request, pk=None):
+        tournament = self.get_object()
+        return Response({
+            "tournament": self.get_serializer(tournament).data,
+            "entries": LeagueTournamentEntrySerializer(tournament.entries.filter(is_active=True).select_related("team__group"), many=True).data,
+            "byes": LeagueTournamentByeSerializer(tournament.byes.select_related("team__group"), many=True).data,
+            "games": LeagueGameSerializer(tournament.games.select_related("home_team__group", "away_team__group", "rule_set"), many=True).data,
+        })
+
+    @action(detail=True, methods=["post"], url_path="build")
+    @transaction.atomic
+    def build(self, request, pk=None):
+        tournament = self.get_object()
+        if not can_manage_organization(request.user, tournament.organization):
+            return Response({"detail": "Commissioner or league admin access is required."}, status=status.HTTP_403_FORBIDDEN)
+        if not tournament.division_id:
+            return Response({"detail": "Choose a division before building the tournament."}, status=status.HTTP_400_BAD_REQUEST)
+        if tournament.games.exclude(status=LeagueGame.Status.CANCELLED).exists():
+            return Response({"detail": "This tournament already has a bracket/schedule."}, status=status.HTTP_409_CONFLICT)
+        entries = list(tournament.entries.filter(is_active=True).select_related("team__group").order_by("seed", "team__group__name"))
+        if len(entries) < 2:
+            return Response({"detail": "Add at least two teams to the tournament."}, status=status.HTTP_400_BAD_REQUEST)
+        start_at = _aware_datetime(request.data.get("start_at"))
+        if not start_at:
+            return Response({"detail": "start_at must be an ISO date/time."}, status=status.HTTP_400_BAD_REQUEST)
+        fields = request.data.get("fields") or []
+        if isinstance(fields, str):
+            fields = [value.strip() for value in fields.split(",") if value.strip()]
+        fields = list(fields) or [str(request.data.get("field_name") or "Field TBD")]
+        slot_minutes = max(30, int(request.data.get("slot_minutes") or 60))
+        payload = dict(request.data)
+        payload.setdefault("venue_name", tournament.venue_name)
+        payload.setdefault("address_line1", tournament.address_line1)
+        payload.setdefault("city", tournament.city)
+        payload.setdefault("state", tournament.state)
+        generated = []
+
+        if tournament.format == LeagueTournament.Format.ROUND_ROBIN:
+            rounds = round_robin_rounds([entry.team for entry in entries])
+            for round_index, pairs in enumerate(rounds, start=1):
+                round_start = start_at + timedelta(days=round_index - 1)
+                for index, (home, away) in enumerate(pairs):
+                    payload["field_name"] = fields[index % len(fields)]
+                    game_start = round_start + timedelta(minutes=(index // len(fields)) * slot_minutes)
+                    generated.append(_build_game(
+                        tournament.division, home, away, request.user, game_start, payload,
+                        source=LeagueGame.Source.TOURNAMENT, tournament=tournament,
+                        round_number=round_index, bracket_slot=index + 1,
+                    ))
+        else:
+            teams = [entry.team for entry in entries]
+            if len(teams) % 2:
+                bye_team = teams.pop(0)
+                LeagueTournamentBye.objects.create(tournament=tournament, round_number=1, team=bye_team)
+            pairs = []
+            while teams:
+                pairs.append((teams.pop(0), teams.pop(-1)))
+            for index, (home, away) in enumerate(pairs):
+                payload["field_name"] = fields[index % len(fields)]
+                game_start = start_at + timedelta(minutes=(index // len(fields)) * slot_minutes)
+                generated.append(_build_game(
+                    tournament.division, home, away, request.user, game_start, payload,
+                    source=LeagueGame.Source.TOURNAMENT, tournament=tournament,
+                    round_number=1, bracket_slot=index + 1,
+                ))
+
+        tournament.status = LeagueTournament.Status.ACTIVE
+        tournament.save(update_fields=("status", "updated_at"))
+        return Response({
+            "created": len(generated),
+            "bracket": self.bracket(request, pk=pk).data,
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="advance")
+    @transaction.atomic
+    def advance(self, request, pk=None):
+        tournament = self.get_object()
+        if tournament.format != LeagueTournament.Format.SINGLE_ELIM:
+            return Response({"detail": "Advance is only used for single-elimination brackets."}, status=status.HTTP_400_BAD_REQUEST)
+        if not can_manage_organization(request.user, tournament.organization):
+            return Response({"detail": "Commissioner or league admin access is required."}, status=status.HTTP_403_FORBIDDEN)
+        games = list(tournament.games.exclude(status=LeagueGame.Status.CANCELLED).order_by("round_number", "bracket_slot"))
+        if not games:
+            return Response({"detail": "Build the tournament first."}, status=status.HTTP_400_BAD_REQUEST)
+        current_round = max(int(game.round_number or 1) for game in games)
+        if tournament.games.filter(round_number=current_round).exclude(status=LeagueGame.Status.FINAL).exists():
+            return Response({"detail": "Finish every game in the current round before advancing."}, status=status.HTTP_409_CONFLICT)
+        if tournament.games.filter(round_number=current_round + 1).exists() or tournament.byes.filter(round_number=current_round + 1).exists():
+            return Response({"detail": "The next round is already built."}, status=status.HTTP_409_CONFLICT)
+
+        eligible = []
+        for game in tournament.games.filter(round_number=current_round, status=LeagueGame.Status.FINAL):
+            if game.home_score == game.away_score:
+                return Response({"detail": "Tournament games must have a winner before advancing."}, status=status.HTTP_409_CONFLICT)
+            eligible.append(game.home_team if game.home_score > game.away_score else game.away_team)
+        eligible.extend(bye.team for bye in tournament.byes.filter(round_number=current_round).select_related("team"))
+
+        unique = {team.id: team for team in eligible}
+        eligible = list(unique.values())
+        if len(eligible) == 1:
+            tournament.status = LeagueTournament.Status.COMPLETE
+            tournament.save(update_fields=("status", "updated_at"))
+            return Response({"complete": True, "champion": SportsTeamSerializer(eligible[0]).data})
+
+        seed_map = {
+            entry.team_id: (entry.seed if entry.seed is not None else 9999)
+            for entry in tournament.entries.filter(is_active=True)
+        }
+        eligible.sort(key=lambda team: (seed_map.get(team.id, 9999), team.group.name.lower()))
+        next_round = current_round + 1
+        if len(eligible) % 2:
+            bye_team = eligible.pop(0)
+            LeagueTournamentBye.objects.create(tournament=tournament, round_number=next_round, team=bye_team)
+
+        start_at = _aware_datetime(request.data.get("start_at"))
+        if not start_at:
+            latest = max(game.start_at for game in games if int(game.round_number or 1) == current_round)
+            start_at = latest + timedelta(minutes=max(30, int(request.data.get("slot_minutes") or 60)))
+        fields = request.data.get("fields") or []
+        if isinstance(fields, str):
+            fields = [value.strip() for value in fields.split(",") if value.strip()]
+        fields = list(fields) or ["Field TBD"]
+        slot_minutes = max(30, int(request.data.get("slot_minutes") or 60))
+        payload = dict(request.data)
+        payload.setdefault("venue_name", tournament.venue_name)
+        payload.setdefault("address_line1", tournament.address_line1)
+        payload.setdefault("city", tournament.city)
+        payload.setdefault("state", tournament.state)
+
+        created = []
+        pairs = []
+        while eligible:
+            pairs.append((eligible.pop(0), eligible.pop(-1)))
+        for index, (home, away) in enumerate(pairs):
+            payload["field_name"] = fields[index % len(fields)]
+            game_start = start_at + timedelta(minutes=(index // len(fields)) * slot_minutes)
+            created.append(_build_game(
+                tournament.division, home, away, request.user, game_start, payload,
+                source=LeagueGame.Source.TOURNAMENT, tournament=tournament,
+                round_number=next_round, bracket_slot=index + 1,
+            ))
+        return Response({
+            "created": len(created),
+            "bracket": self.bracket(request, pk=pk).data,
+        }, status=status.HTTP_201_CREATED)
+
+
+
 class SoftballRuleSetViewSet(viewsets.ModelViewSet):
     serializer_class = SoftballRuleSetSerializer
     permission_classes = [IsAuthenticated]
