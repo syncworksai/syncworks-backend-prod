@@ -434,11 +434,6 @@ class PublicGameCastView(APIView):
                 "inning_grid": game_inning_grid(game),
                 "current_batter_order": game.current_batter_order,
                 "current_batter": SportsPlayerSerializer(current_spot.player).data if current_spot else None,
-                "home_run_rule": game.home_run_rule,
-                "home_run_limit": game.home_run_limit,
-                "home_run_one_up_allowance": game.home_run_one_up_allowance,
-                "opponent_home_runs": game.opponent_home_runs,
-                "team_home_runs": game.plate_appearances.filter(result=SoftballPlateAppearance.Result.HOME_RUN).count(),
                 "inning_lines": [
                     {"inning": line.inning, "team_runs": line.team_runs, "opponent_runs": line.opponent_runs, "opponent_hits": line.opponent_hits}
                     for line in game.inning_lines.order_by("inning")
