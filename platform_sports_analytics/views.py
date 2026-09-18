@@ -190,6 +190,63 @@ def advanced_stats_for_team(team):
     return output
 
 
+def inning_analytics_for_team(team):
+    games = list(
+        SportsGame.objects.filter(team=team)
+        .exclude(status__in=(SportsGame.Status.CANCELLED, SportsGame.Status.SCHEDULED))
+        .order_by("start_at", "id")
+    )
+    by_inning = {}
+    for game in games:
+        plays = list(game.plate_appearances.all())
+        innings_seen = set()
+        for pa in plays:
+            inning = int(pa.inning or 1)
+            innings_seen.add(inning)
+            bucket = by_inning.setdefault(inning, {"inning": inning, "runs": 0, "hits": 0, "games_reached": 0})
+            bucket["runs"] += int(pa.runs_scored or 0)
+            if pa.result in HIT_RESULTS:
+                bucket["hits"] += 1
+        for inning in innings_seen:
+            by_inning[inning]["games_reached"] += 1
+
+    output = []
+    for inning in sorted(by_inning):
+        bucket = by_inning[inning]
+        reached = bucket["games_reached"]
+        output.append({
+            **bucket,
+            "avg_runs": _ratio(bucket["runs"], reached),
+            "avg_hits": _ratio(bucket["hits"], reached),
+        })
+    game_count = len(games)
+    total_runs = sum(int(game.runs_for or 0) for game in games)
+    total_hits = SoftballPlateAppearance.objects.filter(
+        game__in=games,
+        result__in=HIT_RESULTS,
+    ).count() if games else 0
+    return {
+        "games": game_count,
+        "runs": total_runs,
+        "hits": total_hits,
+        "avg_runs_per_game": _ratio(total_runs, game_count),
+        "avg_hits_per_game": _ratio(total_hits, game_count),
+        "innings": output,
+    }
+
+
+def game_inning_grid(game):
+    buckets = {}
+    for pa in game.plate_appearances.order_by("sequence"):
+        inning = int(pa.inning or 1)
+        bucket = buckets.setdefault(inning, {"inning": inning, "runs": 0, "hits": 0, "plays": 0})
+        bucket["runs"] += int(pa.runs_scored or 0)
+        bucket["plays"] += 1
+        if pa.result in HIT_RESULTS:
+            bucket["hits"] += 1
+    return [buckets[key] for key in sorted(buckets)]
+
+
 def team_summary(rows):
     totals = {
         key: sum(int(row.get(key, 0) or 0) for row in rows)
@@ -246,7 +303,7 @@ class AdvancedTeamStatsView(APIView):
         if team.sport != SportsTeam.Sport.SOFTBALL:
             return Response({"detail": "Advanced analytics are currently available for softball."}, status=status.HTTP_400_BAD_REQUEST)
         players = advanced_stats_for_team(team)
-        return Response({"team": team_summary(players), "players": players})
+        return Response({"team": team_summary(players), "players": players, "inning_analytics": inning_analytics_for_team(team)})
 
 
 class PlayerSprayView(APIView):
@@ -317,7 +374,7 @@ class PublicGameCastView(APIView):
 
     def get(self, request, token):
         share = get_object_or_404(
-            GameCastShare.objects.select_related("game__team__group"),
+            GameCastShare.objects.select_related("game__team__group", "game__rule_set"),
             token=token,
             enabled=True,
         )
@@ -363,6 +420,18 @@ class PublicGameCastView(APIView):
                 "outs": game.outs,
                 "runs_for": game.runs_for,
                 "runs_against": game.runs_against,
+                "home_runs_for": game.plate_appearances.filter(result=SoftballPlateAppearance.Result.HOME_RUN).count(),
+                "home_runs_against": game.home_runs_against,
+                "rule_set": ({
+                    "id": game.rule_set_id,
+                    "name": game.rule_set.name,
+                    "competition_type": game.rule_set.competition_type,
+                    "home_run_rule": game.rule_set.home_run_rule,
+                    "home_run_limit": game.rule_set.home_run_limit,
+                    "home_run_max_ahead": game.rule_set.home_run_max_ahead,
+                    "innings": game.rule_set.innings,
+                } if game.rule_set_id else None),
+                "inning_grid": game_inning_grid(game),
                 "current_batter_order": game.current_batter_order,
                 "current_batter": SportsPlayerSerializer(current_spot.player).data if current_spot else None,
                 "updated_at": game.updated_at,
