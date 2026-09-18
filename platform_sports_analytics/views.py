@@ -392,11 +392,14 @@ class PlayerCardView(APIView):
 
         split_map = {}
         year_map = {}
+        season_map = {}
         for pa in appearances:
             scope = pa.game.game_type
             split_map.setdefault(scope, []).append(pa)
             year = pa.game.start_at.year
             year_map.setdefault(year, []).append(pa)
+            season_label = player.team.season_name or str(year)
+            season_map.setdefault((year, season_label, scope), []).append(pa)
 
         splits = [
             {"scope": scope, **_player_split_row(rows)}
@@ -405,6 +408,19 @@ class PlayerCardView(APIView):
         years = [
             {"year": year, **_player_split_row(rows)}
             for year, rows in sorted(year_map.items(), reverse=True)
+        ]
+        seasons = [
+            {
+                "year": year,
+                "season": season,
+                "scope": scope,
+                "source": "GAMEBOOK",
+                **_player_split_row(rows),
+            }
+            for (year, season, scope), rows in sorted(
+                season_map.items(),
+                key=lambda item: (-item[0][0], item[0][1], item[0][2]),
+            )
         ]
 
         spray = Counter()
@@ -438,6 +454,33 @@ class PlayerCardView(APIView):
             for entry in SoftballStatLedgerEntry.objects.filter(player=player).order_by("-season_name", "scope", "id")
         ]
 
+        field_groups = {
+            "LEFT": {"LEFT_LINE", "LEFT", "INFIELD_LEFT"},
+            "LEFT_CENTER": {"LEFT_CENTER"},
+            "CENTER": {"CENTER", "INFIELD_MIDDLE"},
+            "RIGHT_CENTER": {"RIGHT_CENTER"},
+            "RIGHT": {"RIGHT", "RIGHT_LINE", "INFIELD_RIGHT"},
+        }
+        spray_field = []
+        for label, zones in field_groups.items():
+            count = sum(int(spray.get(zone, 0)) for zone in zones)
+            spray_field.append({
+                "zone": label,
+                "count": count,
+                "pct": round(count / spray_total, 3) if spray_total else 0.0,
+            })
+
+        historical_seasons = [
+            {
+                "year": None,
+                "season": row["season"],
+                "scope": row["scope"],
+                "source": row["source"],
+                **{key: value for key, value in row.items() if key not in ("season", "scope", "source")},
+            }
+            for row in ledger
+        ]
+
         return Response({
             "player": SportsPlayerSerializer(player).data,
             "team": {
@@ -450,10 +493,13 @@ class PlayerCardView(APIView):
             "overall": overall,
             "splits": splits,
             "years": years,
+            "seasons": seasons + historical_seasons,
             "historical": ledger,
             "tendencies": {
+                "sample_size": len(appearances),
                 "spray_total": spray_total,
                 "spray": spray_probabilities,
+                "spray_field": spray_field,
                 "batted_ball": [{"type": key, "count": value} for key, value in ball_types.most_common()],
                 "results": result_probabilities,
             },
