@@ -6,30 +6,36 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from personal_calendar.models import PersonalCalendarEvent
 
 from .models import (
     Collection,
+    CollectionPayment,
     CollectionShare,
     Connection,
     EventMemberResponse,
     GroupEventInvitation,
+    GroupInviteLink,
     GroupMembership,
     GroupMessage,
+    GroupPaymentSettings,
     SocialEvent,
     SocialGroup,
 )
 from .serializers import (
+    CollectionPaymentSerializer,
     CollectionSerializer,
     CollectionShareSerializer,
     ConnectionSerializer,
     EventMemberResponseSerializer,
     GroupEventInvitationSerializer,
+    GroupInviteLinkSerializer,
     GroupMembershipSerializer,
     GroupMessageSerializer,
+    GroupPaymentSettingsSerializer,
     SocialEventSerializer,
     SocialGroupSerializer,
     SocialUserSerializer,
@@ -317,6 +323,37 @@ class SocialGroupViewSet(viewsets.ModelViewSet):
         instance.save(update_fields=("is_active", "updated_at"))
 
 
+    @action(detail=True, methods=["post"], url_path="invite-link")
+    def invite_link(self, request, pk=None):
+        group = self.get_object()
+        if not can_manage_group(request.user, group.id):
+            return Response({"detail": "You do not manage this group."}, status=status.HTTP_403_FORBIDDEN)
+        role = str(request.data.get("role") or GroupMembership.Role.MEMBER).upper()
+        if role not in GroupMembership.Role.values:
+            return Response({"detail": "Invalid group role."}, status=status.HTTP_400_BAD_REQUEST)
+        link = GroupInviteLink.objects.filter(
+            group=group,
+            role=role,
+            is_active=True,
+        ).order_by("-created_at").first()
+        if not link or not link.usable:
+            link = GroupInviteLink.objects.create(group=group, role=role, created_by=request.user)
+        return Response(GroupInviteLinkSerializer(link, context={"request": request}).data)
+
+    @action(detail=True, methods=["get", "patch"], url_path="payment-settings")
+    def payment_settings(self, request, pk=None):
+        group = self.get_object()
+        if not can_manage_group(request.user, group.id):
+            return Response({"detail": "You do not manage this group."}, status=status.HTTP_403_FORBIDDEN)
+        settings_obj, _ = GroupPaymentSettings.objects.get_or_create(group=group)
+        if request.method == "GET":
+            return Response(GroupPaymentSettingsSerializer(settings_obj).data)
+        serializer = GroupPaymentSettingsSerializer(settings_obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        saved = serializer.save(group=group, updated_by=request.user, platform_fee_bps=100)
+        return Response(GroupPaymentSettingsSerializer(saved).data)
+
+
 class GroupMembershipViewSet(viewsets.ModelViewSet):
     serializer_class = GroupMembershipSerializer
     permission_classes = [IsAuthenticated]
@@ -340,16 +377,15 @@ class GroupMembershipViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def accept(self, request, pk=None):
         membership = self.get_object()
-        if membership.user_id != request.user.id:
-            return Response(
-                {"detail": "Only the invited member can accept."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        if membership.status != GroupMembership.Status.INVITED:
-            return Response(
-                {"detail": "This membership invitation is no longer pending."},
-                status=status.HTTP_409_CONFLICT,
-            )
+        if membership.status == GroupMembership.Status.INVITED:
+            if membership.user_id != request.user.id:
+                return Response({"detail": "Only the invited member can accept."}, status=status.HTTP_403_FORBIDDEN)
+        elif membership.status == GroupMembership.Status.REQUESTED:
+            if not can_manage_group(request.user, membership.group_id):
+                return Response({"detail": "A group manager must approve this request."}, status=status.HTTP_403_FORBIDDEN)
+        else:
+            return Response({"detail": "This membership request is no longer pending."}, status=status.HTTP_409_CONFLICT)
+
         membership.status = GroupMembership.Status.ACTIVE
         membership.save(update_fields=("status", "updated_at"))
         events = SocialEvent.objects.filter(
@@ -365,19 +401,82 @@ class GroupMembershipViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def decline(self, request, pk=None):
         membership = self.get_object()
-        if membership.user_id != request.user.id:
-            return Response(
-                {"detail": "Only the invited member can decline."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        if membership.status != GroupMembership.Status.INVITED:
-            return Response(
-                {"detail": "This membership invitation is no longer pending."},
-                status=status.HTTP_409_CONFLICT,
-            )
+        if membership.status == GroupMembership.Status.INVITED:
+            if membership.user_id != request.user.id:
+                return Response({"detail": "Only the invited member can decline."}, status=status.HTTP_403_FORBIDDEN)
+        elif membership.status == GroupMembership.Status.REQUESTED:
+            if not can_manage_group(request.user, membership.group_id):
+                return Response({"detail": "A group manager must decline this request."}, status=status.HTTP_403_FORBIDDEN)
+        else:
+            return Response({"detail": "This membership request is no longer pending."}, status=status.HTTP_409_CONFLICT)
+
         membership.status = GroupMembership.Status.DECLINED
         membership.save(update_fields=("status", "updated_at"))
         return Response(self.get_serializer(membership).data)
+
+
+class GroupInviteLinkViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = GroupInviteLinkSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return GroupInviteLink.objects.filter(
+            group_id__in=managed_group_ids(self.request.user)
+        ).select_related("group", "created_by")
+
+    @action(detail=False, methods=["get"], permission_classes=[AllowAny])
+    def preview(self, request):
+        token = str(request.query_params.get("token") or "").strip()
+        link = GroupInviteLink.objects.filter(token=token).select_related("group", "created_by").first()
+        if not link or not link.usable:
+            return Response({"detail": "This group invitation link is no longer active."}, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            "token": str(link.token),
+            "group": SocialGroupSerializer(link.group).data,
+            "role": link.role,
+            "invited_by": SocialUserSerializer(link.created_by).data,
+        })
+
+    @action(detail=False, methods=["post"], url_path="request-join")
+    @transaction.atomic
+    def request_join(self, request):
+        token = str(request.data.get("token") or "").strip()
+        link = GroupInviteLink.objects.select_for_update().filter(token=token).select_related("group", "created_by").first()
+        if not link or not link.usable:
+            return Response({"detail": "This group invitation link is no longer active."}, status=status.HTTP_404_NOT_FOUND)
+
+        membership = GroupMembership.objects.filter(group=link.group, user=request.user).first()
+        created = False
+        if membership and membership.status == GroupMembership.Status.ACTIVE:
+            return Response({
+                "already_member": True,
+                "membership": GroupMembershipSerializer(membership).data,
+                "route": f"/connect",
+            })
+        if not membership:
+            membership = GroupMembership.objects.create(
+                group=link.group,
+                user=request.user,
+                role=link.role,
+                status=GroupMembership.Status.REQUESTED,
+                invited_by=link.created_by,
+            )
+            created = True
+        else:
+            membership.role = link.role
+            membership.status = GroupMembership.Status.REQUESTED
+            membership.invited_by = link.created_by
+            membership.save(update_fields=("role", "status", "invited_by", "updated_at"))
+
+        if created:
+            link.uses_count += 1
+            link.save(update_fields=("uses_count", "updated_at"))
+        return Response({
+            "requested": True,
+            "membership": GroupMembershipSerializer(membership).data,
+            "group": SocialGroupSerializer(link.group).data,
+            "route": "/connect",
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
 class GroupMessageViewSet(viewsets.ModelViewSet):
@@ -656,3 +755,43 @@ class CollectionShareViewSet(viewsets.ModelViewSet):
                 "Only group management can remove collection shares."
             )
         instance.delete()
+
+
+    @action(detail=True, methods=["post"], url_path="record-payment")
+    @transaction.atomic
+    def record_payment(self, request, pk=None):
+        share = self.get_object()
+        if not can_manage_group(request.user, share.collection.group_id):
+            return Response({"detail": "Only group management can record collection payments."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            amount = int(request.data.get("amount_cents") or max(0, share.amount_due_cents - share.amount_paid_cents))
+        except (TypeError, ValueError):
+            return Response({"detail": "amount_cents must be a whole number."}, status=status.HTTP_400_BAD_REQUEST)
+        if amount <= 0:
+            return Response({"detail": "Payment amount must be greater than zero."}, status=status.HTTP_400_BAD_REQUEST)
+
+        method = str(request.data.get("method") or "").upper()
+        if method not in CollectionPayment.Method.values:
+            return Response({"detail": "Choose a valid payment method."}, status=status.HTTP_400_BAD_REQUEST)
+
+        payment = CollectionPayment.objects.create(
+            collection=share.collection,
+            share=share,
+            payer=share.user,
+            method=method,
+            gross_amount_cents=amount,
+            external_reference=str(request.data.get("external_reference") or "").strip(),
+            created_by=request.user,
+        )
+        share.amount_paid_cents = min(share.amount_due_cents, share.amount_paid_cents + amount)
+        if share.amount_paid_cents >= share.amount_due_cents:
+            share.status = CollectionShare.Status.PAID
+        elif share.amount_paid_cents > 0:
+            share.status = CollectionShare.Status.PARTIAL
+        share.save(update_fields=("amount_paid_cents", "status", "updated_at"))
+        return Response({
+            "payment": CollectionPaymentSerializer(payment).data,
+            "share": CollectionShareSerializer(share).data,
+            "platform_fee_due_cents": payment.platform_fee_cents,
+        }, status=status.HTTP_201_CREATED)
