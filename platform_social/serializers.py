@@ -126,6 +126,7 @@ class SocialGroupSerializer(serializers.ModelSerializer):
 
 class SocialEventSerializer(serializers.ModelSerializer):
     invitation_count = serializers.IntegerField(source="group_invitations.count", read_only=True)
+    flyer_image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = SocialEvent
@@ -133,9 +134,17 @@ class SocialEventSerializer(serializers.ModelSerializer):
             "id", "organizer_group", "created_by", "title", "description", "start_at", "end_at",
             "timezone", "recurrence_rule", "weather_dependent", "weather_note", "venue_name", "address_line1",
             "address_line2", "city", "state", "postal_code", "country", "entry_amount_cents", "payment_due_at",
-            "prizes", "rules", "flyer_url", "status", "version", "invitation_count", "created_at", "updated_at",
+            "prizes", "rules", "flyer_url", "flyer_image", "flyer_image_url", "status", "version", "invitation_count", "created_at", "updated_at",
         )
-        read_only_fields = ("id", "created_by", "version", "invitation_count", "created_at", "updated_at")
+        read_only_fields = ("id", "created_by", "version", "invitation_count", "flyer_image_url", "created_at", "updated_at")
+        extra_kwargs = {"flyer_image": {"write_only": True, "required": False}}
+
+    def get_flyer_image_url(self, obj):
+        if not obj.flyer_image:
+            return ""
+        request = self.context.get("request")
+        url = obj.flyer_image.url
+        return request.build_absolute_uri(url) if request else url
 
     def validate(self, attrs):
         start_at = attrs.get("start_at", getattr(self.instance, "start_at", None))
