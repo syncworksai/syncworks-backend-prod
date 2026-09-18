@@ -150,6 +150,31 @@ class AdvancedSoftballAnalyticsTests(APITestCase):
         self.assertEqual(row["spray"]["RIGHT"], 1)
         self.assertEqual(row["spray"]["LEFT"], 1)
 
+    def test_player_card_returns_year_scope_and_spray_probabilities(self):
+        first = self._pa(1, SoftballPlateAppearance.Result.SINGLE)
+        second = self._pa(2, SoftballPlateAppearance.Result.OUT, outs=1)
+        SoftballPlayContext.objects.create(
+            plate_appearance=first,
+            batted_ball_type=SoftballPlayContext.BattedBallType.LINE,
+            spray_zone=SoftballPlayContext.SprayZone.RIGHT_CENTER,
+            created_by=self.owner,
+        )
+        SoftballPlayContext.objects.create(
+            plate_appearance=second,
+            batted_ball_type=SoftballPlayContext.BattedBallType.GROUND,
+            spray_zone=SoftballPlayContext.SprayZone.RIGHT_CENTER,
+            created_by=self.owner,
+        )
+        response = self.client.get(reverse("sports-player-card", args=[self.player.id]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["overall"]["ab"], 2)
+        self.assertEqual(response.data["overall"]["h"], 1)
+        self.assertEqual(response.data["overall"]["avg"], 0.5)
+        self.assertEqual(response.data["splits"][0]["scope"], "LEAGUE")
+        self.assertEqual(response.data["years"][0]["year"], self.game.start_at.year)
+        self.assertEqual(response.data["tendencies"]["spray"][0]["zone"], "RIGHT_CENTER")
+        self.assertEqual(response.data["tendencies"]["spray"][0]["pct"], 1.0)
+
     def test_manager_can_attach_context_to_existing_plate_appearance(self):
         pa = self._pa(1, SoftballPlateAppearance.Result.OUT, outs=1)
         response = self.client.post(
