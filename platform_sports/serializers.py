@@ -6,6 +6,7 @@ from platform_social.serializers import SocialUserSerializer
 from .models import (
     SoftballPlateAppearance,
     SportsGame,
+    SportsGameInning,
     SportsLineupSpot,
     SportsPlayer,
     SportsTeam,
@@ -78,11 +79,34 @@ class SoftballPlateAppearanceSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "sequence", "created_by", "created_at")
 
 
+class SportsGameInningSerializer(serializers.ModelSerializer):
+    team_hits = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SportsGameInning
+        fields = ("id", "game", "inning", "team_runs", "opponent_runs", "team_hits", "opponent_hits", "created_at", "updated_at")
+        read_only_fields = ("id", "team_runs", "team_hits", "created_at", "updated_at")
+
+    def get_team_hits(self, obj):
+        return obj.game.plate_appearances.filter(
+            inning=obj.inning,
+            result__in=(
+                SoftballPlateAppearance.Result.SINGLE,
+                SoftballPlateAppearance.Result.DOUBLE,
+                SoftballPlateAppearance.Result.TRIPLE,
+                SoftballPlateAppearance.Result.HOME_RUN,
+            ),
+        ).count()
+
+
 class SportsGameSerializer(serializers.ModelSerializer):
     team_name = serializers.CharField(source="team.group.name", read_only=True)
     lineup_spots = SportsLineupSpotSerializer(many=True, read_only=True)
     plate_appearance_count = serializers.IntegerField(source="plate_appearances.count", read_only=True)
     current_batter = serializers.SerializerMethodField()
+    inning_lines = SportsGameInningSerializer(many=True, read_only=True)
+    team_home_runs = serializers.SerializerMethodField()
+    home_run_status = serializers.SerializerMethodField()
     home_runs_for = serializers.SerializerMethodField()
     home_run_allowed = serializers.SerializerMethodField()
     rule_set_detail = serializers.SerializerMethodField()
@@ -93,10 +117,11 @@ class SportsGameSerializer(serializers.ModelSerializer):
             "id", "team", "team_name", "social_event", "game_type", "opponent_name",
             "tournament_name", "round_label", "home_away", "start_at", "end_at", "timezone",
             "venue_name", "address_line1", "city", "state", "notes", "innings_scheduled",
+            "home_run_rule", "home_run_limit", "home_run_one_up_allowance", "opponent_home_runs", "max_eh",
             "rule_set", "rule_set_detail", "home_runs_for", "home_runs_against", "home_run_allowed",
             "status", "current_inning", "outs", "current_batter_order", "current_batter",
             "runs_for", "runs_against", "started_at", "ended_at", "created_by",
-            "plate_appearance_count", "lineup_spots", "created_at", "updated_at",
+            "plate_appearance_count", "lineup_spots", "inning_lines", "team_home_runs", "home_run_status", "created_at", "updated_at",
         )
         read_only_fields = (
             "id", "social_event", "status", "current_inning", "outs", "current_batter_order",
@@ -140,3 +165,18 @@ class SportsGameSerializer(serializers.ModelSerializer):
             None,
         )
         return SportsPlayerSerializer(spot.player).data if spot else None
+
+    def get_team_home_runs(self, obj):
+        return obj.plate_appearances.filter(result=SoftballPlateAppearance.Result.HOME_RUN).count()
+
+    def get_home_run_status(self, obj):
+        team_hr = self.get_team_home_runs(obj)
+        if obj.home_run_rule == SportsGame.HomeRunRule.UNLIMITED:
+            return {"allowed": True, "team": team_hr, "opponent": obj.opponent_home_runs, "remaining": None}
+        if obj.home_run_rule == SportsGame.HomeRunRule.FIXED:
+            limit = int(obj.home_run_limit or 0)
+            return {"allowed": team_hr < limit, "team": team_hr, "opponent": obj.opponent_home_runs, "remaining": max(0, limit - team_hr)}
+        allowance = int(obj.home_run_one_up_allowance or 1)
+        ceiling = int(obj.opponent_home_runs or 0) + allowance
+        return {"allowed": team_hr < ceiling, "team": team_hr, "opponent": obj.opponent_home_runs, "remaining": max(0, ceiling - team_hr)}
+
