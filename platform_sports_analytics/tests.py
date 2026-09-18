@@ -172,8 +172,13 @@ class AdvancedSoftballAnalyticsTests(APITestCase):
         self.assertEqual(response.data["overall"]["avg"], 0.5)
         self.assertEqual(response.data["splits"][0]["scope"], "LEAGUE")
         self.assertEqual(response.data["years"][0]["year"], self.game.start_at.year)
+        self.assertEqual(response.data["seasons"][0]["season"], "Fall 2026")
+        self.assertEqual(response.data["seasons"][0]["scope"], "LEAGUE")
         self.assertEqual(response.data["tendencies"]["spray"][0]["zone"], "RIGHT_CENTER")
         self.assertEqual(response.data["tendencies"]["spray"][0]["pct"], 1.0)
+        self.assertEqual(response.data["tendencies"]["spray_field"][3]["zone"], "RIGHT_CENTER")
+        self.assertEqual(response.data["tendencies"]["spray_field"][3]["pct"], 1.0)
+        self.assertEqual(response.data["tendencies"]["sample_size"], 2)
 
     def test_manager_can_attach_context_to_existing_plate_appearance(self):
         pa = self._pa(1, SoftballPlateAppearance.Result.OUT, outs=1)
