@@ -625,6 +625,21 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         fresh = self.get_queryset().get(pk=game.pk)
         return Response(self.get_serializer(fresh).data)
 
+    @action(detail=True, methods=["post"], url_path="defensive-position")
+    def defensive_position(self, request, pk=None):
+        game = self.get_object()
+        if not can_manage_team(request.user, game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            player_id = int(request.data.get("player"))
+        except (TypeError, ValueError):
+            return Response({"detail": "Choose a lineup player."}, status=status.HTTP_400_BAD_REQUEST)
+        spot = get_object_or_404(SportsLineupSpot, game=game, player_id=player_id)
+        spot.defensive_position = str(request.data.get("defensive_position") or "").strip()[:40]
+        spot.save(update_fields=("defensive_position", "updated_at"))
+        fresh = self.get_queryset().get(pk=game.pk)
+        return Response(self.get_serializer(fresh).data)
+
     @action(detail=True, methods=["post"])
     def start(self, request, pk=None):
         game = self.get_object()
