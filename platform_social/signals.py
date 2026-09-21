@@ -1,7 +1,8 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from personal_calendar.models import PersonalCalendarEvent, PersonalCalendarEventAudit\nfrom user_accounts.models import Notification
+from personal_calendar.models import PersonalCalendarEvent, PersonalCalendarEventAudit
+from user_accounts.models import Notification
 
 from .models import EventMemberResponse, GroupEventInvitation, GroupMembership, SocialEvent
 
@@ -20,7 +21,9 @@ def _calendar_description(event):
         details.append(f"Prizes: {event.prizes}")
     if event.rules:
         details.append(f"Rules: {event.rules}")
-    return "\n\n".join(value for value in details if value)
+    return "
+
+".join(value for value in details if value)
 
 
 def _calendar_defaults(event, existing=None):
