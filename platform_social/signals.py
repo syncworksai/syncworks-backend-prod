@@ -1,7 +1,7 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
-from personal_calendar.models import PersonalCalendarEvent, PersonalCalendarEventAudit
+from personal_calendar.models import PersonalCalendarEvent, PersonalCalendarEventAudit\nfrom user_accounts.models import Notification
 
 from .models import EventMemberResponse, GroupEventInvitation, GroupMembership, SocialEvent
 
