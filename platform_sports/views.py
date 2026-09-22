@@ -1135,6 +1135,9 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         game.current_batter_order = lineup[0].batting_order
         game.save(update_fields=("status", "started_at", "current_inning", "outs", "current_batter_order", "updated_at"))
         sync_game_social_event(game)
+        if game.gamecast_enabled:
+            from .fan_notifications import notify_fans_gamecast_live
+            notify_fans_gamecast_live(game)
         return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
 
     @action(detail=True, methods=["post"])
@@ -1292,6 +1295,9 @@ class SportsGameViewSet(viewsets.ModelViewSet):
                     changed.append(field)
             if changed:
                 game.save(update_fields=tuple(dict.fromkeys(changed + ["updated_at"])))
+                if game.gamecast_enabled and game.status == SportsGame.Status.LIVE:
+                    from .fan_notifications import notify_fans_gamecast_live
+                    notify_fans_gamecast_live(game)
         return Response({
             "enabled": game.gamecast_enabled,
             "token": str(game.gamecast_token),
