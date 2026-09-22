@@ -1084,6 +1084,10 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         game = self.get_object()
         if not can_score_team(request.user, game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        if game.status != SportsGame.Status.SCHEDULED:
+            return Response({
+                "detail": "The batting order is locked after the first pitch. Use Game Book substitutions or defensive changes to protect recorded stats."
+            }, status=status.HTTP_409_CONFLICT)
         spots = request.data.get("spots")
         if not isinstance(spots, list):
             return Response({"detail": "spots must be a list."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1091,6 +1095,15 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         orders = [row.get("batting_order") for row in spots]
         if len(player_ids) != len(set(player_ids)) or len(orders) != len(set(orders)):
             return Response({"detail": "Players and batting-order positions must be unique."}, status=status.HTTP_400_BAD_REQUEST)
+        field_positions = [
+            str(row.get("defensive_position") or "").strip().upper()
+            for row in spots
+            if str(row.get("defensive_position") or "").strip().upper()
+            not in ("", "EH", "EH1", "EH2", "DH")
+        ]
+        if len(field_positions) != len(set(field_positions)):
+            return Response({"detail": "Only one defender may occupy each field position. Use EH for additional hitters."},
+                            status=status.HTTP_400_BAD_REQUEST)
         players = {p.id: p for p in SportsPlayer.objects.filter(team=game.team, id__in=player_ids, is_active=True)}
         if len(players) != len(player_ids):
             return Response({"detail": "Every lineup player must be active on this team."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1439,6 +1452,8 @@ class SportsGameViewSet(viewsets.ModelViewSet):
                 "group_id": group.id,
                 "team_name": group.name,
                 "opponent_name": game.opponent_name,
+                "start_at": game.start_at,
+                "venue_name": game.venue_name,
                 "status": game.status,
                 "current_inning": game.current_inning,
                 "outs": game.outs,
