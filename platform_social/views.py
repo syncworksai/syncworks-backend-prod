@@ -1,6 +1,8 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import check_password, make_password
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -361,6 +363,23 @@ class SocialGroupViewSet(viewsets.ModelViewSet):
         saved = serializer.save(user=request.user)
         return Response(UserPaymentProfileSerializer(saved).data)
 
+    @action(detail=True, methods=["post"], url_path="player-password")
+    def player_password(self, request, pk=None):
+        group = self.get_object()
+        is_creator = group.created_by_id == request.user.id
+        is_owner = GroupMembership.objects.filter(
+            group=group, user=request.user,
+            role=GroupMembership.Role.OWNER, status=GroupMembership.Status.ACTIVE,
+        ).exists()
+        if not (is_creator or is_owner):
+            return Response({"detail": "Only the group creator or owner can set the player password."}, status=status.HTTP_403_FORBIDDEN)
+        password = str(request.data.get("password") or "")
+        if password and (len(password) < 5 or len(password) > 64):
+            return Response({"detail": "Choose a password between 5 and 64 characters."}, status=status.HTTP_400_BAD_REQUEST)
+        group.player_join_password_hash = make_password(password) if password else ""
+        group.save(update_fields=("player_join_password_hash", "updated_at"))
+        return Response({"has_player_join_password": bool(password)})
+
     @action(detail=True, methods=["post"], url_path="invite-link")
     def invite_link(self, request, pk=None):
         group = self.get_object()
@@ -535,6 +554,114 @@ class GroupInviteLinkViewSet(viewsets.ReadOnlyModelViewSet):
             "group": SocialGroupSerializer(link.group).data,
             "role": link.role,
             "invited_by": SocialUserSerializer(link.created_by).data,
+        })
+
+    @action(detail=False, methods=["post"], url_path="join-player")
+    @transaction.atomic
+    def join_player(self, request):
+        token = str(request.data.get("token") or "").strip()
+        link = GroupInviteLink.objects.select_for_update().filter(token=token).select_related("group", "created_by").first()
+        if not link or not link.usable:
+            return Response({"detail": "This team invitation link is no longer active."}, status=status.HTTP_404_NOT_FOUND)
+        group = link.group
+        if not group.player_join_password_hash:
+            return Response({"detail": "The group owner must configure a player password in group settings."}, status=status.HTTP_409_CONFLICT)
+        password = str(request.data.get("password") or "")
+        throttle_key = f"group-player-secret:{group.id}:{request.user.id}"
+        failed_count = cache.get(throttle_key, 0)
+        if failed_count >= 6:
+            return Response({"detail": "Too many incorrect passwords. Try again in 15 minutes."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        if not check_password(password, group.player_join_password_hash):
+            cache.set(throttle_key, failed_count + 1, timeout=900)
+            return Response({"detail": "Incorrect player password.", "attempts_remaining": max(0, 5 - failed_count)}, status=status.HTTP_403_FORBIDDEN)
+        cache.delete(throttle_key)
+        membership = GroupMembership.objects.filter(group=group, user=request.user).first()
+        if membership and membership.status == GroupMembership.Status.ACTIVE:
+            return Response({"joined": True, "already_member": True, "route": f"/connect/groups/{group.id}/sports"})
+        if not membership:
+            GroupMembership.objects.create(
+                group=group, user=request.user, role=GroupMembership.Role.MEMBER,
+                status=GroupMembership.Status.ACTIVE, invited_by=link.created_by,
+            )
+            link.uses_count += 1
+            link.save(update_fields=("uses_count", "updated_at"))
+        else:
+            # Never overwrite an existing delegated role during re-acceptance.
+            membership.status = GroupMembership.Status.ACTIVE
+            membership.invited_by = link.created_by
+            membership.save(update_fields=("status", "invited_by", "updated_at"))
+        return Response({"joined": True, "route": f"/connect/groups/{group.id}/sports"})
+
+    @action(detail=False, methods=["post"], url_path="follow-fan")
+    @transaction.atomic
+    def follow_fan(self, request):
+        token = str(request.data.get("token") or "").strip()
+        link = GroupInviteLink.objects.filter(token=token).select_related("group").first()
+        if not link or not link.usable:
+            return Response({"detail": "This group invitation link is no longer active."}, status=status.HTTP_404_NOT_FOUND)
+        group = link.group
+        if not group.allow_followers:
+            return Response({"detail": "This group is not accepting fans."}, status=status.HTTP_409_CONFLICT)
+        email_updates = request.data.get("email_updates", True)
+        if not isinstance(email_updates, bool):
+            return Response({"detail": "email_updates must be true or false."}, status=status.HTTP_400_BAD_REQUEST)
+        follow, created = GroupFollow.objects.get_or_create(group=group, user=request.user)
+        follow.gamecast_email_updates = email_updates
+        follow.save(update_fields=("gamecast_email_updates",))
+        return Response({
+            "following": True, "email_updates": follow.gamecast_email_updates,
+            "route": f"/social/fan/{link.token}",
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=False, methods=["post"], url_path="unfollow-fan")
+    def unfollow_fan(self, request):
+        token = str(request.data.get("token") or "").strip()
+        link = GroupInviteLink.objects.filter(token=token).select_related("group").first()
+        if not link:
+            return Response({"detail": "Invalid group link."}, status=status.HTTP_404_NOT_FOUND)
+        GroupFollow.objects.filter(group=link.group, user=request.user).delete()
+        return Response({"following": False, "email_updates": False})
+
+    @action(detail=False, methods=["get"], url_path="fan-feed", permission_classes=[AllowAny])
+    def fan_feed(self, request):
+        from platform_sports.models import SportsGame
+        token = str(request.query_params.get("token") or "").strip()
+        link = GroupInviteLink.objects.filter(token=token).select_related("group").first()
+        if not link or not link.usable:
+            return Response({"detail": "This team invitation link is no longer active."}, status=status.HTTP_404_NOT_FOUND)
+        group = link.group
+        if not group.allow_followers:
+            return Response({"detail": "This team is not accepting fans."}, status=status.HTTP_409_CONFLICT)
+        games = SportsGame.objects.filter(team__group=group).exclude(
+            status=SportsGame.Status.CANCELLED
+        ).order_by("-start_at")[:40]
+        now = timezone.now()
+        items = []
+        for game in games:
+            if game.status == SportsGame.Status.FINAL and game.start_at < now - timedelta(days=14):
+                continue
+            items.append({
+                "id": game.id,
+                "opponent_name": game.opponent_name,
+                "start_at": game.start_at,
+                "status": game.status,
+                "runs_for": game.runs_for,
+                "runs_against": game.runs_against,
+                "gamecast_url": (
+                    f"/gamecast/{game.gamecast_token}" if game.gamecast_enabled else ""
+                ),
+            })
+        following = False
+        email_updates = False
+        if request.user.is_authenticated:
+            follow = GroupFollow.objects.filter(group=group, user=request.user).first()
+            following = bool(follow)
+            email_updates = bool(follow and follow.gamecast_email_updates)
+        return Response({
+            "group": {"id": group.id, "name": group.name, "logo_url": group.logo_image.url if group.logo_image else group.logo_url},
+            "games": items,
+            "following": following, "email_updates": email_updates,
+            "invite_url": f"/social/invite/{link.token}",
         })
 
     @action(detail=False, methods=["post"], url_path="request-join")
