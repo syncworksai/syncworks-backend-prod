@@ -21,9 +21,7 @@ def _calendar_description(event):
         details.append(f"Prizes: {event.prizes}")
     if event.rules:
         details.append(f"Rules: {event.rules}")
-    return "
-
-".join(value for value in details if value)
+    return "\n\n".join(value for value in details if value)
 
 
 def _calendar_defaults(event, existing=None):
