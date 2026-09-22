@@ -89,3 +89,23 @@ class PregameLineupWatchLinkTests(APITestCase):
         replacement=self.client.post(self.base+"set-lineup/", {"spots":spots}, format="json")
         self.assertEqual(replacement.status_code, 409)
         self.assertIn("substitutions", replacement.data["detail"])
+
+    def test_shared_gamecast_link_is_accessible_to_guests_only_when_enabled(self):
+        url = "/api/v1/sports/games/gamecast-public/"
+        token = str(self.game.gamecast_token)
+        self.client.force_authenticate(user=None)
+        hidden = self.client.get(url, {"token": token})
+        self.assertEqual(hidden.status_code, 404)
+        self.client.force_authenticate(self.owner)
+        self.assertEqual(self.client.post(
+            self.base+"gamecast/", {"enabled": True}, format="json"
+        ).status_code, 200)
+        self.client.force_authenticate(user=None)
+        visible = self.client.get(url, {"token": token})
+        self.assertEqual(visible.status_code, 200)
+        self.assertEqual(visible.data["game"]["status"], "SCHEDULED")
+        self.assertNotIn("email", visible.data["game"])
+        self.client.force_authenticate(self.owner)
+        self.client.post(self.base+"gamecast/", {"enabled": False}, format="json")
+        self.client.force_authenticate(user=None)
+        self.assertEqual(self.client.get(url, {"token": token}).status_code, 404)
