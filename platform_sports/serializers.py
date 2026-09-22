@@ -135,13 +135,14 @@ class SportsGameSerializer(serializers.ModelSerializer):
             "tournament_name", "round_label", "home_away", "start_at", "end_at", "timezone",
             "venue_name", "address_line1", "city", "state", "notes", "innings_scheduled",
             "rule_set", "rule_set_detail", "home_runs_for", "home_runs_against", "home_run_allowed",
+            "gamecast_enabled", "gamecast_token", "gamecast_show_batter", "gamecast_show_recent_plays",
             "status", "current_inning", "outs", "current_batter_order", "current_batter",
             "runs_for", "runs_against", "started_at", "ended_at", "created_by",
             "plate_appearance_count", "lineup_spots", "substitutions", "bench_players", "can_manage", "inning_lines", "created_at", "updated_at",
         )
         read_only_fields = (
             "id", "social_event", "social_event_detail", "status", "current_inning", "outs", "current_batter_order",
-            "current_batter", "runs_for", "runs_against", "home_runs_for", "home_run_allowed",
+            "current_batter", "runs_for", "runs_against", "home_runs_for", "home_run_allowed", "gamecast_token",
             "rule_set_detail", "started_at", "ended_at", "created_by",
             "plate_appearance_count", "lineup_spots", "substitutions", "bench_players", "can_manage", "created_at", "updated_at",
         )
