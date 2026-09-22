@@ -455,6 +455,17 @@ class GroupMembershipViewSet(viewsets.ModelViewSet):
         role = str(request.data.get("role") or "").upper().strip()
         if role not in GroupMembership.Role.values:
             return Response({"detail": "Invalid group role."}, status=status.HTTP_400_BAD_REQUEST)
+        # Managers may delegate scoring, but cannot grant themselves director access
+        # or change an existing director's role.
+        actor_role = GroupMembership.objects.filter(
+            group_id=membership.group_id,
+            user=request.user,
+            status=GroupMembership.Status.ACTIVE,
+        ).values_list("role", flat=True).first()
+        if actor_role == GroupMembership.Role.MANAGER and (
+            role == GroupMembership.Role.DIRECTOR or membership.role == GroupMembership.Role.DIRECTOR
+        ):
+            return Response({"detail": "Only an owner or director can assign or change director access."}, status=status.HTTP_403_FORBIDDEN)
         if membership.role == GroupMembership.Role.OWNER and role != GroupMembership.Role.OWNER:
             return Response({"detail": "Transfer group ownership separately before changing the owner role."}, status=status.HTTP_409_CONFLICT)
         if role == GroupMembership.Role.OWNER and membership.role != GroupMembership.Role.OWNER:
