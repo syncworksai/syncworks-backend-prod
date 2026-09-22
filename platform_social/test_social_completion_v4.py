@@ -10,8 +10,8 @@ User = get_user_model()
 
 class GroupFollowCategoryTests(APITestCase):
     def setUp(self):
-        self.owner = User.objects.create_user(email="owner@example.com", password="test-pass-123")
-        self.fan = User.objects.create_user(email="fan@example.com", password="test-pass-123")
+        self.owner = User.objects.create_user(username="owner@example.com", email="owner@example.com", password="test-pass-123")
+        self.fan = User.objects.create_user(username="fan@example.com", email="fan@example.com", password="test-pass-123")
         self.group = SocialGroup.objects.create(
             name="Test Softball",
             kind=SocialGroup.Kind.TEAM,
