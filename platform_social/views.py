@@ -386,8 +386,8 @@ class SocialGroupViewSet(viewsets.ModelViewSet):
         if not can_manage_group(request.user, group.id):
             return Response({"detail": "You do not manage this group."}, status=status.HTTP_403_FORBIDDEN)
         role = str(request.data.get("role") or GroupMembership.Role.MEMBER).upper()
-        if role not in GroupMembership.Role.values:
-            return Response({"detail": "Invalid group role."}, status=status.HTTP_400_BAD_REQUEST)
+        if role != GroupMembership.Role.MEMBER:
+            return Response({"detail": "Shared links grant member access only. Use a direct invitation for elevated roles."}, status=status.HTTP_400_BAD_REQUEST)
         link = GroupInviteLink.objects.filter(
             group=group,
             role=role,
@@ -551,7 +551,7 @@ class GroupInviteLinkViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({"detail": "This group invitation link is no longer active."}, status=status.HTTP_404_NOT_FOUND)
         return Response({
             "token": str(link.token),
-            "group": SocialGroupSerializer(link.group).data,
+            "group": SocialGroupSerializer(link.group, context={"request": request}).data,
             "role": link.role,
             "invited_by": SocialUserSerializer(link.created_by).data,
         })
@@ -586,10 +586,11 @@ class GroupInviteLinkViewSet(viewsets.ReadOnlyModelViewSet):
             link.uses_count += 1
             link.save(update_fields=("uses_count", "updated_at"))
         else:
-            # Never overwrite an existing delegated role during re-acceptance.
+            # Password access never activates an unapproved privileged invitation.
+            membership.role = GroupMembership.Role.MEMBER
             membership.status = GroupMembership.Status.ACTIVE
             membership.invited_by = link.created_by
-            membership.save(update_fields=("status", "invited_by", "updated_at"))
+            membership.save(update_fields=("role", "status", "invited_by", "updated_at"))
         return Response({"joined": True, "route": f"/connect/groups/{group.id}/sports"})
 
     @action(detail=False, methods=["post"], url_path="follow-fan")
@@ -658,7 +659,7 @@ class GroupInviteLinkViewSet(viewsets.ReadOnlyModelViewSet):
             following = bool(follow)
             email_updates = bool(follow and follow.gamecast_email_updates)
         return Response({
-            "group": {"id": group.id, "name": group.name, "logo_url": group.logo_image.url if group.logo_image else group.logo_url},
+            "group": {"id": group.id, "name": group.name, "logo_url": request.build_absolute_uri(group.logo_image.url) if group.logo_image else group.logo_url},
             "games": items,
             "following": following, "email_updates": email_updates,
             "invite_url": f"/social/invite/{link.token}",
@@ -684,13 +685,13 @@ class GroupInviteLinkViewSet(viewsets.ReadOnlyModelViewSet):
             membership = GroupMembership.objects.create(
                 group=link.group,
                 user=request.user,
-                role=link.role,
+                role=GroupMembership.Role.MEMBER,
                 status=GroupMembership.Status.REQUESTED,
                 invited_by=link.created_by,
             )
             created = True
         else:
-            membership.role = link.role
+            membership.role = GroupMembership.Role.MEMBER
             membership.status = GroupMembership.Status.REQUESTED
             membership.invited_by = link.created_by
             membership.save(update_fields=("role", "status", "invited_by", "updated_at"))
@@ -701,7 +702,7 @@ class GroupInviteLinkViewSet(viewsets.ReadOnlyModelViewSet):
         return Response({
             "requested": True,
             "membership": GroupMembershipSerializer(membership).data,
-            "group": SocialGroupSerializer(link.group).data,
+            "group": SocialGroupSerializer(link.group, context={"request": request}).data,
             "route": "/connect",
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
