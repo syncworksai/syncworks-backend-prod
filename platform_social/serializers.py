@@ -8,12 +8,14 @@ from .models import (
     Connection,
     EventMemberResponse,
     GroupEventInvitation,
+    GroupFollow,
     GroupInviteLink,
     GroupMessage,
     GroupMembership,
     GroupPaymentSettings,
     SocialEvent,
     SocialGroup,
+    UserPaymentProfile,
 )
 
 User = get_user_model()
@@ -113,15 +115,42 @@ class GroupMessageSerializer(serializers.ModelSerializer):
 
 
 class SocialGroupSerializer(serializers.ModelSerializer):
-    member_count = serializers.IntegerField(source="memberships.count", read_only=True)
+    member_count = serializers.SerializerMethodField()
+    follower_count = serializers.SerializerMethodField()
+    is_following = serializers.SerializerMethodField()
 
     class Meta:
         model = SocialGroup
         fields = (
-            "id", "name", "description", "kind", "visibility", "parent", "created_by",
-            "city", "state", "logo_url", "is_active", "member_count", "created_at", "updated_at",
+            "id", "name", "description", "kind", "category", "visibility", "allow_followers",
+            "parent", "created_by", "city", "state", "logo_url", "is_active",
+            "member_count", "follower_count", "is_following", "created_at", "updated_at",
         )
-        read_only_fields = ("id", "created_by", "member_count", "created_at", "updated_at")
+        read_only_fields = (
+            "id", "created_by", "member_count", "follower_count", "is_following", "created_at", "updated_at",
+        )
+
+    def get_member_count(self, obj):
+        return obj.memberships.filter(status=GroupMembership.Status.ACTIVE).count()
+
+    def get_follower_count(self, obj):
+        return obj.followers.count()
+
+    def get_is_following(self, obj):
+        request = self.context.get("request")
+        if not request or not getattr(request, "user", None) or not request.user.is_authenticated:
+            return False
+        return obj.followers.filter(user=request.user).exists()
+
+
+class UserPaymentProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserPaymentProfile
+        fields = (
+            "id", "cash_app_url", "cash_app_label", "venmo_url", "venmo_label",
+            "zelle_instructions", "stripe_payment_link", "created_at", "updated_at",
+        )
+        read_only_fields = ("id", "created_at", "updated_at")
 
 
 class SocialEventSerializer(serializers.ModelSerializer):
