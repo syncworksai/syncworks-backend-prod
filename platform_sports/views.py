@@ -642,6 +642,60 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
                 })
         serializer.save()
 
+    @action(detail=False, methods=["post"], url_path="join-mine")
+    @transaction.atomic
+    def join_mine(self, request):
+        """Allow an approved group member to claim a matching manual roster entry or create their own."""
+        from .ops_models import SportsPlayerProfile
+
+        try:
+            team_id = int(request.data.get("team") or 0)
+        except (TypeError, ValueError):
+            return Response({"detail": "Choose a valid team."}, status=status.HTTP_400_BAD_REQUEST)
+        team = get_object_or_404(SportsTeam.objects.select_for_update(), pk=team_id)
+        if not GroupMembership.objects.filter(
+            group_id=team.group_id,
+            user=request.user,
+            status=GroupMembership.Status.ACTIVE,
+        ).exists():
+            return Response({"detail": "Your team invitation must be approved before joining the roster."}, status=status.HTTP_403_FORBIDDEN)
+
+        email = str(getattr(request.user, "email", "") or "").strip().lower()
+        if not email:
+            return Response({"detail": "Add your account email before joining the roster."}, status=status.HTTP_400_BAD_REQUEST)
+        linked = SportsPlayer.objects.filter(team=team, user=request.user).first()
+        if linked:
+            if not linked.is_active:
+                return Response({"detail": "Ask a manager to reactivate your archived roster entry."}, status=status.HTTP_409_CONFLICT)
+            return Response({"player": self.get_serializer(linked).data, "already_linked": True, "matched_existing": True})
+
+        if SportsPlayer.objects.filter(
+            team=team, manager_profile__email__iexact=email, user__isnull=False
+        ).exists():
+            return Response({"detail": "This email is already associated with a linked player. Ask your manager to review the roster."}, status=status.HTTP_409_CONFLICT)
+
+        matches = list(SportsPlayer.objects.select_for_update().filter(
+            team=team, user__isnull=True, is_active=True, manager_profile__email__iexact=email
+        ).order_by("id")[:2])
+        if len(matches) > 1:
+            return Response({"detail": "Multiple roster entries use this email. Ask your manager to select your player card."}, status=status.HTTP_409_CONFLICT)
+
+        matched_existing = bool(matches)
+        if matched_existing:
+            player = matches[0]
+            player.user = request.user
+            player.save(update_fields=("user", "updated_at"))
+        else:
+            full_name = f"{request.user.first_name} {request.user.last_name}".strip() or email.partition("@")[0]
+            player = SportsPlayer.objects.create(
+                team=team, user=request.user, display_name=full_name, created_by=request.user
+            )
+        SportsPlayerProfile.objects.get_or_create(player=player, defaults={"email": email})
+        return Response(
+            {"player": self.get_serializer(player).data, "already_linked": False, "matched_existing": matched_existing},
+            status=status.HTTP_200_OK if matched_existing else status.HTTP_201_CREATED,
+        )
+
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def invite(self, request, pk=None):
@@ -811,7 +865,7 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
             player.display_name = f"{request.user.first_name} {request.user.last_name}".strip() or email
         player.save(update_fields=("user", "display_name", "updated_at"))
 
-        GroupMembership.objects.update_or_create(
+        membership, _ = GroupMembership.objects.get_or_create(
             group=player.team.group,
             user=request.user,
             defaults={
@@ -820,6 +874,9 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
                 "invited_by": invite.invited_by,
             },
         )
+        if membership.status != GroupMembership.Status.ACTIVE:
+            membership.status = GroupMembership.Status.ACTIVE
+            membership.save(update_fields=("status", "updated_at"))
         team_events = SocialEvent.objects.filter(
             organizer_group=player.team.group,
             status__in=(SocialEvent.Status.PUBLISHED, SocialEvent.Status.DRAFT),
