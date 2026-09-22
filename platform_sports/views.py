@@ -1200,6 +1200,142 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         game.save(update_fields=("home_runs_against", "updated_at"))
         return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
 
+    @action(detail=True, methods=["get", "post"], url_path="gamecast")
+    def gamecast(self, request, pk=None):
+        game = self.get_object()
+        if not can_manage_team(request.user, game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        if request.method == "POST":
+            allowed = ("gamecast_enabled", "gamecast_show_batter", "gamecast_show_recent_plays")
+            changed = []
+            aliases = {
+                "enabled": "gamecast_enabled",
+                "show_batter": "gamecast_show_batter",
+                "show_recent_plays": "gamecast_show_recent_plays",
+            }
+            for source, target in aliases.items():
+                if source in request.data:
+                    setattr(game, target, bool(request.data[source]))
+                    changed.append(target)
+            for field in allowed:
+                if field in request.data:
+                    setattr(game, field, bool(request.data[field]))
+                    changed.append(field)
+            if changed:
+                game.save(update_fields=tuple(dict.fromkeys(changed + ["updated_at"])))
+        return Response({
+            "enabled": game.gamecast_enabled,
+            "token": str(game.gamecast_token),
+            "show_batter": game.gamecast_show_batter,
+            "show_recent_plays": game.gamecast_show_recent_plays,
+            "url_path": f"/gamecast/{game.gamecast_token}",
+        })
+
+    @action(detail=False, methods=["get"], url_path="gamecast-public")
+    def gamecast_public(self, request):
+        token = request.query_params.get("token")
+        game = get_object_or_404(
+            SportsGame.objects.select_related("team__group", "rule_set").prefetch_related(
+                "lineup_spots__player", "inning_lines", "plate_appearances__player"
+            ),
+            gamecast_token=token,
+        )
+        if not game.gamecast_enabled:
+            return Response({"detail": "This GameCast is not currently shared."}, status=status.HTTP_404_NOT_FOUND)
+        plays = list(game.plate_appearances.order_by("sequence").select_related("player"))
+        inning_grid = []
+        lines = {row.inning: row for row in game.inning_lines.all()}
+        max_inning = max([game.current_inning, game.innings_scheduled, *lines.keys()], default=game.innings_scheduled)
+        for inning in range(1, max_inning + 1):
+            line = lines.get(inning)
+            game_plays = [pa for pa in plays if int(pa.inning or 1) == inning]
+            inning_grid.append({
+                "inning": inning,
+                "runs": sum(int(pa.runs_scored or 0) for pa in game_plays),
+                "hits": sum(1 for pa in game_plays if pa.result in HIT_RESULTS),
+                "opponent_runs": int(line.opponent_runs or 0) if line else 0,
+                "opponent_hits": int(line.opponent_hits or 0) if line else 0,
+            })
+        current_batter = None
+        if game.gamecast_show_batter:
+            spot = game.lineup_spots.filter(batting_order=game.current_batter_order).select_related("player").first()
+            if spot:
+                current_batter = SportsPlayerSerializer(spot.player).data
+        recent = []
+        if game.gamecast_show_recent_plays:
+            for pa in plays[-12:]:
+                recent.append({
+                    "id": pa.id,
+                    "player": pa.player.display_name,
+                    "inning": pa.inning,
+                    "result": pa.result,
+                    "result_label": pa.get_result_display(),
+                    "outs_recorded": pa.outs_recorded,
+                    "rbi": pa.rbi,
+                    "runs_scored": pa.runs_scored,
+                })
+        group = game.team.group
+        return Response({
+            "game": {
+                "id": game.id,
+                "group_id": group.id,
+                "team_name": group.name,
+                "opponent_name": game.opponent_name,
+                "status": game.status,
+                "current_inning": game.current_inning,
+                "outs": game.outs,
+                "runs_for": game.runs_for,
+                "runs_against": game.runs_against,
+                "current_batter": current_batter,
+                "inning_grid": inning_grid,
+                "follower_count": group.followers.count() if hasattr(group, "followers") else 0,
+                "is_following": bool(getattr(request, "user", None) and request.user.is_authenticated and group.followers.filter(user=request.user).exists()) if hasattr(group, "followers") else False,
+                "rule_set": SportsGameSerializer(game, context={"request": request}).data.get("rule_set_detail"),
+                "home_runs_for": game.plate_appearances.filter(result=SoftballPlateAppearance.Result.HOME_RUN).count(),
+                "home_runs_against": game.home_runs_against,
+            },
+            "plays": recent,
+        })
+
+    @action(detail=True, methods=["post"], url_path="delete-book")
+    @transaction.atomic
+    def delete_book(self, request, pk=None):
+        base_game = self.get_object()
+        if not can_manage_team(request.user, base_game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        game = SportsGame.objects.select_for_update().get(pk=base_game.pk)
+        game.plate_appearances.all().delete()
+        game.substitutions.all().delete()
+        game.inning_lines.all().delete()
+        game.status = SportsGame.Status.SCHEDULED
+        game.current_inning = 1
+        game.outs = 0
+        game.current_batter_order = game.lineup_spots.order_by("batting_order").values_list("batting_order", flat=True).first() or 1
+        game.runs_for = 0
+        game.runs_against = 0
+        game.home_runs_against = 0
+        game.started_at = None
+        game.ended_at = None
+        game.save(update_fields=(
+            "status", "current_inning", "outs", "current_batter_order", "runs_for",
+            "runs_against", "home_runs_against", "started_at", "ended_at", "updated_at",
+        ))
+        sync_game_social_event(game)
+        return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
+
+    @action(detail=True, methods=["post"], url_path="reopen")
+    def reopen(self, request, pk=None):
+        game = self.get_object()
+        if not can_manage_team(request.user, game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        game.status = SportsGame.Status.LIVE
+        game.ended_at = None
+        if not game.started_at:
+            game.started_at = timezone.now()
+        game.save(update_fields=("status", "ended_at", "started_at", "updated_at"))
+        sync_game_social_event(game)
+        return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
+
     @action(detail=True, methods=["post"])
     def finish(self, request, pk=None):
         game = self.get_object()
