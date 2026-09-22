@@ -119,18 +119,22 @@ class SocialGroupSerializer(serializers.ModelSerializer):
     logo_image_url = serializers.SerializerMethodField()
     follower_count = serializers.SerializerMethodField()
     is_following = serializers.SerializerMethodField()
+    has_player_join_password = serializers.SerializerMethodField()
 
     class Meta:
         model = SocialGroup
         fields = (
             "id", "name", "description", "kind", "category", "visibility", "allow_followers",
             "parent", "created_by", "city", "state", "logo_url", "logo_image", "logo_image_url", "is_active",
-            "member_count", "follower_count", "is_following", "created_at", "updated_at",
+            "member_count", "follower_count", "is_following", "has_player_join_password", "created_at", "updated_at",
         )
         read_only_fields = (
-            "id", "created_by", "logo_image_url", "member_count", "follower_count", "is_following", "created_at", "updated_at",
+            "id", "created_by", "logo_image_url", "member_count", "follower_count", "is_following", "has_player_join_password", "created_at", "updated_at",
         )
         extra_kwargs = {"logo_image": {"write_only": True, "required": False}}
+
+    def get_has_player_join_password(self, obj):
+        return bool(obj.player_join_password_hash)
 
     def get_logo_image_url(self, obj):
         if not obj.logo_image:

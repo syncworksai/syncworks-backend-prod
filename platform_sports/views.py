@@ -18,6 +18,7 @@ from user_accounts.models import Notification
 from user_accounts.services.notifications import notify
 
 from .emails import frontend_url, send_syncworks_team_invite
+from .player_merge import PlayerMergeMixin
 from .models import SoftballPlateAppearance, SportsGame, SportsGameInning, SportsLineupSpot, SportsPlayer, SportsSubstitution, SportsTeam
 from .serializers import (
     SoftballPlateAppearanceSerializer,
@@ -597,7 +598,7 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
         return Response(softball_player_stats(team))
 
 
-class SportsPlayerViewSet(viewsets.ModelViewSet):
+class SportsPlayerViewSet(PlayerMergeMixin, viewsets.ModelViewSet):
     serializer_class = SportsPlayerSerializer
     permission_classes = [IsAuthenticated]
 
@@ -642,6 +643,93 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
                 })
         serializer.save()
 
+    @action(detail=True, methods=["post"], url_path="link-member")
+    @transaction.atomic
+    def link_member(self, request, pk=None):
+        """Link a roster card to an already approved team member selected by the manager."""
+        from .ops_models import SportsPlayerProfile
+
+        player = self.get_object()
+        if not can_manage_team(request.user, player.team):
+            return Response({"detail": "Only managers can link a player's account."}, status=status.HTTP_403_FORBIDDEN)
+        if not player.is_active:
+            return Response({"detail": "Restore this player before linking an account."}, status=status.HTTP_409_CONFLICT)
+        try:
+            user_id = int(request.data.get("user") or 0)
+        except (ValueError, TypeError):
+            return Response({"detail": "Select an approved team member."}, status=status.HTTP_400_BAD_REQUEST)
+        membership = GroupMembership.objects.filter(
+            group=player.team.group, user_id=user_id,
+            status=GroupMembership.Status.ACTIVE,
+        ).select_related("user").first()
+        if not membership:
+            return Response({"detail": "The selected account must first join the team group."}, status=status.HTTP_400_BAD_REQUEST)
+        if player.user_id and player.user_id != user_id:
+            return Response({"detail": "This roster entry is already linked to a different account."}, status=status.HTTP_409_CONFLICT)
+        if SportsPlayer.objects.filter(team=player.team, user_id=user_id).exclude(pk=player.pk).exists():
+            return Response({"detail": "This account already has a player record. Use Merge to keep its game history."}, status=status.HTTP_409_CONFLICT)
+        player.user_id = user_id
+        player.save(update_fields=("user", "updated_at"))
+        profile, _ = SportsPlayerProfile.objects.get_or_create(player=player)
+        if not profile.email:
+            profile.email = membership.user.email or ""
+            profile.save(update_fields=("email", "updated_at"))
+        return Response({"linked": True, "player": self.get_serializer(player).data})
+
+    @action(detail=False, methods=["post"], url_path="join-mine")
+    @transaction.atomic
+    def join_mine(self, request):
+        """Allow an approved group member to claim a matching manual roster entry or create their own."""
+        from .ops_models import SportsPlayerProfile
+
+        try:
+            team_id = int(request.data.get("team") or 0)
+        except (TypeError, ValueError):
+            return Response({"detail": "Choose a valid team."}, status=status.HTTP_400_BAD_REQUEST)
+        team = get_object_or_404(SportsTeam.objects.select_for_update(), pk=team_id)
+        if not GroupMembership.objects.filter(
+            group_id=team.group_id,
+            user=request.user,
+            status=GroupMembership.Status.ACTIVE,
+        ).exists():
+            return Response({"detail": "Your team invitation must be approved before joining the roster."}, status=status.HTTP_403_FORBIDDEN)
+
+        email = str(getattr(request.user, "email", "") or "").strip().lower()
+        if not email:
+            return Response({"detail": "Add your account email before joining the roster."}, status=status.HTTP_400_BAD_REQUEST)
+        linked = SportsPlayer.objects.filter(team=team, user=request.user).first()
+        if linked:
+            if not linked.is_active:
+                return Response({"detail": "Ask a manager to reactivate your archived roster entry."}, status=status.HTTP_409_CONFLICT)
+            return Response({"player": self.get_serializer(linked).data, "already_linked": True, "matched_existing": True})
+
+        if SportsPlayer.objects.filter(
+            team=team, manager_profile__email__iexact=email, user__isnull=False
+        ).exists():
+            return Response({"detail": "This email is already associated with a linked player. Ask your manager to review the roster."}, status=status.HTTP_409_CONFLICT)
+
+        matches = list(SportsPlayer.objects.select_for_update().filter(
+            team=team, user__isnull=True, is_active=True, manager_profile__email__iexact=email
+        ).order_by("id")[:2])
+        if len(matches) > 1:
+            return Response({"detail": "Multiple roster entries use this email. Ask your manager to select your player card."}, status=status.HTTP_409_CONFLICT)
+
+        matched_existing = bool(matches)
+        if matched_existing:
+            player = matches[0]
+            player.user = request.user
+            player.save(update_fields=("user", "updated_at"))
+        else:
+            full_name = f"{request.user.first_name} {request.user.last_name}".strip() or email.partition("@")[0]
+            player = SportsPlayer.objects.create(
+                team=team, user=request.user, display_name=full_name, created_by=request.user
+            )
+        SportsPlayerProfile.objects.get_or_create(player=player, defaults={"email": email})
+        return Response(
+            {"player": self.get_serializer(player).data, "already_linked": False, "matched_existing": matched_existing},
+            status=status.HTTP_200_OK if matched_existing else status.HTTP_201_CREATED,
+        )
+
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def invite(self, request, pk=None):
@@ -668,7 +756,7 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
             )
 
         profile, _ = SportsPlayerProfile.objects.get_or_create(player=player)
-        if not profile.email:
+        if profile.email != email:
             profile.email = email
             profile.save(update_fields=("email", "updated_at"))
 
@@ -799,6 +887,8 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
             )
 
         player = invite.player
+        if player.user_id and player.user_id != request.user.id:
+            return Response({"detail": "This roster entry is already linked to a different account. Ask your manager to resolve the conflict."}, status=status.HTTP_409_CONFLICT)
         duplicate = SportsPlayer.objects.filter(team=player.team, user=request.user).exclude(pk=player.pk).first()
         if duplicate:
             return Response(
@@ -811,7 +901,7 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
             player.display_name = f"{request.user.first_name} {request.user.last_name}".strip() or email
         player.save(update_fields=("user", "display_name", "updated_at"))
 
-        GroupMembership.objects.update_or_create(
+        membership, _ = GroupMembership.objects.get_or_create(
             group=player.team.group,
             user=request.user,
             defaults={
@@ -820,6 +910,9 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
                 "invited_by": invite.invited_by,
             },
         )
+        if membership.status != GroupMembership.Status.ACTIVE:
+            membership.status = GroupMembership.Status.ACTIVE
+            membership.save(update_fields=("status", "updated_at"))
         team_events = SocialEvent.objects.filter(
             organizer_group=player.team.group,
             status__in=(SocialEvent.Status.PUBLISHED, SocialEvent.Status.DRAFT),
@@ -1078,6 +1171,9 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         game.current_batter_order = lineup[0].batting_order
         game.save(update_fields=("status", "started_at", "current_inning", "outs", "current_batter_order", "updated_at"))
         sync_game_social_event(game)
+        if game.gamecast_enabled:
+            from .fan_notifications import notify_fans_gamecast_live
+            notify_fans_gamecast_live(game)
         return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
 
     @action(detail=True, methods=["post"])
@@ -1235,6 +1331,9 @@ class SportsGameViewSet(viewsets.ModelViewSet):
                     changed.append(field)
             if changed:
                 game.save(update_fields=tuple(dict.fromkeys(changed + ["updated_at"])))
+                if game.gamecast_enabled and game.status == SportsGame.Status.LIVE:
+                    from .fan_notifications import notify_fans_gamecast_live
+                    notify_fans_gamecast_live(game)
         return Response({
             "enabled": game.gamecast_enabled,
             "token": str(game.gamecast_token),

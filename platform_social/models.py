@@ -70,6 +70,7 @@ class SocialGroup(models.Model):
     category = models.CharField(max_length=20, choices=Category.choices, default=Category.COMMUNITY)
     visibility = models.CharField(max_length=20, choices=Visibility.choices, default=Visibility.PRIVATE)
     allow_followers = models.BooleanField(default=True)
+    player_join_password_hash = models.CharField(max_length=256, blank=True, default="")
     parent = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="children")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="social_groups_created")
     city = models.CharField(max_length=100, blank=True)
@@ -95,6 +96,7 @@ class SocialGroup(models.Model):
 class GroupFollow(models.Model):
     group = models.ForeignKey(SocialGroup, on_delete=models.CASCADE, related_name="followers")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="social_group_follows")
+    gamecast_email_updates = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
