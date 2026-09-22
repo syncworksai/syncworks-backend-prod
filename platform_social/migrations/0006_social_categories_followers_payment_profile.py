@@ -74,4 +74,3 @@ class Migration(migrations.Migration):
         ),
         migrations.RunPython(categorize_existing_groups, migrations.RunPython.noop),
     ]
-}
