@@ -82,7 +82,12 @@ class GameCastShare(models.Model):
     )
     token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     enabled = models.BooleanField(default=False)
+    show_live_score = models.BooleanField(default=True)
+    show_current_batter = models.BooleanField(default=True)
+    show_lineup = models.BooleanField(default=True)
+    show_recent_plays = models.BooleanField(default=True)
     show_player_stats = models.BooleanField(default=True)
+    allow_follow = models.BooleanField(default=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,

@@ -568,6 +568,33 @@ class GameCastSettingsView(APIView):
         return Response(serializer.data)
 
 
+class GameCastPreviewView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        share = get_object_or_404(
+            GameCastShare.objects.select_related("game__team__group"),
+            token=token,
+            enabled=True,
+        )
+        game = share.game
+        return Response({
+            "game": {
+                "id": game.id,
+                "team_name": game.team.group.name,
+                "opponent_name": game.opponent_name,
+                "status": game.status,
+                "start_at": game.start_at,
+                "venue_name": game.venue_name,
+                "current_inning": game.current_inning if share.show_live_score else None,
+                "outs": game.outs if share.show_live_score else None,
+                "runs_for": game.runs_for if share.show_live_score else None,
+                "runs_against": game.runs_against if share.show_live_score else None,
+            },
+            "requires_account": True,
+        })
+
+
 class PublicGameCastView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -610,7 +637,7 @@ class PublicGameCastView(APIView):
                 "group_id": game.team.group_id,
                 "team_name": game.team.group.name,
                 "follower_count": game.team.group.followers.count(),
-                "is_following": game.team.group.followers.filter(user=request.user).exists(),
+                "is_following": game.team.group.followers.filter(user=request.user).exists() if share.allow_follow else False,
                 "opponent_name": game.opponent_name,
                 "status": game.status,
                 "game_type": game.game_type,
@@ -618,10 +645,13 @@ class PublicGameCastView(APIView):
                 "round_label": game.round_label,
                 "start_at": game.start_at,
                 "venue_name": game.venue_name,
-                "current_inning": game.current_inning,
-                "outs": game.outs,
-                "runs_for": game.runs_for,
-                "runs_against": game.runs_against,
+                "current_inning": game.current_inning if share.show_live_score else None,
+                "outs": game.outs if share.show_live_score else None,
+                "runs_for": game.runs_for if share.show_live_score else None,
+                "runs_against": game.runs_against if share.show_live_score else None,
+                "runner_on_first": game.runner_on_first if share.show_live_score else False,
+                "runner_on_second": game.runner_on_second if share.show_live_score else False,
+                "runner_on_third": game.runner_on_third if share.show_live_score else False,
                 "home_runs_for": game.plate_appearances.filter(result=SoftballPlateAppearance.Result.HOME_RUN).count(),
                 "home_runs_against": game.home_runs_against,
                 "rule_set": ({
@@ -634,23 +664,31 @@ class PublicGameCastView(APIView):
                     "innings": game.rule_set.innings,
                 } if game.rule_set_id else None),
                 "inning_grid": game_inning_grid(game),
-                "current_batter_order": game.current_batter_order,
-                "current_batter": SportsPlayerSerializer(current_spot.player).data if current_spot else None,
+                "current_batter_order": game.current_batter_order if share.show_current_batter else None,
+                "current_batter": SportsPlayerSerializer(current_spot.player).data if (current_spot and share.show_current_batter) else None,
                 "inning_lines": [
                     {"inning": line.inning, "team_runs": line.team_runs, "opponent_runs": line.opponent_runs, "opponent_hits": line.opponent_hits}
                     for line in game.inning_lines.order_by("inning")
                 ],
                 "updated_at": game.updated_at,
             },
-            "lineup": [
+            "lineup": ([
                 {
                     "batting_order": spot.batting_order,
                     "defensive_position": spot.defensive_position,
                     "player": SportsPlayerSerializer(spot.player).data,
                 }
                 for spot in lineup
-            ],
-            "plays": plays,
+            ] if share.show_lineup else []),
+            "plays": plays if share.show_recent_plays else [],
+            "gamecast": {
+                "show_live_score": share.show_live_score,
+                "show_current_batter": share.show_current_batter,
+                "show_lineup": share.show_lineup,
+                "show_recent_plays": share.show_recent_plays,
+                "show_player_stats": share.show_player_stats,
+                "allow_follow": share.allow_follow,
+            },
         }
         if share.show_player_stats:
             rows = advanced_stats_for_team(game.team)
