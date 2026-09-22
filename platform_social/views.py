@@ -18,12 +18,14 @@ from .models import (
     Connection,
     EventMemberResponse,
     GroupEventInvitation,
+    GroupFollow,
     GroupInviteLink,
     GroupMembership,
     GroupMessage,
     GroupPaymentSettings,
     SocialEvent,
     SocialGroup,
+    UserPaymentProfile,
 )
 from .serializers import (
     CollectionPaymentSerializer,
@@ -39,6 +41,7 @@ from .serializers import (
     SocialEventSerializer,
     SocialGroupSerializer,
     SocialUserSerializer,
+    UserPaymentProfileSerializer,
 )
 
 User = get_user_model()
@@ -283,12 +286,14 @@ class SocialGroupViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         member_ids = active_group_ids(self.request.user)
+        followed_ids = GroupFollow.objects.filter(user=self.request.user).values_list("group_id", flat=True)
         return SocialGroup.objects.filter(
             Q(id__in=member_ids)
+            | Q(id__in=followed_ids)
             | Q(created_by=self.request.user)
             | Q(visibility=SocialGroup.Visibility.PUBLIC),
             is_active=True,
-        ).distinct().prefetch_related("memberships")
+        ).distinct().prefetch_related("memberships", "followers")
 
     def perform_create(self, serializer):
         parent = serializer.validated_data.get("parent")
@@ -322,6 +327,37 @@ class SocialGroupViewSet(viewsets.ModelViewSet):
         instance.is_active = False
         instance.save(update_fields=("is_active", "updated_at"))
 
+
+    @action(detail=True, methods=["post"])
+    def follow(self, request, pk=None):
+        group = self.get_object()
+        if not group.allow_followers:
+            return Response({"detail": "This group is not accepting followers."}, status=status.HTTP_409_CONFLICT)
+        active_member = GroupMembership.objects.filter(
+            group=group,
+            user=request.user,
+            status=GroupMembership.Status.ACTIVE,
+        ).exists()
+        if group.visibility != SocialGroup.Visibility.PUBLIC and not active_member:
+            return Response({"detail": "Only public groups can be followed unless you are a member."}, status=status.HTTP_403_FORBIDDEN)
+        GroupFollow.objects.get_or_create(group=group, user=request.user)
+        return Response(self.get_serializer(group).data)
+
+    @action(detail=True, methods=["post"])
+    def unfollow(self, request, pk=None):
+        group = self.get_object()
+        GroupFollow.objects.filter(group=group, user=request.user).delete()
+        return Response(self.get_serializer(group).data)
+
+    @action(detail=False, methods=["get", "patch"], url_path="payment-profile")
+    def payment_profile(self, request):
+        profile, _ = UserPaymentProfile.objects.get_or_create(user=request.user)
+        if request.method == "GET":
+            return Response(UserPaymentProfileSerializer(profile).data)
+        serializer = UserPaymentProfileSerializer(profile, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        saved = serializer.save(user=request.user)
+        return Response(UserPaymentProfileSerializer(saved).data)
 
     @action(detail=True, methods=["post"], url_path="invite-link")
     def invite_link(self, request, pk=None):
