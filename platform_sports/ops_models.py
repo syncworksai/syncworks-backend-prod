@@ -208,6 +208,11 @@ class SportsPlayerInvite(models.Model):
         related_name="account_invites",
     )
     email = models.EmailField()
+    requested_role = models.CharField(
+        max_length=12,
+        choices=[("MEMBER", "Member"), ("SCOREKEEPER", "Scorekeeper"), ("MANAGER", "Manager / Coach"), ("DIRECTOR", "Director")],
+        default="MEMBER",
+    )
     token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.INVITED)
     invited_by = models.ForeignKey(
