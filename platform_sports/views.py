@@ -1063,8 +1063,15 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         game.started_at = game.started_at or timezone.now()
         game.current_inning = max(game.current_inning, 1)
         game.outs = 0
+        game.runner_on_first = False
+        game.runner_on_second = False
+        game.runner_on_third = False
         game.current_batter_order = lineup[0].batting_order
-        game.save(update_fields=("status", "started_at", "current_inning", "outs", "current_batter_order", "updated_at"))
+        game.save(update_fields=(
+            "status", "started_at", "current_inning", "outs",
+            "runner_on_first", "runner_on_second", "runner_on_third",
+            "current_batter_order", "updated_at",
+        ))
         sync_game_social_event(game)
         return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
 
@@ -1090,6 +1097,9 @@ class SportsGameViewSet(viewsets.ModelViewSet):
             runs_scored = max(0, int(request.data.get("runs_scored", 0)))
         except (TypeError, ValueError):
             return Response({"detail": "RBI and runs must be whole numbers."}, status=status.HTTP_400_BAD_REQUEST)
+        runner_on_first_after = bool(request.data.get("runner_on_first_after", False))
+        runner_on_second_after = bool(request.data.get("runner_on_second_after", False))
+        runner_on_third_after = bool(request.data.get("runner_on_third_after", False))
         with transaction.atomic():
             game = SportsGame.objects.select_for_update().select_related("team__group").get(pk=base_game.pk)
             if game.status != SportsGame.Status.LIVE:
@@ -1127,8 +1137,19 @@ class SportsGameViewSet(viewsets.ModelViewSet):
             if game.outs >= 3:
                 game.outs = 0
                 game.current_inning += 1
+                game.runner_on_first = False
+                game.runner_on_second = False
+                game.runner_on_third = False
+            else:
+                game.runner_on_first = runner_on_first_after
+                game.runner_on_second = runner_on_second_after
+                game.runner_on_third = runner_on_third_after
             game.current_batter_order = lineup[(current_index + 1) % len(lineup)].batting_order
-            game.save(update_fields=("runs_for", "outs", "current_inning", "current_batter_order", "updated_at"))
+            game.save(update_fields=(
+                "runs_for", "outs", "current_inning",
+                "runner_on_first", "runner_on_second", "runner_on_third",
+                "current_batter_order", "updated_at",
+            ))
         fresh = self.get_queryset().get(pk=game.pk)
         return Response({"game": self.get_serializer(fresh).data, "play": SoftballPlateAppearanceSerializer(pa).data}, status=status.HTTP_201_CREATED)
 
@@ -1144,8 +1165,19 @@ class SportsGameViewSet(viewsets.ModelViewSet):
             last = game.plate_appearances.order_by("-sequence").first()
             if not last:
                 return Response({"detail": "There is no play to undo."}, status=status.HTTP_409_CONFLICT)
+            try:
+                context = last.advanced_context
+                restore_bases = (
+                    bool(context.runner_on_first_before),
+                    bool(context.runner_on_second_before),
+                    bool(context.runner_on_third_before),
+                )
+            except Exception:
+                restore_bases = (False, False, False)
             last.delete()
             rebuild_game_from_book(game)
+            game.runner_on_first, game.runner_on_second, game.runner_on_third = restore_bases
+            game.save(update_fields=("runner_on_first", "runner_on_second", "runner_on_third", "updated_at"))
         return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
 
     @action(detail=True, methods=["post"], url_path="inning-line")
@@ -1199,6 +1231,72 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         game.home_runs_against = value
         game.save(update_fields=("home_runs_against", "updated_at"))
         return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
+
+    @action(detail=True, methods=["post"], url_path="delete-book")
+    @transaction.atomic
+    def delete_book(self, request, pk=None):
+        game = self.get_object()
+        if not can_manage_team(request.user, game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+
+        locked = SportsGame.objects.select_for_update().get(pk=game.pk)
+        deleted_appearances = locked.plate_appearances.count()
+        deleted_substitutions = locked.substitutions.count()
+        locked.plate_appearances.all().delete()
+        locked.substitutions.all().delete()
+        locked.inning_lines.all().delete()
+
+        lineup = list(locked.lineup_spots.order_by("batting_order"))
+        locked.status = SportsGame.Status.SCHEDULED
+        locked.current_inning = 1
+        locked.outs = 0
+        locked.runner_on_first = False
+        locked.runner_on_second = False
+        locked.runner_on_third = False
+        locked.current_batter_order = lineup[0].batting_order if lineup else 1
+        locked.runs_for = 0
+        locked.runs_against = 0
+        locked.home_runs_against = 0
+        locked.started_at = None
+        locked.ended_at = None
+        locked.save(update_fields=(
+            "status", "current_inning", "outs", "runner_on_first", "runner_on_second",
+            "runner_on_third", "current_batter_order", "runs_for", "runs_against",
+            "home_runs_against", "started_at", "ended_at", "updated_at",
+        ))
+        try:
+            share = locked.gamecast_share
+            if share.enabled:
+                share.enabled = False
+                share.save(update_fields=("enabled", "updated_at"))
+        except Exception:
+            pass
+        sync_game_social_event(locked)
+        return Response({
+            "game": self.get_serializer(self.get_queryset().get(pk=locked.pk)).data,
+            "deleted_appearances": deleted_appearances,
+            "deleted_substitutions": deleted_substitutions,
+            "stats_removed": True,
+        })
+
+    @action(detail=True, methods=["post"], url_path="reopen")
+    def reopen(self, request, pk=None):
+        game = self.get_object()
+        if not can_manage_team(request.user, game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        target = str(request.data.get("status") or SportsGame.Status.SCHEDULED).upper()
+        if target not in (SportsGame.Status.SCHEDULED, SportsGame.Status.LIVE):
+            return Response({"detail": "Reopen status must be SCHEDULED or LIVE."}, status=status.HTTP_400_BAD_REQUEST)
+        if target == SportsGame.Status.LIVE and not game.lineup_spots.exists():
+            return Response({"detail": "Build a lineup before reopening the game live."}, status=status.HTTP_400_BAD_REQUEST)
+        game.status = target
+        game.ended_at = None
+        if target == SportsGame.Status.LIVE:
+            game.started_at = game.started_at or timezone.now()
+        game.save(update_fields=("status", "ended_at", "started_at", "updated_at"))
+        sync_game_social_event(game)
+        return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
+
 
     @action(detail=True, methods=["post"])
     def finish(self, request, pk=None):
