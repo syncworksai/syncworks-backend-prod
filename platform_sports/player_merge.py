@@ -112,6 +112,8 @@ class PlayerMergeMixin:
         player = self.get_object()
         if not can_manage_team(request.user, player.team):
             return Response({"detail": "Only a team manager can remove roster entries."}, status=status.HTTP_403_FORBIDDEN)
+        if not player.is_active or player.merged_into_id:
+            return Response({"detail": "Merged or archived records must be preserved for audit."}, status=status.HTTP_409_CONFLICT)
         if (
             player.plate_appearances.exists() or player.stat_ledger_entries.exists()
             or player.lineup_spots.exists() or player.substitutions_out.exists()
