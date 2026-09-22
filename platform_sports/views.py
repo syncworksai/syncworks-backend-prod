@@ -1402,7 +1402,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
             "url_path": f"/gamecast/{game.gamecast_token}",
         })
 
-    @action(detail=False, methods=["get"], url_path="gamecast-public")
+    @action(detail=False, methods=["get"], url_path="gamecast-public", permission_classes=[AllowAny])
     def gamecast_public(self, request):
         token = request.query_params.get("token")
         game = get_object_or_404(
