@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -139,6 +141,10 @@ class SportsGame(models.Model):
         related_name="games",
     )
     home_runs_against = models.PositiveSmallIntegerField(default=0)
+    gamecast_enabled = models.BooleanField(default=False)
+    gamecast_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    gamecast_show_batter = models.BooleanField(default=True)
+    gamecast_show_recent_plays = models.BooleanField(default=True)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.SCHEDULED)
     current_inning = models.PositiveSmallIntegerField(default=1)
     outs = models.PositiveSmallIntegerField(default=0)
