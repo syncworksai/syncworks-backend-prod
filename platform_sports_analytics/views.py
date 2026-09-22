@@ -610,6 +610,7 @@ class PublicGameCastView(APIView):
                 "group_id": game.team.group_id,
                 "team_name": game.team.group.name,
                 "follower_count": game.team.group.followers.count(),
+                "is_following": game.team.group.followers.filter(user=request.user).exists(),
                 "opponent_name": game.opponent_name,
                 "status": game.status,
                 "game_type": game.game_type,
