@@ -1083,7 +1083,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def play(self, request, pk=None):
         base_game = self.get_object()
-        if not can_manage_team(request.user, base_game.team):
+        if not can_score_team(request.user, base_game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
         if base_game.team.sport != SportsTeam.Sport.SOFTBALL:
             return Response({"detail": "Live play entry is currently available for softball."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1147,7 +1147,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def undo(self, request, pk=None):
         base_game = self.get_object()
-        if not can_manage_team(request.user, base_game.team):
+        if not can_score_team(request.user, base_game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
         with transaction.atomic():
             game = SportsGame.objects.select_for_update().get(pk=base_game.pk)
