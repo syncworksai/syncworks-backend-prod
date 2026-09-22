@@ -219,6 +219,13 @@ def team_dashboard(team):
     team_pa = sum(row["pa"] for row in stats)
     team_hr = sum(row["hr"] for row in stats)
     team_rbi = sum(row["rbi"] for row in stats)
+    team_doubles = sum(row["double"] for row in stats)
+    team_triples = sum(row["triple"] for row in stats)
+    team_walks = sum(row["bb"] for row in stats)
+    team_sf = sum(row["sf"] for row in stats)
+    team_tb = sum(row["tb"] for row in stats)
+    team_obp = _ratio(team_hits + team_walks, team_ab + team_walks + team_sf)
+    team_slg = _ratio(team_tb, team_ab)
     return {
         "team": SportsTeamSerializer(team).data,
         "record": {"wins": wins, "losses": losses, "ties": ties, "games": len(final_games)},
@@ -228,7 +235,13 @@ def team_dashboard(team):
             "at_bats": team_ab,
             "plate_appearances": team_pa,
             "home_runs": team_hr,
+            "doubles": team_doubles,
+            "triples": team_triples,
+            "walks": team_walks,
             "rbi": team_rbi,
+            "obp": team_obp,
+            "slg": team_slg,
+            "ops": round(team_obp + team_slg, 3),
             "runs_for": sum(game.runs_for for game in final_games),
             "runs_against": sum(game.runs_against for game in final_games),
         },
@@ -236,6 +249,10 @@ def team_dashboard(team):
         "player_stats": stats,
         "upcoming_games": SportsGameSerializer(
             games.filter(status=SportsGame.Status.SCHEDULED, start_at__gte=now).order_by("start_at")[:8],
+            many=True,
+        ).data,
+        "needs_completion_games": SportsGameSerializer(
+            games.filter(status=SportsGame.Status.SCHEDULED, start_at__lt=now).order_by("-start_at")[:8],
             many=True,
         ).data,
         "recent_games": SportsGameSerializer(
