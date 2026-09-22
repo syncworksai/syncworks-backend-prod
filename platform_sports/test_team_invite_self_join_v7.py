@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from platform_social.models import GroupMembership, SocialGroup
@@ -116,3 +117,40 @@ class TeamInviteSelfJoinV7Tests(APITestCase):
         response = self.client.post(self.url, {"team": self.team.id}, format="json")
         self.assertEqual(response.status_code, 409)
         self.assertEqual(SportsPlayer.objects.filter(team=self.team).count(), 1)
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        SYNCWORKS_FRONTEND_URL="https://syncworksapp.com",
+    )
+    def test_personal_invite_can_correct_email_and_claim_keeps_scorekeeper_role(self):
+        player = SportsPlayer.objects.create(
+            team=self.team,
+            display_name="Existing Player",
+            jersey_number="17",
+            created_by=self.owner,
+        )
+        profile = SportsPlayerProfile.objects.create(player=player, email="old@example.com")
+        self.membership.role = GroupMembership.Role.SCOREKEEPER
+        self.membership.save(update_fields=("role", "updated_at"))
+        self.client.force_authenticate(self.owner)
+        response = self.client.post(
+            f"/api/v1/sports/players/{player.id}/invite/",
+            {"email": self.member.email},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["account_found"], True)
+        profile.refresh_from_db()
+        self.assertEqual(profile.email, self.member.email)
+        token = response.data["invite_url"].rstrip("/").split("/")[-1]
+        self.client.force_authenticate(self.member)
+        claimed = self.client.post(
+            "/api/v1/sports/players/claim-invite/",
+            {"token": token},
+            format="json",
+        )
+        self.assertEqual(claimed.status_code, 200)
+        player.refresh_from_db()
+        self.membership.refresh_from_db()
+        self.assertEqual(player.user_id, self.member.id)
+        self.assertEqual(self.membership.role, GroupMembership.Role.SCOREKEEPER)
