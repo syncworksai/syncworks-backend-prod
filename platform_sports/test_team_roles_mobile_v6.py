@@ -110,3 +110,54 @@ class TeamRolesMobileSportsV6Tests(APITestCase):
             format="json",
         )
         self.assertEqual(delete_book.status_code, 403)
+
+    def test_manager_cannot_escalate_roles_or_change_director(self):
+        manager = User.objects.create_user(
+            username="manager-v6@example.com",
+            email="manager-v6@example.com",
+            password="test-pass-123",
+        )
+        manager_membership = GroupMembership.objects.create(
+            group=self.group,
+            user=manager,
+            role=GroupMembership.Role.MANAGER,
+            status=GroupMembership.Status.ACTIVE,
+            invited_by=self.owner,
+        )
+        self.client.force_authenticate(manager)
+        promote_self = self.client.post(
+            f"/api/v1/social/memberships/{manager_membership.id}/set-role/",
+            {"role": "DIRECTOR"},
+            format="json",
+        )
+        self.assertEqual(promote_self.status_code, 403)
+
+        promote_other = self.client.post(
+            f"/api/v1/social/memberships/{self.scorer_membership.id}/set-role/",
+            {"role": "DIRECTOR"},
+            format="json",
+        )
+        self.assertEqual(promote_other.status_code, 403)
+
+        assign_scorer = self.client.post(
+            f"/api/v1/social/memberships/{self.scorer_membership.id}/set-role/",
+            {"role": "SCOREKEEPER"},
+            format="json",
+        )
+        self.assertEqual(assign_scorer.status_code, 200)
+
+        self.client.force_authenticate(self.owner)
+        assign_director = self.client.post(
+            f"/api/v1/social/memberships/{self.scorer_membership.id}/set-role/",
+            {"role": "DIRECTOR"},
+            format="json",
+        )
+        self.assertEqual(assign_director.status_code, 200)
+
+        self.client.force_authenticate(manager)
+        demote_director = self.client.post(
+            f"/api/v1/social/memberships/{self.scorer_membership.id}/set-role/",
+            {"role": "MEMBER"},
+            format="json",
+        )
+        self.assertEqual(demote_director.status_code, 403)
