@@ -1431,7 +1431,14 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         if game.gamecast_show_batter:
             spot = game.lineup_spots.filter(batting_order=game.current_batter_order).select_related("player").first()
             if spot:
-                current_batter = SportsPlayerSerializer(spot.player).data
+                # Public watch links must never expose the internal roster
+                # serializer's linked user account, email, or contact details.
+                current_batter = {
+                    "id": spot.player_id,
+                    "display_name": spot.player.display_name,
+                    "jersey_number": spot.player.jersey_number,
+                    "primary_position": spot.player.primary_position,
+                }
         recent = []
         if game.gamecast_show_recent_plays:
             for pa in plays[-12:]:
