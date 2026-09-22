@@ -35,6 +35,9 @@ MANAGEMENT_ROLES = (
     GroupMembership.Role.DIRECTOR,
     GroupMembership.Role.MANAGER,
 )
+SCOREKEEPING_ROLES = MANAGEMENT_ROLES + (
+    GroupMembership.Role.SCOREKEEPER,
+)
 
 HIT_RESULTS = {
     SoftballPlateAppearance.Result.SINGLE,
@@ -72,6 +75,15 @@ def can_manage_group(user, group_id):
 
 def can_manage_team(user, team):
     return can_manage_group(user, team.group_id)
+
+
+def can_score_team(user, team):
+    return GroupMembership.objects.filter(
+        user=user,
+        group_id=team.group_id,
+        status=GroupMembership.Status.ACTIVE,
+        role__in=SCOREKEEPING_ROLES,
+    ).exists()
 
 
 def rebuild_game_from_book(game):
@@ -930,7 +942,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="set-lineup")
     def set_lineup(self, request, pk=None):
         game = self.get_object()
-        if not can_manage_team(request.user, game.team):
+        if not can_score_team(request.user, game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
         spots = request.data.get("spots")
         if not isinstance(spots, list):
@@ -993,7 +1005,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="substitute")
     def substitute(self, request, pk=None):
         game = self.get_object()
-        if not can_manage_team(request.user, game.team):
+        if not can_score_team(request.user, game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
         if game.status != SportsGame.Status.LIVE:
             return Response({"detail": "Substitutions are available during a live game."}, status=status.HTTP_409_CONFLICT)
@@ -1039,7 +1051,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="defensive-position")
     def defensive_position(self, request, pk=None):
         game = self.get_object()
-        if not can_manage_team(request.user, game.team):
+        if not can_score_team(request.user, game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
         try:
             player_id = int(request.data.get("player"))
@@ -1054,7 +1066,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def start(self, request, pk=None):
         game = self.get_object()
-        if not can_manage_team(request.user, game.team):
+        if not can_score_team(request.user, game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
         lineup = list(game.lineup_spots.order_by("batting_order"))
         if not lineup:
@@ -1151,7 +1163,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="inning-line")
     def inning_line(self, request, pk=None):
         game = self.get_object()
-        if not can_manage_team(request.user, game.team):
+        if not can_score_team(request.user, game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
         try:
             inning = max(1, int(request.data.get("inning")))
@@ -1173,7 +1185,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="opponent-score")
     def opponent_score(self, request, pk=None):
         game = self.get_object()
-        if not can_manage_team(request.user, game.team):
+        if not can_score_team(request.user, game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
         try:
             score = int(request.data.get("runs_against"))
@@ -1188,7 +1200,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="opponent-home-runs")
     def opponent_home_runs(self, request, pk=None):
         game = self.get_object()
-        if not can_manage_team(request.user, game.team):
+        if not can_score_team(request.user, game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
         try:
             value = int(request.data.get("home_runs_against"))
@@ -1203,7 +1215,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get", "post"], url_path="gamecast")
     def gamecast(self, request, pk=None):
         game = self.get_object()
-        if not can_manage_team(request.user, game.team):
+        if not can_score_team(request.user, game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
         if request.method == "POST":
             allowed = ("gamecast_enabled", "gamecast_show_batter", "gamecast_show_recent_plays")
@@ -1339,7 +1351,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def finish(self, request, pk=None):
         game = self.get_object()
-        if not can_manage_team(request.user, game.team):
+        if not can_score_team(request.user, game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
         for field in ("runs_for", "runs_against"):
             if field in request.data:
@@ -1379,7 +1391,7 @@ class SoftballPlateAppearanceViewSet(viewsets.ReadOnlyModelViewSet):
     @transaction.atomic
     def correct(self, request, pk=None):
         appearance = self.get_object()
-        if not can_manage_team(request.user, appearance.game.team):
+        if not can_score_team(request.user, appearance.game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
 
         allowed = {"inning", "result", "outs_recorded", "rbi", "runs_scored", "notes"}
