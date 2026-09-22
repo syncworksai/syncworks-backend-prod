@@ -28,8 +28,11 @@ SCHEDULE = (
 def seed_schedule(apps, schema_editor):
     # Use the current domain helper so seeded games receive the same Social event,
     # RSVP and SyncWorks Calendar behavior as games created in the UI.
-    from platform_sports.models import SportsGame, SportsTeam
-    from platform_sports.views import sync_game_social_event
+    # Always use historical models during migrations. Importing the live model
+    # would query fields added in later migrations (for example badge_rules)
+    # before SQLite/Postgres has created those columns.
+    SportsGame = apps.get_model("platform_sports", "SportsGame")
+    SportsTeam = apps.get_model("platform_sports", "SportsTeam")
 
     team = SportsTeam.objects.filter(group__name="Bed Springs Baptist", sport="SOFTBALL").select_related("group").first()
     if not team:
@@ -73,12 +76,14 @@ def seed_schedule(apps, schema_editor):
                     changed = True
             if changed:
                 game.save()
-        sync_game_social_event(game)
+        # This historical migration only seeds the fixture. Current Sports
+        # endpoints sync game schedules into Social calendars when they are
+        # created or edited, after all later schema migrations are present.
 
 
 def unseed_schedule(apps, schema_editor):
-    from personal_calendar.models import PersonalCalendarEvent
-    from platform_sports.models import SportsGame
+    PersonalCalendarEvent = apps.get_model("personal_calendar", "PersonalCalendarEvent")
+    SportsGame = apps.get_model("platform_sports", "SportsGame")
 
     games = list(SportsGame.objects.filter(team__group__name="Bed Springs Baptist", notes=MARKER).select_related("social_event"))
     event_ids = [game.social_event_id for game in games if game.social_event_id]

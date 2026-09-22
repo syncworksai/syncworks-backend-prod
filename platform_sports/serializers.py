@@ -27,10 +27,10 @@ class SportsTeamSerializer(serializers.ModelSerializer):
         model = SportsTeam
         fields = (
             "id", "group", "group_name", "group_kind", "city", "state", "logo_url",
-            "sport", "season_name", "league_name", "division_name", "created_by",
+            "sport", "season_name", "league_name", "division_name", "badge_rules", "created_by",
             "created_at", "updated_at",
         )
-        read_only_fields = ("id", "created_by", "created_at", "updated_at")
+        read_only_fields = ("id", "badge_rules", "created_by", "created_at", "updated_at")
 
 
 class SportsPlayerSerializer(serializers.ModelSerializer):

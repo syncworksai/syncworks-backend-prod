@@ -386,6 +386,52 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
         )
         return Response(self.get_serializer(team).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
+    @action(detail=True, methods=["get", "post"], url_path="badge-rules")
+    def badge_rules(self, request, pk=None):
+        from .badge_rules import get_team_badge_rules, validate_badge_rules
+
+        team = self.get_object()
+        if request.method == "POST":
+            if not can_manage_team(request.user, team):
+                return Response({"detail": "Only team owners and managers can change earned reward goals."},
+                                status=status.HTTP_403_FORBIDDEN)
+            try:
+                rules = validate_badge_rules(request.data.get("rules"))
+            except serializers.ValidationError as error:
+                return Response(error.detail, status=status.HTTP_400_BAD_REQUEST)
+            team.badge_rules = rules
+            team.save(update_fields=("badge_rules", "updated_at"))
+        return Response({"team": team.pk, "rules": get_team_badge_rules(team),
+                         "updated_at": team.updated_at})
+
+    @action(detail=True, methods=["get"], url_path="badge-standings")
+    def badge_standings(self, request, pk=None):
+        """Compact private badge rings for lineup and Game Book; no photos/emails."""
+        from .player_badges import card_progress
+        team = self.get_object()
+        if team.group_id not in active_group_ids(request.user):
+            return Response({"detail": "Join this team to view player achievements."},
+                            status=status.HTTP_403_FORBIDDEN)
+        rows = []
+        for player in team.players.filter(is_active=True).order_by("sort_order", "id")[:100]:
+            card = card_progress(player)
+            rows.append({
+                "player": player.pk,
+                "name": player.display_name,
+                "highest_tier": max(
+                    (badge["tier"] for badge in card["badges"] if badge["achieved"]),
+                    key=lambda tier: {"BRONZE": 1, "SILVER": 2, "GOLD": 3, "DIAMOND": 4}[tier],
+                    default="LOCKED",
+                ),
+                "ring_color": card["card_border"],
+                "badges": [
+                    {"key": badge["key"], "tier": badge["tier"],
+                     "achieved": badge["achieved"], "enabled": badge["enabled"]}
+                    for badge in card["badges"]
+                ],
+            })
+        return Response({"team": team.pk, "players": rows})
+
     @action(detail=True, methods=["post"], url_path="remind-dues")
     def remind_dues(self, request, pk=None):
         team = self.get_object()
@@ -1038,6 +1084,10 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         game = self.get_object()
         if not can_score_team(request.user, game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        if game.status != SportsGame.Status.SCHEDULED:
+            return Response({
+                "detail": "The batting order is locked after the first pitch. Use Game Book substitutions or defensive changes to protect recorded stats."
+            }, status=status.HTTP_409_CONFLICT)
         spots = request.data.get("spots")
         if not isinstance(spots, list):
             return Response({"detail": "spots must be a list."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1045,6 +1095,15 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         orders = [row.get("batting_order") for row in spots]
         if len(player_ids) != len(set(player_ids)) or len(orders) != len(set(orders)):
             return Response({"detail": "Players and batting-order positions must be unique."}, status=status.HTTP_400_BAD_REQUEST)
+        field_positions = [
+            str(row.get("defensive_position") or "").strip().upper()
+            for row in spots
+            if str(row.get("defensive_position") or "").strip().upper()
+            not in ("", "EH", "EH1", "EH2", "DH")
+        ]
+        if len(field_positions) != len(set(field_positions)):
+            return Response({"detail": "Only one defender may occupy each field position. Use EH for additional hitters."},
+                            status=status.HTTP_400_BAD_REQUEST)
         players = {p.id: p for p in SportsPlayer.objects.filter(team=game.team, id__in=player_ids, is_active=True)}
         if len(players) != len(player_ids):
             return Response({"detail": "Every lineup player must be active on this team."}, status=status.HTTP_400_BAD_REQUEST)
@@ -1343,7 +1402,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
             "url_path": f"/gamecast/{game.gamecast_token}",
         })
 
-    @action(detail=False, methods=["get"], url_path="gamecast-public")
+    @action(detail=False, methods=["get"], url_path="gamecast-public", permission_classes=[AllowAny])
     def gamecast_public(self, request):
         token = request.query_params.get("token")
         game = get_object_or_404(
@@ -1372,7 +1431,14 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         if game.gamecast_show_batter:
             spot = game.lineup_spots.filter(batting_order=game.current_batter_order).select_related("player").first()
             if spot:
-                current_batter = SportsPlayerSerializer(spot.player).data
+                # Public watch links must never expose the internal roster
+                # serializer's linked user account, email, or contact details.
+                current_batter = {
+                    "id": spot.player_id,
+                    "display_name": spot.player.display_name,
+                    "jersey_number": spot.player.jersey_number,
+                    "primary_position": spot.player.primary_position,
+                }
         recent = []
         if game.gamecast_show_recent_plays:
             for pa in plays[-12:]:
@@ -1393,6 +1459,8 @@ class SportsGameViewSet(viewsets.ModelViewSet):
                 "group_id": group.id,
                 "team_name": group.name,
                 "opponent_name": game.opponent_name,
+                "start_at": game.start_at,
+                "venue_name": game.venue_name,
                 "status": game.status,
                 "current_inning": game.current_inning,
                 "outs": game.outs,

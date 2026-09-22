@@ -29,6 +29,7 @@ class SportsTeam(models.Model):
     season_name = models.CharField(max_length=120, blank=True)
     league_name = models.CharField(max_length=180, blank=True)
     division_name = models.CharField(max_length=120, blank=True)
+    badge_rules = models.JSONField(default=dict, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
