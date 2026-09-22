@@ -263,7 +263,7 @@ def team_summary(rows):
     totals = {
         key: sum(int(row.get(key, 0) or 0) for row in rows)
         for key in (
-            "pa", "ab", "h", "bb", "sf", "hr", "rbi", "runs", "tb",
+            "pa", "ab", "h", "single", "double", "triple", "bb", "sf", "hr", "rbi", "runs", "tb",
             "quality_credits", "quality_outs", "move_opportunities", "move_successes", "runners_advanced",
         )
     }
@@ -569,8 +569,7 @@ class GameCastSettingsView(APIView):
 
 
 class PublicGameCastView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, token):
         share = get_object_or_404(
@@ -608,7 +607,9 @@ class PublicGameCastView(APIView):
         payload = {
             "game": {
                 "id": game.id,
+                "group_id": game.team.group_id,
                 "team_name": game.team.group.name,
+                "follower_count": game.team.group.followers.count(),
                 "opponent_name": game.opponent_name,
                 "status": game.status,
                 "game_type": game.game_type,
