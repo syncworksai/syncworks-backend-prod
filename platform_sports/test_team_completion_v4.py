@@ -13,7 +13,7 @@ User = get_user_model()
 
 class TeamCompletionQueueTests(APITestCase):
     def setUp(self):
-        self.owner = User.objects.create_user(email="manager@example.com", password="test-pass-123")
+        self.owner = User.objects.create_user(username="manager@example.com", email="manager@example.com", password="test-pass-123")
         self.group = SocialGroup.objects.create(
             name="Completion Team",
             kind=SocialGroup.Kind.TEAM,
