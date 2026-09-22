@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from .models import SoftballPlateAppearance, SportsGame
 from .ops_models import SoftballStatLedgerEntry, SportsPlayerMoment
+from .badge_rules import get_team_badge_rules
 
 
 LEVELS = (
@@ -93,11 +94,13 @@ def summary(row, *, label="", scope="", year=None, month=None, historical=False)
     }
 
 
-def badge(category, *, points=0, avg=0, ab=0, verified_only=False):
-    thresholds = THRESHOLDS[category]
+def badge(category, *, points=0, avg=0, ab=0, verified_only=False, rules=None):
+    settings = (rules or {}).get(category, {})
+    thresholds = settings.get("thresholds", THRESHOLDS[category])
+    enabled = settings.get("enabled", True)
     current = -1
     for i, minimum in enumerate(thresholds):
-        achieved = (avg >= minimum[0] and ab >= minimum[1]) if category == "CONTACT" else points >= minimum
+        achieved = enabled and ((avg >= minimum[0] and ab >= minimum[1]) if category == "CONTACT" else points >= minimum)
         if achieved:
             current = i
     tier = LEVELS[current][0] if current >= 0 else "LOCKED"
@@ -119,6 +122,7 @@ def badge(category, *, points=0, avg=0, ab=0, verified_only=False):
             goal = threshold
     return {
         "key": category, "tier": tier, "achieved": current >= 0,
+        "enabled": enabled, "thresholds": thresholds,
         "border_color": LEVELS[current][1] if current >= 0 else "#334155",
         "levels_unlocked": [level for level, _ in LEVELS[:current+1]],
         "next_tier": LEVELS[next_index][0] if next_index < len(LEVELS) else None,
@@ -198,11 +202,12 @@ def card_progress(player):
             clutch += 1
 
     season_row = summary(season_totals, label=season, year=season_year)
+    rules = get_team_badge_rules(player.team)
     badges = [
-        badge("POWER", points=season_row["power_points"]),
-        badge("CONTACT", avg=season_row["avg"], ab=season_row["ab"]),
-        badge("SPEED", points=speed, verified_only=True),
-        badge("CLUTCH", points=clutch, verified_only=True),
+        badge("POWER", points=season_row["power_points"], rules=rules),
+        badge("CONTACT", avg=season_row["avg"], ab=season_row["ab"], rules=rules),
+        badge("SPEED", points=speed, verified_only=True, rules=rules),
+        badge("CLUTCH", points=clutch, verified_only=True, rules=rules),
     ]
     achieved = [item for item in badges if item["achieved"]]
     current_max = max((len(b["levels_unlocked"]) for b in achieved), default=0)
@@ -212,6 +217,7 @@ def card_progress(player):
         "season_totals": season_row,
         "career_totals": summary(all_time, label="Career"),
         "badges": badges, "achieved_count": len(achieved), "card_border": ring,
+        "badge_rules": rules,
         "year_splits": [
             summary(row, label=str(year), year=year)
             for year, row in sorted(yearly.items(), reverse=True)
