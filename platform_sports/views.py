@@ -386,6 +386,52 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
         )
         return Response(self.get_serializer(team).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
+    @action(detail=True, methods=["get", "post"], url_path="badge-rules")
+    def badge_rules(self, request, pk=None):
+        from .badge_rules import get_team_badge_rules, validate_badge_rules
+
+        team = self.get_object()
+        if request.method == "POST":
+            if not can_manage_team(request.user, team):
+                return Response({"detail": "Only team owners and managers can change earned reward goals."},
+                                status=status.HTTP_403_FORBIDDEN)
+            try:
+                rules = validate_badge_rules(request.data.get("rules"))
+            except serializers.ValidationError as error:
+                return Response(error.detail, status=status.HTTP_400_BAD_REQUEST)
+            team.badge_rules = rules
+            team.save(update_fields=("badge_rules", "updated_at"))
+        return Response({"team": team.pk, "rules": get_team_badge_rules(team),
+                         "updated_at": team.updated_at})
+
+    @action(detail=True, methods=["get"], url_path="badge-standings")
+    def badge_standings(self, request, pk=None):
+        """Compact private badge rings for lineup and Game Book; no photos/emails."""
+        from .player_badges import card_progress
+        team = self.get_object()
+        if team.group_id not in active_group_ids(request.user):
+            return Response({"detail": "Join this team to view player achievements."},
+                            status=status.HTTP_403_FORBIDDEN)
+        rows = []
+        for player in team.players.filter(is_active=True).order_by("sort_order", "id")[:100]:
+            card = card_progress(player)
+            rows.append({
+                "player": player.pk,
+                "name": player.display_name,
+                "highest_tier": max(
+                    (badge["tier"] for badge in card["badges"] if badge["achieved"]),
+                    key=lambda tier: {"BRONZE": 1, "SILVER": 2, "GOLD": 3, "DIAMOND": 4}[tier],
+                    default="LOCKED",
+                ),
+                "ring_color": card["card_border"],
+                "badges": [
+                    {"key": badge["key"], "tier": badge["tier"],
+                     "achieved": badge["achieved"], "enabled": badge["enabled"]}
+                    for badge in card["badges"]
+                ],
+            })
+        return Response({"team": team.pk, "players": rows})
+
     @action(detail=True, methods=["post"], url_path="remind-dues")
     def remind_dues(self, request, pk=None):
         team = self.get_object()
