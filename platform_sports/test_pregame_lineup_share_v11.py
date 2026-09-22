@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from platform_social.models import GroupMembership, SocialGroup
-from platform_sports.models import SportsGame, SportsPlayer, SportsTeam
+from platform_sports.models import SportsGame, SportsLineupSpot, SportsPlayer, SportsTeam
 
 
 User = get_user_model()
@@ -100,11 +100,21 @@ class PregameLineupWatchLinkTests(APITestCase):
         self.assertEqual(self.client.post(
             self.base+"gamecast/", {"enabled": True}, format="json"
         ).status_code, 200)
+        # Linked user details contain a private account email in the
+        # internal roster serializer, but the guest watch link must not.
+        self.players[0].user = self.owner
+        self.players[0].save(update_fields=("user", "updated_at"))
+        SportsLineupSpot.objects.create(
+            game=self.game, player=self.players[0], batting_order=1,
+            defensive_position="SS",
+        )
         self.client.force_authenticate(user=None)
         visible = self.client.get(url, {"token": token})
         self.assertEqual(visible.status_code, 200)
         self.assertEqual(visible.data["game"]["status"], "SCHEDULED")
         self.assertNotIn("email", visible.data["game"])
+        self.assertNotIn("user_detail", visible.data["game"]["current_batter"])
+        self.assertNotIn(self.owner.email, str(visible.data))
         self.client.force_authenticate(self.owner)
         self.client.post(self.base+"gamecast/", {"enabled": False}, format="json")
         self.client.force_authenticate(user=None)
