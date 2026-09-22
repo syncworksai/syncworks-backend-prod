@@ -19,6 +19,7 @@ from user_accounts.services.notifications import notify
 
 from .emails import frontend_url, send_syncworks_team_invite
 from .player_merge import PlayerMergeMixin
+from .player_progress import PlayerProgressMixin
 from .models import SoftballPlateAppearance, SportsGame, SportsGameInning, SportsLineupSpot, SportsPlayer, SportsSubstitution, SportsTeam
 from .serializers import (
     SoftballPlateAppearanceSerializer,
@@ -598,7 +599,7 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
         return Response(softball_player_stats(team))
 
 
-class SportsPlayerViewSet(PlayerMergeMixin, viewsets.ModelViewSet):
+class SportsPlayerViewSet(PlayerProgressMixin, PlayerMergeMixin, viewsets.ModelViewSet):
     serializer_class = SportsPlayerSerializer
     permission_classes = [IsAuthenticated]
 

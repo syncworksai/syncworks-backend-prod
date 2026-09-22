@@ -17,6 +17,19 @@ class SportsPlayerProfile(models.Model):
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=40, blank=True)
     profile_photo = models.ImageField(upload_to="sports/player_profiles/%Y/%m/", blank=True, null=True)
+    # Unlike MEDIA_ROOT on ephemeral web instances, compressed card photos stay
+    # durable in Postgres and appear consistently on all app servers.
+    card_photo_data = models.BinaryField(null=True, blank=True, editable=False)
+    card_photo_mime = models.CharField(max_length=32, blank=True, default="")
+    card_style = models.CharField(max_length=24, default="CLASSIC", choices=(
+        ("CLASSIC", "Classic Gold"),
+        ("NEON", "Neon Night"),
+        ("DIAMOND", "Diamond"),
+        ("MIDNIGHT", "Midnight"),
+    ))
+    card_nickname = models.CharField(max_length=48, blank=True, default="")
+    card_photo_position = models.PositiveSmallIntegerField(default=50)
+
     emergency_contact_name = models.CharField(max_length=180, blank=True)
     emergency_contact_phone = models.CharField(max_length=40, blank=True)
     notes = models.TextField(blank=True)
@@ -239,3 +252,28 @@ class SportsPlayerInvite(models.Model):
 
     def __str__(self):
         return f"{self.player} · {self.email} · {self.status}"
+
+
+class SportsPlayerMoment(models.Model):
+    """Auditable, staff-verified moments for achievements not inferable from an AB."""
+    class Kind(models.TextChoices):
+        EXTRA_BASE = "EXTRA_BASE", "Took an extra base"
+        STEAL = "STEAL", "Successful steal (where permitted)"
+        TYING_HIT = "TYING_HIT", "Late tying hit"
+        GO_AHEAD_HIT = "GO_AHEAD_HIT", "Late go-ahead hit"
+
+    player = models.ForeignKey("platform_sports.SportsPlayer", on_delete=models.PROTECT, related_name="verified_moments")
+    game = models.ForeignKey("platform_sports.SportsGame", on_delete=models.PROTECT, related_name="verified_player_moments")
+    kind = models.CharField(max_length=24, choices=Kind.choices)
+    plate_appearance = models.ForeignKey("platform_sports.SoftballPlateAppearance", null=True, blank=True, on_delete=models.PROTECT, related_name="verified_moments")
+    verified_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="sports_moments_verified")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-game__start_at", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("game", "player", "kind"), name="sports_one_verified_kind_per_game"),
+        ]
+        indexes = [
+            models.Index(fields=("player", "kind"), name="sports_moment_player_kind"),
+        ]
