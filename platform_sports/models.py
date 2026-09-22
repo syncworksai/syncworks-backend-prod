@@ -69,6 +69,7 @@ class SportsPlayer(models.Model):
     throws = models.CharField(max_length=1, choices=Hand.choices, blank=True, default="")
     primary_position = models.CharField(max_length=40, blank=True)
     is_active = models.BooleanField(default=True)
+    merged_into = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="merged_player_records")
     sort_order = models.PositiveSmallIntegerField(default=0)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -142,6 +143,7 @@ class SportsGame(models.Model):
     )
     home_runs_against = models.PositiveSmallIntegerField(default=0)
     gamecast_enabled = models.BooleanField(default=False)
+    fan_gamecast_notified_at = models.DateTimeField(null=True, blank=True)
     gamecast_token = models.UUIDField(default=uuid.uuid4, editable=False)
     gamecast_show_batter = models.BooleanField(default=True)
     gamecast_show_recent_plays = models.BooleanField(default=True)
