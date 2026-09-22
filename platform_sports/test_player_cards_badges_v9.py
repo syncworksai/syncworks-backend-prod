@@ -184,3 +184,45 @@ class EarnedPlayerCardTests(APITestCase):
             format="multipart",
         )
         self.assertEqual(good.status_code, 400)
+
+    def test_manager_controls_reward_settings_and_player_rings_update(self):
+        from platform_sports.badge_rules import DEFAULT_BADGE_RULES
+        from copy import deepcopy
+
+        url = f"/api/v1/sports/teams/{self.team.id}/badge-rules/"
+        self.client.force_authenticate(self.athlete)
+        self.assertEqual(self.client.post(
+            url, {"rules": DEFAULT_BADGE_RULES}, format="json"
+        ).status_code, 403)
+        self.client.force_authenticate(self.owner)
+        bad = deepcopy(DEFAULT_BADGE_RULES)
+        bad["POWER"]["thresholds"] = [8, 3, 16, 30]
+        self.assertEqual(self.client.post(
+            url, {"rules": bad}, format="json"
+        ).status_code, 400)
+        custom = deepcopy(DEFAULT_BADGE_RULES)
+        custom["POWER"]["enabled"] = False
+        custom["CONTACT"]["thresholds"] = [
+            [0.50, 5], [0.60, 10], [0.70, 20], [0.80, 30]
+        ]
+        updated = self.client.post(url, {"rules": custom}, format="json")
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.client.force_authenticate(self.athlete)
+        card = self.client.get(self.card_url).data
+        self.assertEqual(card["badges"][0]["tier"], "LOCKED")
+        self.assertFalse(card["badges"][0]["enabled"])
+        self.assertEqual(card["badges"][1]["tier"], "SILVER")
+        self.assertEqual(card["card_border"], "#C0C0C0")
+
+    def test_team_badge_standings_are_private_and_show_verified_rank(self):
+        self.client.force_authenticate(self.outsider)
+        url = f"/api/v1/sports/teams/{self.team.id}/badge-standings/"
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.client.force_authenticate(self.athlete)
+        result = self.client.get(url)
+        self.assertEqual(result.status_code, 200)
+        rows = result.data["players"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["player"], self.player.id)
+        self.assertEqual(rows[0]["highest_tier"], "BRONZE")
+        self.assertEqual(rows[0]["ring_color"], "#CD7F32")
