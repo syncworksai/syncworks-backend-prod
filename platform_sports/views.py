@@ -722,7 +722,7 @@ class SportsPlayerViewSet(viewsets.ModelViewSet):
             )
 
         profile, _ = SportsPlayerProfile.objects.get_or_create(player=player)
-        if not profile.email:
+        if profile.email != email:
             profile.email = email
             profile.save(update_fields=("email", "updated_at"))
 
