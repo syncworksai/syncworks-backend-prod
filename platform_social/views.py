@@ -341,13 +341,15 @@ class SocialGroupViewSet(viewsets.ModelViewSet):
         if group.visibility != SocialGroup.Visibility.PUBLIC and not active_member:
             return Response({"detail": "Only public groups can be followed unless you are a member."}, status=status.HTTP_403_FORBIDDEN)
         GroupFollow.objects.get_or_create(group=group, user=request.user)
-        return Response(self.get_serializer(group).data)
+        fresh = SocialGroup.objects.get(pk=group.pk)
+        return Response(self.get_serializer(fresh).data)
 
     @action(detail=True, methods=["post"])
     def unfollow(self, request, pk=None):
         group = self.get_object()
         GroupFollow.objects.filter(group=group, user=request.user).delete()
-        return Response(self.get_serializer(group).data)
+        fresh = SocialGroup.objects.get(pk=group.pk)
+        return Response(self.get_serializer(fresh).data)
 
     @action(detail=False, methods=["get", "patch"], url_path="payment-profile")
     def payment_profile(self, request):
