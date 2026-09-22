@@ -271,6 +271,22 @@ class ConnectionViewSet(viewsets.ModelViewSet):
         connection.save(update_fields=("status", "responded_at", "updated_at"))
         return Response(self.get_serializer(connection).data)
 
+    @action(detail=True, methods=["post"], url_path="set-role")
+    def set_role(self, request, pk=None):
+        membership = self.get_object()
+        if not can_manage_group(request.user, membership.group_id):
+            return Response({"detail": "You do not manage this group."}, status=status.HTTP_403_FORBIDDEN)
+        role = str(request.data.get("role") or "").upper().strip()
+        if role not in GroupMembership.Role.values:
+            return Response({"detail": "Invalid group role."}, status=status.HTTP_400_BAD_REQUEST)
+        if membership.role == GroupMembership.Role.OWNER and role != GroupMembership.Role.OWNER:
+            return Response({"detail": "Transfer group ownership separately before changing the owner role."}, status=status.HTTP_409_CONFLICT)
+        if role == GroupMembership.Role.OWNER and membership.role != GroupMembership.Role.OWNER:
+            return Response({"detail": "Owner transfer is not available from the roster role picker."}, status=status.HTTP_409_CONFLICT)
+        membership.role = role
+        membership.save(update_fields=("role", "updated_at"))
+        return Response(self.get_serializer(membership).data)
+
     @action(detail=True, methods=["post"])
     def accept(self, request, pk=None):
         return self._respond(request, Connection.Status.ACCEPTED)
