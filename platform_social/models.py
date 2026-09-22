@@ -49,6 +49,16 @@ class SocialGroup(models.Model):
         HOUSEHOLD = "HOUSEHOLD", "Household"
         OTHER = "OTHER", "Other"
 
+    class Category(models.TextChoices):
+        SPORTS = "SPORTS", "Sports"
+        FAMILY = "FAMILY", "Family"
+        WORK = "WORK", "Work"
+        HOBBIES = "HOBBIES", "Hobbies"
+        CHURCH = "CHURCH", "Church / Faith"
+        FRIENDS = "FRIENDS", "Friends"
+        COMMUNITY = "COMMUNITY", "Community"
+        OTHER = "OTHER", "Other"
+
     class Visibility(models.TextChoices):
         PUBLIC = "PUBLIC", "Public"
         PRIVATE = "PRIVATE", "Private"
@@ -57,7 +67,9 @@ class SocialGroup(models.Model):
     name = models.CharField(max_length=180)
     description = models.TextField(blank=True)
     kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.COMMUNITY)
+    category = models.CharField(max_length=20, choices=Category.choices, default=Category.COMMUNITY)
     visibility = models.CharField(max_length=20, choices=Visibility.choices, default=Visibility.PRIVATE)
+    allow_followers = models.BooleanField(default=True)
     parent = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="children")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="social_groups_created")
     city = models.CharField(max_length=100, blank=True)
@@ -77,6 +89,34 @@ class SocialGroup(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class GroupFollow(models.Model):
+    group = models.ForeignKey(SocialGroup, on_delete=models.CASCADE, related_name="followers")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="social_group_follows")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-created_at", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("group", "user"), name="social_unique_group_follow"),
+        ]
+        indexes = [
+            models.Index(fields=("group", "created_at"), name="social_follow_group_time"),
+            models.Index(fields=("user", "created_at"), name="social_follow_user_time"),
+        ]
+
+
+class UserPaymentProfile(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="social_payment_profile")
+    cash_app_url = models.URLField(blank=True)
+    cash_app_label = models.CharField(max_length=80, blank=True)
+    venmo_url = models.URLField(blank=True)
+    venmo_label = models.CharField(max_length=80, blank=True)
+    zelle_instructions = models.CharField(max_length=240, blank=True)
+    stripe_payment_link = models.URLField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
 
 class GroupMembership(models.Model):
