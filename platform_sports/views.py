@@ -643,6 +643,39 @@ class SportsPlayerViewSet(PlayerMergeMixin, viewsets.ModelViewSet):
                 })
         serializer.save()
 
+    @action(detail=True, methods=["post"], url_path="link-member")
+    @transaction.atomic
+    def link_member(self, request, pk=None):
+        """Link a roster card to an already approved team member selected by the manager."""
+        from .ops_models import SportsPlayerProfile
+
+        player = self.get_object()
+        if not can_manage_team(request.user, player.team):
+            return Response({"detail": "Only managers can link a player's account."}, status=status.HTTP_403_FORBIDDEN)
+        if not player.is_active:
+            return Response({"detail": "Restore this player before linking an account."}, status=status.HTTP_409_CONFLICT)
+        try:
+            user_id = int(request.data.get("user") or 0)
+        except (ValueError, TypeError):
+            return Response({"detail": "Select an approved team member."}, status=status.HTTP_400_BAD_REQUEST)
+        membership = GroupMembership.objects.filter(
+            group=player.team.group, user_id=user_id,
+            status=GroupMembership.Status.ACTIVE,
+        ).select_related("user").first()
+        if not membership:
+            return Response({"detail": "The selected account must first join the team group."}, status=status.HTTP_400_BAD_REQUEST)
+        if player.user_id and player.user_id != user_id:
+            return Response({"detail": "This roster entry is already linked to a different account."}, status=status.HTTP_409_CONFLICT)
+        if SportsPlayer.objects.filter(team=player.team, user_id=user_id).exclude(pk=player.pk).exists():
+            return Response({"detail": "This account already has a player record. Use Merge to keep its game history."}, status=status.HTTP_409_CONFLICT)
+        player.user_id = user_id
+        player.save(update_fields=("user", "updated_at"))
+        profile, _ = SportsPlayerProfile.objects.get_or_create(player=player)
+        if not profile.email:
+            profile.email = membership.user.email or ""
+            profile.save(update_fields=("email", "updated_at"))
+        return Response({"linked": True, "player": self.get_serializer(player).data})
+
     @action(detail=False, methods=["post"], url_path="join-mine")
     @transaction.atomic
     def join_mine(self, request):
@@ -854,6 +887,8 @@ class SportsPlayerViewSet(PlayerMergeMixin, viewsets.ModelViewSet):
             )
 
         player = invite.player
+        if player.user_id and player.user_id != request.user.id:
+            return Response({"detail": "This roster entry is already linked to a different account. Ask your manager to resolve the conflict."}, status=status.HTTP_409_CONFLICT)
         duplicate = SportsPlayer.objects.filter(team=player.team, user=request.user).exclude(pk=player.pk).first()
         if duplicate:
             return Response(
