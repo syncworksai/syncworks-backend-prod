@@ -120,6 +120,7 @@ class SportsGameSerializer(serializers.ModelSerializer):
     substitutions = SportsSubstitutionSerializer(many=True, read_only=True)
     bench_players = serializers.SerializerMethodField()
     can_manage = serializers.SerializerMethodField()
+    can_score = serializers.SerializerMethodField()
     plate_appearance_count = serializers.IntegerField(source="plate_appearances.count", read_only=True)
     current_batter = serializers.SerializerMethodField()
     inning_lines = SportsGameInningSerializer(many=True, read_only=True)
@@ -138,13 +139,13 @@ class SportsGameSerializer(serializers.ModelSerializer):
             "gamecast_enabled", "gamecast_token", "gamecast_show_batter", "gamecast_show_recent_plays",
             "status", "current_inning", "outs", "current_batter_order", "current_batter",
             "runs_for", "runs_against", "started_at", "ended_at", "created_by",
-            "plate_appearance_count", "lineup_spots", "substitutions", "bench_players", "can_manage", "inning_lines", "created_at", "updated_at",
+            "plate_appearance_count", "lineup_spots", "substitutions", "bench_players", "can_manage", "can_score", "inning_lines", "created_at", "updated_at",
         )
         read_only_fields = (
             "id", "social_event", "social_event_detail", "status", "current_inning", "outs", "current_batter_order",
             "current_batter", "runs_for", "runs_against", "home_runs_for", "home_run_allowed", "gamecast_token",
             "rule_set_detail", "started_at", "ended_at", "created_by",
-            "plate_appearance_count", "lineup_spots", "substitutions", "bench_players", "can_manage", "created_at", "updated_at",
+            "plate_appearance_count", "lineup_spots", "substitutions", "bench_players", "can_manage", "can_score", "created_at", "updated_at",
         )
 
     def get_bench_players(self, obj):
@@ -165,6 +166,23 @@ class SportsGameSerializer(serializers.ModelSerializer):
                 GroupMembership.Role.OWNER,
                 GroupMembership.Role.DIRECTOR,
                 GroupMembership.Role.MANAGER,
+            ),
+        ).exists()
+
+    def get_can_score(self, obj):
+        request = self.context.get("request")
+        if not request or not getattr(request, "user", None) or not request.user.is_authenticated:
+            return False
+        from platform_social.models import GroupMembership
+        return GroupMembership.objects.filter(
+            group_id=obj.team.group_id,
+            user=request.user,
+            status=GroupMembership.Status.ACTIVE,
+            role__in=(
+                GroupMembership.Role.OWNER,
+                GroupMembership.Role.DIRECTOR,
+                GroupMembership.Role.MANAGER,
+                GroupMembership.Role.SCOREKEEPER,
             ),
         ).exists()
 
