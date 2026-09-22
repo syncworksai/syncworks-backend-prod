@@ -75,6 +75,7 @@ class SocialGroup(models.Model):
     city = models.CharField(max_length=100, blank=True)
     state = models.CharField(max_length=80, blank=True)
     logo_url = models.URLField(blank=True)
+    logo_image = models.ImageField(upload_to="social/group_logos/%Y/%m/", blank=True, null=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -124,6 +125,7 @@ class GroupMembership(models.Model):
         OWNER = "OWNER", "Owner"
         DIRECTOR = "DIRECTOR", "Director"
         MANAGER = "MANAGER", "Manager / Coach"
+        SCOREKEEPER = "SCOREKEEPER", "Scorekeeper"
         MEMBER = "MEMBER", "Member"
 
     class Status(models.TextChoices):
