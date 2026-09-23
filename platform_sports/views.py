@@ -23,6 +23,7 @@ from user_accounts.services.notifications import notify
 
 from .emails import frontend_url, send_syncworks_team_invite
 from .player_merge import PlayerMergeMixin
+from .player_book_audit import player_book_audit
 from .player_progress import PlayerProgressMixin
 from .models import (
     SoftballPlateAppearance, SportsGame, SportsGameBookPhoto, SportsGameInning,
@@ -156,7 +157,7 @@ def _ratio(numerator, denominator):
 
 
 def softball_player_stats(team):
-    players = list(team.players.order_by("sort_order", "display_name", "id"))
+    players = list(team.players.filter(merged_into__isnull=True).order_by("sort_order", "display_name", "id"))
     stats = {
         player.id: {
             "player": SportsPlayerSerializer(player).data,
@@ -267,7 +268,7 @@ def team_dashboard(team):
             "runs_for": sum(game.runs_for for game in final_games),
             "runs_against": sum(game.runs_against for game in final_games),
         },
-        "players": SportsPlayerSerializer(team.players.order_by("sort_order", "display_name"), many=True).data,
+        "players": SportsPlayerSerializer(team.players.filter(is_active=True, merged_into__isnull=True).order_by("sort_order", "display_name"), many=True).data,
         "player_stats": stats,
         "upcoming_games": SportsGameSerializer(
             games.filter(status=SportsGame.Status.SCHEDULED, start_at__gte=now).order_by("start_at")[:8],
@@ -872,6 +873,13 @@ class SportsPlayerViewSet(PlayerProgressMixin, PlayerMergeMixin, viewsets.ModelV
                     "detail": "Players may edit their name, bats/throws and primary position. Team managers control jersey and roster assignment."
                 })
         serializer.save()
+
+    @action(detail=True, methods=["get"], url_path="book-audit")
+    def book_audit(self, request, pk=None):
+        player = self.get_object()
+        if player.user_id != request.user.id and not can_score_team(request.user, player.team):
+            return Response({"detail": "Only this player or an authorized team scorekeeper can review individual book evidence."}, status=status.HTTP_403_FORBIDDEN)
+        return Response(player_book_audit(player))
 
     @action(detail=True, methods=["post"], url_path="link-member")
     @transaction.atomic
