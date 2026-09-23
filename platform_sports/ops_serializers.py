@@ -1,5 +1,6 @@
 import base64
 from io import BytesIO
+from datetime import date
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 from rest_framework import serializers
@@ -18,17 +19,29 @@ class SportsPlayerProfileSerializer(serializers.ModelSerializer):
     player_detail = SportsPlayerSerializer(source="player", read_only=True)
     profile_photo_url = serializers.SerializerMethodField()
     clear_photo = serializers.BooleanField(write_only=True, required=False, default=False)
+    age = serializers.SerializerMethodField()
 
     class Meta:
         model = SportsPlayerProfile
         fields = (
-            "id", "player", "player_detail", "email", "phone", "profile_photo",
+            "id", "player", "player_detail", "email", "phone", "birth_date", "age", "show_age", "profile_photo",
             "profile_photo_url", "card_style", "card_nickname", "card_photo_position",
             "clear_photo", "emergency_contact_name", "emergency_contact_phone",
             "notes", "created_at", "updated_at",
         )
-        read_only_fields = ("id", "profile_photo_url", "created_at", "updated_at")
+        read_only_fields = ("id", "age", "profile_photo_url", "created_at", "updated_at")
         extra_kwargs = {"profile_photo": {"write_only": True, "required": False}}
+
+    def validate_birth_date(self, value):
+        if value is not None and (value > date.today() or value.year < 1900):
+            raise serializers.ValidationError("Enter a valid birth date.")
+        return value
+
+    def get_age(self, obj):
+        if not obj.birth_date:
+            return None
+        today = date.today()
+        return today.year - obj.birth_date.year - ((today.month, today.day) < (obj.birth_date.month, obj.birth_date.day))
 
     def get_profile_photo_url(self, obj):
         # DB-backed thumbnail survives Render rolling deploys and works even
