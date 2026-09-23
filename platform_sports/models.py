@@ -191,6 +191,7 @@ class SportsScorebookPage(models.Model):
     side = models.CharField(max_length=12, choices=Side.choices)
     page_order = models.PositiveSmallIntegerField(default=1)
     filename = models.CharField(max_length=160, blank=True)
+    rotation = models.PositiveSmallIntegerField(default=0)
     source_sha256 = models.CharField(max_length=64)
     image_mime = models.CharField(max_length=32, default="image/jpeg")
     image_data = models.BinaryField(repr=False)
