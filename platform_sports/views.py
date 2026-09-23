@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import hashlib
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Max, Q
 from django.shortcuts import get_object_or_404
+from django.http import HttpResponse
 from django.utils import timezone
-from rest_framework import serializers, status, viewsets
+from rest_framework import parsers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -20,10 +22,14 @@ from user_accounts.services.notifications import notify
 from .emails import frontend_url, send_syncworks_team_invite
 from .player_merge import PlayerMergeMixin
 from .player_progress import PlayerProgressMixin
-from .models import SoftballPlateAppearance, SportsGame, SportsGameInning, SportsLineupSpot, SportsPlayer, SportsSubstitution, SportsTeam
+from .models import (
+    SoftballPlateAppearance, SportsGame, SportsGameBookPhoto, SportsGameInning,
+    SportsLineupSpot, SportsPlayer, SportsSubstitution, SportsTeam,
+)
 from .serializers import (
     SoftballPlateAppearanceSerializer,
     SportsGameSerializer,
+    SportsGameBookPhotoSerializer,
     SportsGameInningSerializer,
     SportsLineupSpotSerializer,
     SportsPlayerSerializer,
@@ -1477,6 +1483,102 @@ class SportsGameViewSet(viewsets.ModelViewSet):
             "plays": recent,
         })
 
+    @action(detail=True, methods=["post"], url_path="import-historical-book")
+    @transaction.atomic
+    def import_historical_book(self, request, pk=None):
+        """Replace a historical game's verified book without ever keying stats to lineup slot."""
+        game = SportsGame.objects.select_for_update().select_related("team").get(pk=self.get_object().pk)
+        if not can_score_team(request.user, game.team):
+            return Response({"detail": "You do not have scorekeeping access for this team."}, status=status.HTTP_403_FORBIDDEN)
+        if game.status == SportsGame.Status.LIVE:
+            return Response({"detail": "Finish or reopen/finish the live game before importing a historical book."}, status=status.HTTP_409_CONFLICT)
+
+        plays = request.data.get("plays")
+        lineup = request.data.get("lineup", [])
+        if not isinstance(plays, list) or not isinstance(lineup, list):
+            return Response({"detail": "lineup and plays must be lists."}, status=status.HTTP_400_BAD_REQUEST)
+
+        player_ids = set()
+        for row in lineup:
+            try:
+                player_ids.add(int(row.get("player")))
+            except (TypeError, ValueError):
+                return Response({"detail": "Every lineup row must reference an existing player ID."}, status=status.HTTP_400_BAD_REQUEST)
+        for row in plays:
+            try:
+                player_ids.add(int(row.get("player")))
+            except (TypeError, ValueError):
+                return Response({"detail": "Every play must reference an existing player ID."}, status=status.HTTP_400_BAD_REQUEST)
+
+        players = {p.id: p for p in SportsPlayer.objects.filter(team=game.team, id__in=player_ids)}
+        if len(players) != len(player_ids):
+            return Response(
+                {"detail": "One or more scorebook names are not mapped to an existing player on this team."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        new_spots = []
+        seen_orders, seen_players = set(), set()
+        for row in lineup:
+            try:
+                pid = int(row["player"])
+                order = int(row["batting_order"])
+            except (KeyError, TypeError, ValueError):
+                return Response({"detail": "Invalid lineup row."}, status=status.HTTP_400_BAD_REQUEST)
+            if order < 1 or order in seen_orders or pid in seen_players:
+                return Response({"detail": "Batting positions and players must be unique within a game."}, status=status.HTTP_400_BAD_REQUEST)
+            seen_orders.add(order); seen_players.add(pid)
+            new_spots.append(SportsLineupSpot(
+                game=game, player=players[pid], batting_order=order,
+                defensive_position=str(row.get("defensive_position") or "")[:40],
+                is_starter=bool(row.get("is_starter", True)),
+            ))
+
+        valid_results = set(SoftballPlateAppearance.Result.values)
+        new_plays = []
+        for sequence, row in enumerate(plays, start=1):
+            try:
+                pid = int(row["player"])
+                inning = max(1, int(row.get("inning") or 1))
+                result = str(row["result"]).upper()
+                outs_recorded = max(0, min(3, int(row.get("outs_recorded") or 0)))
+                rbi = max(0, min(4, int(row.get("rbi") or 0)))
+                runs_scored = max(0, min(4, int(row.get("runs_scored") or 0)))
+            except (KeyError, TypeError, ValueError):
+                return Response({"detail": f"Invalid play at sequence {sequence}."}, status=status.HTTP_400_BAD_REQUEST)
+            if result not in valid_results:
+                return Response({"detail": f"Unsupported result {result} at sequence {sequence}."}, status=status.HTTP_400_BAD_REQUEST)
+            new_plays.append(SoftballPlateAppearance(
+                game=game, player=players[pid], sequence=sequence, inning=inning, result=result,
+                outs_recorded=outs_recorded, rbi=rbi, runs_scored=runs_scored,
+                notes=str(row.get("notes") or "")[:240], created_by=request.user,
+            ))
+
+        try:
+            runs_for = int(request.data.get("runs_for"))
+            runs_against = int(request.data.get("runs_against"))
+        except (TypeError, ValueError):
+            return Response({"detail": "Verified final runs_for and runs_against are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if runs_for < 0 or runs_against < 0:
+            return Response({"detail": "Final scores cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Idempotent replace: this game is the unit of truth. Re-importing never doubles stats.
+        game.plate_appearances.all().delete()
+        if new_spots:
+            game.lineup_spots.all().delete()
+            SportsLineupSpot.objects.bulk_create(new_spots)
+        SoftballPlateAppearance.objects.bulk_create(new_plays)
+        rebuild_game_from_book(game)
+        game.refresh_from_db()
+        game.runs_for = runs_for
+        game.runs_against = runs_against
+        game.status = SportsGame.Status.FINAL
+        game.ended_at = game.ended_at or game.start_at
+        game.save(update_fields=("runs_for", "runs_against", "status", "ended_at", "updated_at"))
+        sync_game_social_event(game)
+        fresh = self.get_queryset().get(pk=game.pk)
+        return Response(self.get_serializer(fresh).data)
+
     @action(detail=True, methods=["post"], url_path="delete-book")
     @transaction.atomic
     def delete_book(self, request, pk=None):
@@ -1584,3 +1686,68 @@ class SoftballPlateAppearanceViewSet(viewsets.ReadOnlyModelViewSet):
             "play": self.get_serializer(corrected).data,
             "game": SportsGameSerializer(fresh_game).data,
         })
+
+
+class SportsGameBookPhotoViewSet(viewsets.ModelViewSet):
+    serializer_class = SportsGameBookPhotoSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [parsers.MultiPartParser, parsers.FormParser]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        group_ids = active_group_ids(self.request.user)
+        queryset = SportsGameBookPhoto.objects.filter(
+            game__team__group_id__in=group_ids
+        ).select_related("game__team__group", "uploaded_by")
+        game_id = self.request.query_params.get("game")
+        return queryset.filter(game_id=game_id) if game_id else queryset
+
+    def create(self, request, *args, **kwargs):
+        game = get_object_or_404(SportsGame.objects.select_related("team"), pk=request.data.get("game"))
+        if not can_score_team(request.user, game.team):
+            return Response({"detail": "Scorekeeping access is required to upload a Game Book."}, status=status.HTTP_403_FORBIDDEN)
+        upload = request.FILES.get("image")
+        if not upload:
+            return Response({"detail": "Choose a scorebook photo."}, status=status.HTTP_400_BAD_REQUEST)
+        content_type = str(getattr(upload, "content_type", "") or "").lower()
+        if content_type not in ("image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"):
+            return Response({"detail": "Upload a JPG, PNG, WEBP, HEIC, or HEIF image."}, status=status.HTTP_400_BAD_REQUEST)
+        raw = upload.read()
+        if not raw:
+            return Response({"detail": "The uploaded image was empty."}, status=status.HTTP_400_BAD_REQUEST)
+        if len(raw) > 8 * 1024 * 1024:
+            return Response({"detail": "Scorebook photos must be 8 MB or smaller."}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        digest = hashlib.sha256(raw).hexdigest()
+        photo, created = SportsGameBookPhoto.objects.get_or_create(
+            game=game,
+            sha256=digest,
+            defaults={
+                "uploaded_by": request.user,
+                "original_name": str(getattr(upload, "name", "") or "")[:220],
+                "content_type": content_type,
+                "byte_size": len(raw),
+                "image_data": raw,
+                "page_label": str(request.data.get("page_label") or "")[:80],
+            },
+        )
+        serializer = self.get_serializer(photo)
+        return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    def perform_update(self, serializer):
+        photo = self.get_object()
+        if not can_score_team(self.request.user, photo.game.team):
+            raise serializers.ValidationError("Scorekeeping access is required.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not can_manage_team(self.request.user, instance.game.team):
+            raise serializers.ValidationError("Team manager access is required to remove a scorebook photo.")
+        instance.delete()
+
+    @action(detail=True, methods=["get"], url_path="image")
+    def image(self, request, pk=None):
+        photo = self.get_object()
+        response = HttpResponse(bytes(photo.image_data), content_type=photo.content_type or "image/jpeg")
+        response["Content-Disposition"] = f'inline; filename="{photo.original_name or "scorebook.jpg"}"'
+        response["Cache-Control"] = "private, max-age=300"
+        return response
