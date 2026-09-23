@@ -296,3 +296,53 @@ class SoftballPlateAppearance(models.Model):
 
     def __str__(self):
         return f"{self.game_id} · {self.sequence} · {self.player.display_name} · {self.result}"
+
+
+class SportsGameBookPage(models.Model):
+    """Private source image for a historical or live Game Book.
+
+    Photographs never create plate appearances or alter official statistics.
+    They must be transcribed into the Game Book and checked by a team manager.
+    The uploaded original is kept in the database because Render's local
+    MEDIA_ROOT may not persist between deployments.
+    """
+
+    class ReviewStatus(models.TextChoices):
+        NEEDS_REVIEW = "NEEDS_REVIEW", "Needs review"
+        REVIEWED = "REVIEWED", "Image reviewed"
+
+    game = models.ForeignKey(
+        SportsGame, on_delete=models.CASCADE, related_name="scorebook_pages",
+    )
+    page_number = models.PositiveSmallIntegerField()
+    image_data = models.BinaryField(editable=False)
+    image_mime = models.CharField(max_length=32)
+    image_width = models.PositiveIntegerField()
+    image_height = models.PositiveIntegerField()
+    original_filename = models.CharField(max_length=180)
+    notes = models.CharField(max_length=1000, blank=True)
+    review_status = models.CharField(
+        max_length=16, choices=ReviewStatus.choices, default=ReviewStatus.NEEDS_REVIEW,
+    )
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name="uploaded_gamebook_pages",
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="reviewed_gamebook_pages",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("page_number", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("game", "page_number"), name="sports_book_game_page",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Game {self.game_id} · page {self.page_number}"
