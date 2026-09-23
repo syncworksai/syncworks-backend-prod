@@ -69,3 +69,19 @@ class PlayerBookAuditTests(APITestCase):
         self.assertEqual(self.client.get(path).status_code, 403)
         self.client.force_authenticate(self.coach)
         self.assertEqual(self.client.get(path).status_code, 200)
+
+    def test_merged_placeholder_is_not_an_extra_player_in_stats(self):
+        from platform_sports.views import softball_player_stats, team_dashboard
+        from platform_sports.ops_views import softball_stats_summary
+
+        archived = SportsPlayer.objects.create(
+            team=self.team, display_name="Example Shortstop",
+            is_active=False, merged_into=self.player, created_by=self.coach,
+        )
+        ordinary = softball_player_stats(self.team)
+        detailed = softball_stats_summary(self.team, "ALL")
+        roster = team_dashboard(self.team)["players"]
+        self.assertFalse(any(row["player"]["id"] == archived.id for row in ordinary))
+        self.assertFalse(any(row["player"]["id"] == archived.id for row in detailed))
+        self.assertFalse(any(row["id"] == archived.id for row in roster))
+        self.assertTrue(any(row["player"]["id"] == self.player.id for row in ordinary))
