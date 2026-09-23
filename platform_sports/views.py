@@ -18,6 +18,7 @@ from user_accounts.models import Notification
 from user_accounts.services.notifications import notify
 
 from .emails import frontend_url, send_syncworks_team_invite
+from .gamebook_photo_uploads import GameBookPhotoMixin
 from .player_merge import PlayerMergeMixin
 from .player_progress import PlayerProgressMixin
 from .models import SoftballPlateAppearance, SportsGame, SportsGameInning, SportsLineupSpot, SportsPlayer, SportsSubstitution, SportsTeam
@@ -1044,7 +1045,7 @@ class SportsPlayerViewSet(PlayerProgressMixin, PlayerMergeMixin, viewsets.ModelV
         instance.save(update_fields=("is_active", "updated_at"))
 
 
-class SportsGameViewSet(viewsets.ModelViewSet):
+class SportsGameViewSet(GameBookPhotoMixin, viewsets.ModelViewSet):
     serializer_class = SportsGameSerializer
     permission_classes = [IsAuthenticated]
 
