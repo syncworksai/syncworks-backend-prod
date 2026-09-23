@@ -17,6 +17,7 @@ class Migration(migrations.Migration):
                 ("side", models.CharField(choices=[("TEAM", "Our team"), ("OPPONENT", "Opponent")], max_length=12)),
                 ("page_order", models.PositiveSmallIntegerField(default=1)),
                 ("filename", models.CharField(blank=True, max_length=160)),
+                ("rotation", models.PositiveSmallIntegerField(default=0)),
                 ("source_sha256", models.CharField(max_length=64)),
                 ("image_mime", models.CharField(default="image/jpeg", max_length=32)),
                 ("image_data", models.BinaryField(repr=False)),
