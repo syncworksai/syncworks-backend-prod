@@ -1562,6 +1562,12 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         if runs_for < 0 or runs_against < 0:
             return Response({"detail": "Final scores cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
 
+        if new_plays and sum(play.runs_scored for play in new_plays) != runs_for:
+            return Response(
+                {"detail": "Imported play runs do not match the confirmed final score. Review missing or ambiguous scorebook cells before publishing stats."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Idempotent replace: this game is the unit of truth. Re-importing never doubles stats.
         game.plate_appearances.all().delete()
         if new_spots:
