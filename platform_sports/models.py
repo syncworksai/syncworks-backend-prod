@@ -276,6 +276,11 @@ class SoftballPlateAppearance(models.Model):
     rbi = models.PositiveSmallIntegerField(default=0)
     runs_scored = models.PositiveSmallIntegerField(default=0)
     notes = models.CharField(max_length=240, blank=True)
+    source_photo = models.ForeignKey(
+        "platform_sports.SportsGameBookPhoto", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="transcribed_plays",
+    )
+    source_cell_key = models.CharField(max_length=80, blank=True, default="")
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
