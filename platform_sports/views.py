@@ -602,6 +602,7 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
             row.response = value
             row.responded_at = timezone.now()
             row.save(update_fields=("response", "responded_at", "updated_at"))
+            sync_social_event_calendars(game.social_event)
             changed += 1
         return Response({
             "updated": changed,
