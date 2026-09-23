@@ -6,6 +6,7 @@ from platform_social.serializers import SocialEventSerializer, SocialUserSeriali
 from .models import (
     SoftballPlateAppearance,
     SportsGame,
+    SportsGameBookPhoto,
     SportsGameInning,
     SportsLineupSpot,
     SportsSubstitution,
@@ -221,3 +222,23 @@ class SportsGameSerializer(serializers.ModelSerializer):
             None,
         )
         return SportsPlayerSerializer(spot.player).data if spot else None
+
+
+class SportsGameBookPhotoSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SportsGameBookPhoto
+        fields = (
+            "id", "game", "original_name", "content_type", "byte_size", "sha256",
+            "page_label", "review_status", "review_notes", "extracted_data",
+            "image_url", "uploaded_by", "created_at", "updated_at",
+        )
+        read_only_fields = (
+            "id", "sha256", "uploaded_by", "created_at", "updated_at", "image_url",
+        )
+
+    def get_image_url(self, obj):
+        request = self.context.get("request")
+        path = f"/api/v1/sports/game-book-photos/{obj.pk}/image/"
+        return request.build_absolute_uri(path) if request else path
