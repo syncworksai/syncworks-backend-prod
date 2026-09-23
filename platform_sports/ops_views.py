@@ -13,6 +13,7 @@ from .models import SoftballPlateAppearance, SportsGame, SportsPlayer, SportsTea
 from .ops_models import (
     SoftballStatLedgerEntry,
     SportsPlayerProfile,
+    SportsPlayerAward,
     TeamFee,
     TeamFeeAssignment,
     TeamPaymentSettings,
@@ -20,6 +21,7 @@ from .ops_models import (
 from .ops_serializers import (
     SoftballStatLedgerEntrySerializer,
     SportsPlayerProfileSerializer,
+    SportsPlayerAwardSerializer,
     TeamFeeAssignmentSerializer,
     TeamFeeSerializer,
     TeamPaymentSettingsSerializer,
@@ -371,3 +373,39 @@ class SoftballStatLedgerEntryViewSet(viewsets.ModelViewSet):
             return Response({"detail": "This stat summary is currently for softball."}, status=status.HTTP_400_BAD_REQUEST)
         scope = str(request.query_params.get("scope") or "ALL").upper()
         return Response({"scope": scope if scope in ("ALL", "LEAGUE", "TOURNAMENT") else "ALL", "rows": softball_stats_summary(team, scope)})
+
+
+class SportsPlayerAwardViewSet(viewsets.ModelViewSet):
+    serializer_class = SportsPlayerAwardSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        group_ids = active_group_ids(self.request.user)
+        queryset = SportsPlayerAward.objects.filter(
+            team__group_id__in=group_ids
+        ).select_related("team__group", "player__user", "awarded_by")
+        team_id = self.request.query_params.get("team")
+        player_id = self.request.query_params.get("player")
+        if team_id:
+            queryset = queryset.filter(team_id=team_id)
+        if player_id:
+            queryset = queryset.filter(player_id=player_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        team = serializer.validated_data["team"]
+        if not can_manage_team(self.request.user, team):
+            raise serializers.ValidationError("Only a coach or manager can give team awards.")
+        serializer.save(awarded_by=self.request.user)
+
+    def perform_update(self, serializer):
+        award = self.get_object()
+        if not can_manage_team(self.request.user, award.team):
+            raise serializers.ValidationError("Only a coach or manager can edit team awards.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not can_manage_team(self.request.user, instance.team):
+            raise serializers.ValidationError("Only a coach or manager can remove team awards.")
+        instance.delete()

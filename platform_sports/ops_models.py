@@ -16,6 +16,8 @@ class SportsPlayerProfile(models.Model):
     )
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=40, blank=True)
+    date_of_birth = models.DateField(null=True, blank=True)
+    show_age_to_team = models.BooleanField(default=False)
     profile_photo = models.ImageField(upload_to="sports/player_profiles/%Y/%m/", blank=True, null=True)
     # Unlike MEDIA_ROOT on ephemeral web instances, compressed card photos stay
     # durable in Postgres and appear consistently on all app servers.
@@ -277,3 +279,50 @@ class SportsPlayerMoment(models.Model):
         indexes = [
             models.Index(fields=("player", "kind"), name="sports_moment_player_kind"),
         ]
+
+
+class SportsPlayerAward(models.Model):
+    class Kind(models.TextChoices):
+        PLAYER_OF_WEEK = "PLAYER_OF_WEEK", "Player of the Week"
+        ROOKIE_OF_YEAR = "ROOKIE_OF_YEAR", "Rookie of the Year"
+        GOLD_GLOVE = "GOLD_GLOVE", "Gold Glove"
+        HUSTLE = "HUSTLE", "Hustle Award"
+        TEAM_FIRST = "TEAM_FIRST", "Team First"
+        MVP = "MVP", "Most Valuable Player"
+        CUSTOM = "CUSTOM", "Custom"
+
+    team = models.ForeignKey(
+        "platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="player_awards"
+    )
+    player = models.ForeignKey(
+        "platform_sports.SportsPlayer", on_delete=models.CASCADE, related_name="coach_awards"
+    )
+    kind = models.CharField(max_length=24, choices=Kind.choices, default=Kind.CUSTOM)
+    title = models.CharField(max_length=120)
+    season_name = models.CharField(max_length=120, blank=True)
+    week_of = models.DateField(null=True, blank=True)
+    note = models.CharField(max_length=500, blank=True)
+    awarded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="sports_awards_given"
+    )
+    awarded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-awarded_at", "-id")
+        indexes = [
+            models.Index(fields=("team", "season_name"), name="sports_award_team_season"),
+            models.Index(fields=("player", "kind"), name="sports_award_player_kind"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("team", "player", "kind", "season_name", "week_of"),
+                name="sports_unique_player_award_period",
+            )
+        ]
+
+    def clean(self):
+        if self.player_id and self.team_id and self.player.team_id != self.team_id:
+            raise ValidationError({"player": "Player must belong to the award team."})
+
+    def __str__(self):
+        return f"{self.player} · {self.title}"

@@ -15,7 +15,28 @@ class PlayerProgressMixin:
         if not player.is_active:
             return Response({"detail": "This card was archived. Open the surviving roster entry."},
                             status=status.HTTP_409_CONFLICT)
-        return Response(card_progress(player))
+        data = card_progress(player)
+        # Age progression is private unless the player explicitly opts to share age with teammates.
+        manager = False
+        try:
+            from platform_social.models import GroupMembership
+            manager = GroupMembership.objects.filter(
+                group_id=player.team.group_id,
+                user=request.user,
+                status=GroupMembership.Status.ACTIVE,
+                role__in=(GroupMembership.Role.OWNER, GroupMembership.Role.DIRECTOR, GroupMembership.Role.MANAGER),
+            ).exists()
+        except Exception:
+            manager = False
+        owner = player.user_id == request.user.id
+        share_age = False
+        try:
+            share_age = bool(player.manager_profile.show_age_to_team)
+        except Exception:
+            share_age = False
+        if not (owner or manager or share_age):
+            data["age_performance"] = []
+        return Response(data)
 
     @action(detail=True, methods=["post"], url_path="verify-moment")
     @transaction.atomic

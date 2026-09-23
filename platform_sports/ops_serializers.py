@@ -6,6 +6,7 @@ from rest_framework import serializers
 
 from .ops_models import (
     SoftballStatLedgerEntry,
+    SportsPlayerAward,
     SportsPlayerProfile,
     TeamFee,
     TeamFeeAssignment,
@@ -18,16 +19,24 @@ class SportsPlayerProfileSerializer(serializers.ModelSerializer):
     player_detail = SportsPlayerSerializer(source="player", read_only=True)
     profile_photo_url = serializers.SerializerMethodField()
     clear_photo = serializers.BooleanField(write_only=True, required=False, default=False)
+    age = serializers.SerializerMethodField()
+
+    def get_age(self, obj):
+        if not obj.date_of_birth:
+            return None
+        from django.utils import timezone
+        today = timezone.localdate()
+        return today.year - obj.date_of_birth.year - ((today.month, today.day) < (obj.date_of_birth.month, obj.date_of_birth.day))
 
     class Meta:
         model = SportsPlayerProfile
         fields = (
-            "id", "player", "player_detail", "email", "phone", "profile_photo",
+            "id", "player", "player_detail", "email", "phone", "date_of_birth", "age", "show_age_to_team", "profile_photo",
             "profile_photo_url", "card_style", "card_nickname", "card_photo_position",
             "clear_photo", "emergency_contact_name", "emergency_contact_phone",
             "notes", "created_at", "updated_at",
         )
-        read_only_fields = ("id", "profile_photo_url", "created_at", "updated_at")
+        read_only_fields = ("id", "profile_photo_url", "age", "created_at", "updated_at")
         extra_kwargs = {"profile_photo": {"write_only": True, "required": False}}
 
     def get_profile_photo_url(self, obj):
@@ -182,4 +191,34 @@ class SoftballStatLedgerEntrySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"hits": "Hits cannot exceed at-bats."})
         if doubles + triples + home_runs > hits:
             raise serializers.ValidationError({"hits": "Extra-base hits cannot exceed total hits."})
+        return attrs
+
+
+class SportsPlayerAwardSerializer(serializers.ModelSerializer):
+    player_detail = SportsPlayerSerializer(source="player", read_only=True)
+    awarded_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SportsPlayerAward
+        fields = (
+            "id", "team", "player", "player_detail", "kind", "title", "season_name",
+            "week_of", "note", "awarded_by", "awarded_by_name", "awarded_at",
+        )
+        read_only_fields = ("id", "awarded_by", "awarded_by_name", "awarded_at")
+
+    def get_awarded_by_name(self, obj):
+        user = obj.awarded_by
+        name = f"{getattr(user, 'first_name', '')} {getattr(user, 'last_name', '')}".strip()
+        return name or getattr(user, "email", "") or "Coach"
+
+    def validate(self, attrs):
+        team = attrs.get("team", getattr(self.instance, "team", None))
+        player = attrs.get("player", getattr(self.instance, "player", None))
+        if team and player and player.team_id != team.id:
+            raise serializers.ValidationError({"player": "Player must belong to this team."})
+        kind = attrs.get("kind", getattr(self.instance, "kind", SportsPlayerAward.Kind.CUSTOM))
+        title = str(attrs.get("title", getattr(self.instance, "title", "")) or "").strip()
+        if not title:
+            title = dict(SportsPlayerAward.Kind.choices).get(kind, "Coach Award")
+            attrs["title"] = title
         return attrs
