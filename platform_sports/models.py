@@ -178,6 +178,67 @@ class SportsGame(models.Model):
         return f"{self.team.group.name} vs {self.opponent_name}"
 
 
+class SportsScorebookPage(models.Model):
+    """Private, durable scan of one side of a physical game book."""
+
+    class Side(models.TextChoices):
+        TEAM = "TEAM", "Our team"
+        OPPONENT = "OPPONENT", "Opponent"
+
+    game = models.ForeignKey(
+        SportsGame, on_delete=models.CASCADE, related_name="scorebook_pages",
+    )
+    side = models.CharField(max_length=12, choices=Side.choices)
+    page_order = models.PositiveSmallIntegerField(default=1)
+    filename = models.CharField(max_length=160, blank=True)
+    source_sha256 = models.CharField(max_length=64)
+    image_mime = models.CharField(max_length=32, default="image/jpeg")
+    image_data = models.BinaryField(repr=False)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, related_name="sports_scorebook_uploads",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("page_order", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("game", "source_sha256"),
+                name="sports_unique_scorebook_scan",
+            ),
+        ]
+
+
+class SportsScorebookReview(models.Model):
+    """Draft transcription never touches player statistics until approved."""
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Needs review"
+        SCORE_VERIFIED = "SCORE_VERIFIED", "Final score verified"
+        FULLY_VERIFIED = "FULLY_VERIFIED", "All plays verified"
+
+    game = models.OneToOneField(
+        SportsGame, on_delete=models.CASCADE, related_name="scorebook_review",
+    )
+    payload = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.DRAFT,
+    )
+    applied_sha256 = models.CharField(max_length=64, blank=True)
+    audit_log = models.JSONField(default=list, blank=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, related_name="sports_scorebook_reviews",
+    )
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="sports_scorebooks_verified",
+    )
+    verified_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
 class SportsLineupSpot(models.Model):
     game = models.ForeignKey(SportsGame, on_delete=models.CASCADE, related_name="lineup_spots")
     player = models.ForeignKey(SportsPlayer, on_delete=models.CASCADE, related_name="lineup_spots")
