@@ -342,8 +342,12 @@ class PlayContextUpsertView(APIView):
             SoftballPlateAppearance.objects.select_related("game__team__group"),
             pk=request.data.get("plate_appearance"),
         )
-        if not can_manage_team(request.user, pa.game.team):
-            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        if not GroupMembership.objects.filter(
+            group_id=pa.game.team.group_id, user=request.user,
+            status=GroupMembership.Status.ACTIVE,
+            role__in=MANAGEMENT_ROLES + (GroupMembership.Role.SCOREKEEPER,),
+        ).exists():
+            return Response({"detail": "Scorekeeping permission is required to record situational context."}, status=status.HTTP_403_FORBIDDEN)
         context = SoftballPlayContext.objects.filter(plate_appearance=pa).first()
         serializer = SoftballPlayContextSerializer(
             context,
