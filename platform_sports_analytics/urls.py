@@ -1,4 +1,5 @@
 from django.urls import path
+from .situation_views import GameSituationSplitsView
 
 from .views import (
     AdvancedTeamStatsView,
@@ -10,6 +11,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path("advanced/teams/<int:team_id>/situations/", GameSituationSplitsView.as_view(), name="sports-team-situations"),
     path("advanced/play-context/", PlayContextUpsertView.as_view(), name="sports-advanced-play-context"),
     path("advanced/teams/<int:team_id>/stats/", AdvancedTeamStatsView.as_view(), name="sports-advanced-team-stats"),
     path("advanced/players/<int:player_id>/spray/", PlayerSprayView.as_view(), name="sports-player-spray"),
