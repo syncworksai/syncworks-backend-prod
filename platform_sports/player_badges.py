@@ -212,10 +212,40 @@ def card_progress(player):
     achieved = [item for item in badges if item["achieved"]]
     current_max = max((len(b["levels_unlocked"]) for b in achieved), default=0)
     ring = LEVELS[current_max - 1][1] if current_max else "#334155"
+    birth_date = None
+    try:
+        birth_date = player.manager_profile.date_of_birth
+    except Exception:
+        birth_date = None
+    age_performance = []
+    if birth_date:
+        for year, row in sorted(yearly.items()):
+            age = year - birth_date.year
+            # Use season-year age as contextual grouping; never infer causation.
+            age_performance.append({**summary(row, label=str(year), year=year), "age": max(0, age)})
+
+    milestone_rows = []
+    career = summary(all_time, label="Career")
+    milestone_defs = (
+        ("IRON_MAN", "Iron Man", career["g"], (25, 50, 100, 250), "games played"),
+        ("HIT_MACHINE", "Hit Machine", career["h"], (25, 50, 100, 250), "hits"),
+        ("HOME_RUN_KING", "Home Run King", career["hr"], (5, 10, 25, 50), "home runs"),
+    )
+    for key, title, value, levels, unit in milestone_defs:
+        reached = max((level for level in levels if value >= level), default=0)
+        next_goal = next((level for level in levels if value < level), None)
+        milestone_rows.append({
+            "key": key, "title": title, "value": value, "unit": unit,
+            "reached": reached, "next_goal": next_goal,
+            "progress": 100 if next_goal is None else min(100, int((value / next_goal) * 100)),
+        })
+
     return {
         "player": player.pk, "season": season, "season_year": season_year,
         "season_totals": season_row,
-        "career_totals": summary(all_time, label="Career"),
+        "career_totals": career,
+        "age_performance": age_performance,
+        "milestones": milestone_rows,
         "badges": badges, "achieved_count": len(achieved), "card_border": ring,
         "badge_rules": rules,
         "year_splits": [
