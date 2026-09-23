@@ -62,7 +62,7 @@ def softball_stats_summary(team, scope="ALL"):
     scope = str(scope or "ALL").upper()
     if scope not in ("ALL", "LEAGUE", "TOURNAMENT"):
         scope = "ALL"
-    players = list(team.players.order_by("sort_order", "display_name", "id"))
+    players = list(team.players.filter(merged_into__isnull=True).order_by("sort_order", "display_name", "id"))
     rows = {
         player.id: {
             "player": SportsPlayerSerializer(player).data,
