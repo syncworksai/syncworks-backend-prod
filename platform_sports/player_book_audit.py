@@ -1,5 +1,7 @@
 """Read-only player-by-game stat evidence. Never calls a scan 'verified' without review."""
-from .models import SportsGame, SportsGameBookPhoto, SoftballPlateAppearance
+from django.db.models import Prefetch
+
+from .models import SportsGame, SportsGameBookPhoto
 
 
 HITS = {"1B", "2B", "3B", "HR"}
@@ -10,7 +12,8 @@ def player_book_audit(player):
         SportsGame.objects.filter(
             team_id=player.team_id, status=SportsGame.Status.FINAL
         ).prefetch_related(
-            "lineup_spots", "plate_appearances", "book_photos"
+            "lineup_spots", "plate_appearances",
+            Prefetch("book_photos", queryset=SportsGameBookPhoto.objects.only("id", "game_id", "review_status")),
         ).order_by("start_at", "id")
     )
     rows = []
