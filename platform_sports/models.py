@@ -290,7 +290,14 @@ class SoftballPlateAppearance(models.Model):
 
     class Meta:
         ordering = ("sequence", "id")
-        constraints = [models.UniqueConstraint(fields=("game", "sequence"), name="sports_unique_pa_sequence")]
+        constraints = [
+            models.UniqueConstraint(fields=("game", "sequence"), name="sports_unique_pa_sequence"),
+            models.UniqueConstraint(
+                fields=("source_photo", "source_cell_key"),
+                condition=Q(source_photo__isnull=False) & ~Q(source_cell_key=""),
+                name="sports_unique_source_cell",
+            ),
+        ]
         indexes = [models.Index(fields=("game", "player"), name="sports_pa_game_player")]
 
     def clean(self):
