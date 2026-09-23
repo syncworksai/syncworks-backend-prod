@@ -105,4 +105,5 @@ class TeamEngagementTests(APITestCase):
         self.client.force_authenticate(self.other)
         hidden = self.client.get(f"/api/v1/sports/player-awards/?player={self.player.id}")
         self.assertEqual(hidden.status_code, 200)
-        self.assertEqual(hidden.data.get("count", len(hidden.data.get("results", []))), 0)
+        rows = hidden.data.get("results", []) if isinstance(hidden.data, dict) else hidden.data
+        self.assertEqual(len(rows), 0)
