@@ -23,6 +23,7 @@ from user_accounts.services.notifications import notify
 
 from .emails import frontend_url, send_syncworks_team_invite
 from .player_merge import PlayerMergeMixin
+from .player_book_audit import player_book_audit
 from .player_progress import PlayerProgressMixin
 from .models import (
     SoftballPlateAppearance, SportsGame, SportsGameBookPhoto, SportsGameInning,
@@ -872,6 +873,13 @@ class SportsPlayerViewSet(PlayerProgressMixin, PlayerMergeMixin, viewsets.ModelV
                     "detail": "Players may edit their name, bats/throws and primary position. Team managers control jersey and roster assignment."
                 })
         serializer.save()
+
+    @action(detail=True, methods=["get"], url_path="book-audit")
+    def book_audit(self, request, pk=None):
+        player = self.get_object()
+        if player.user_id != request.user.id and not can_manage_team(request.user, player.team):
+            return Response({"detail": "Only this player or their coach can review individual book evidence."}, status=status.HTTP_403_FORBIDDEN)
+        return Response(player_book_audit(player))
 
     @action(detail=True, methods=["post"], url_path="link-member")
     @transaction.atomic
