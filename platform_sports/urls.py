@@ -19,6 +19,7 @@ from .ops_views import (
     TeamFeeViewSet,
     TeamPaymentSettingsViewSet,
 )
+from .team_engagement import TeamEngagementViewSet, SportsCoachAwardViewSet
 from .views import (
     SoftballPlateAppearanceViewSet,
     SportsGameViewSet,
@@ -29,6 +30,8 @@ from .views import (
 
 router = DefaultRouter()
 router.register("teams", SportsTeamViewSet, basename="sports-teams")
+router.register("team-engagement", TeamEngagementViewSet, basename="sports-team-engagement")
+router.register("coach-awards", SportsCoachAwardViewSet, basename="sports-coach-awards")
 router.register("players", SportsPlayerViewSet, basename="sports-players")
 router.register("games", SportsGameViewSet, basename="sports-games")
 router.register("game-book-photos", SportsGameBookPhotoViewSet, basename="sports-game-book-photos")

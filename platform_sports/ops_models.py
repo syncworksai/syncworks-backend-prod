@@ -16,6 +16,8 @@ class SportsPlayerProfile(models.Model):
     )
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=40, blank=True)
+    birth_date = models.DateField(null=True, blank=True)
+    show_age = models.BooleanField(default=False)
     profile_photo = models.ImageField(upload_to="sports/player_profiles/%Y/%m/", blank=True, null=True)
     # Unlike MEDIA_ROOT on ephemeral web instances, compressed card photos stay
     # durable in Postgres and appear consistently on all app servers.
@@ -276,4 +278,87 @@ class SportsPlayerMoment(models.Model):
         ]
         indexes = [
             models.Index(fields=("player", "kind"), name="sports_moment_player_kind"),
+        ]
+
+
+class SportsWeeklyPoll(models.Model):
+    """One coach-published RSVP per local Monday; individual game responses remain canonical."""
+    team = models.ForeignKey("platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="weekly_polls")
+    week_start = models.DateField()
+    deadline = models.DateTimeField(null=True, blank=True)
+    message = models.CharField(max_length=300, blank=True)
+    published_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="sports_weekly_polls_created")
+    published_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("week_start", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("team", "week_start"), name="sports_unique_weekly_poll"),
+        ]
+
+
+class SportsTeamPoll(models.Model):
+    """General-purpose group-chat poll, separate from the weekly game RSVP."""
+    team = models.ForeignKey("platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="chat_polls")
+    question = models.CharField(max_length=220)
+    options = models.JSONField(default=list)
+    closes_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="sports_chat_polls_created")
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_closed = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ("-created_at", "-id")
+
+
+class SportsTeamPollVote(models.Model):
+    poll = models.ForeignKey(SportsTeamPoll, on_delete=models.CASCADE, related_name="votes")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sports_team_poll_votes")
+    option_index = models.PositiveSmallIntegerField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("poll", "user"), name="sports_unique_team_poll_vote"),
+        ]
+
+
+class SportsCoachAward(models.Model):
+    class Kind(models.TextChoices):
+        GOLD_GLOVE = "GOLD_GLOVE", "Golden Glove"
+        HUSTLE = "HUSTLE", "Hustle Award"
+        TEAM_FIRST = "TEAM_FIRST", "Team-First Award"
+        PLAYER_WEEK = "PLAYER_WEEK", "Player of the Week"
+        ROOKIE_YEAR = "ROOKIE_YEAR", "Rookie of the Year"
+        MOST_IMPROVED = "MOST_IMPROVED", "Most Improved"
+        CUSTOM = "CUSTOM", "Custom Coach Award"
+
+    team = models.ForeignKey("platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="coach_awards")
+    player = models.ForeignKey("platform_sports.SportsPlayer", on_delete=models.PROTECT, related_name="coach_awards")
+    kind = models.CharField(max_length=24, choices=Kind.choices)
+    title = models.CharField(max_length=100, blank=True)
+    reason = models.CharField(max_length=500)
+    season_name = models.CharField(max_length=120)
+    award_date = models.DateField(default=timezone.localdate)
+    game = models.ForeignKey("platform_sports.SportsGame", null=True, blank=True, on_delete=models.SET_NULL, related_name="coach_awards")
+    awarded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="sports_awards_issued")
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="sports_awards_revoked")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-award_date", "-id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("team", "season_name"),
+                condition=models.Q(kind="ROOKIE_YEAR", revoked_at__isnull=True),
+                name="sports_unique_active_rookie_award",
+            ),
+            models.UniqueConstraint(
+                fields=("team", "kind", "award_date"),
+                condition=models.Q(kind="PLAYER_WEEK", revoked_at__isnull=True),
+                name="sports_unique_weekly_player_award",
+            ),
         ]

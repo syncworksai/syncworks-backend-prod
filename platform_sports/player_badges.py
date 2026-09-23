@@ -209,13 +209,40 @@ def card_progress(player):
         badge("SPEED", points=speed, verified_only=True, rules=rules),
         badge("CLUTCH", points=clutch, verified_only=True, rules=rules),
     ]
+    # Career milestones use only final official Game Books and approved historical
+    # totals. An unscored photo or a saved lineup never manufactures a hit or HR.
+    career_row = summary(all_time, label="Career")
+    final_games = list(player.team.games.filter(status=SportsGame.Status.FINAL).order_by("start_at", "id").values_list("id", flat=True))
+    verified_game_ids = {pa.game_id for pa in official}
+    streak = best_streak = 0
+    for game_id in final_games:
+        streak = streak + 1 if game_id in verified_game_ids else 0
+        best_streak = max(best_streak, streak)
+
+    def milestone(key, title, current, targets, unit):
+        unlocked = [goal for goal in targets if current >= goal]
+        next_goal = next((goal for goal in targets if current < goal), None)
+        return {
+            "key": key, "title": title, "current": current, "unit": unit,
+            "unlocked": unlocked, "next_goal": next_goal,
+            "progress": 100 if next_goal is None else int(min(100, current * 100 / next_goal)),
+            "achieved": bool(unlocked),
+            "source": "VERIFIED_BOOKS",
+        }
+
+    milestones = [
+        milestone("IRON_MAN", "Iron Man", best_streak, (3, 5, 10, 20), "consecutive verified games"),
+        milestone("HOME_RUN_KING", "Home Run King", career_row["hr"], (1, 3, 5, 10, 25), "verified home runs"),
+        milestone("HIT_MACHINE", "Hit Machine", career_row["h"], (5, 10, 25, 50, 100), "verified hits"),
+    ]
     achieved = [item for item in badges if item["achieved"]]
     current_max = max((len(b["levels_unlocked"]) for b in achieved), default=0)
     ring = LEVELS[current_max - 1][1] if current_max else "#334155"
     return {
         "player": player.pk, "season": season, "season_year": season_year,
         "season_totals": season_row,
-        "career_totals": summary(all_time, label="Career"),
+        "career_totals": career_row,
+        "milestones": milestones,
         "badges": badges, "achieved_count": len(achieved), "card_border": ring,
         "badge_rules": rules,
         "year_splits": [
