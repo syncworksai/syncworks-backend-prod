@@ -877,8 +877,8 @@ class SportsPlayerViewSet(PlayerProgressMixin, PlayerMergeMixin, viewsets.ModelV
     @action(detail=True, methods=["get"], url_path="book-audit")
     def book_audit(self, request, pk=None):
         player = self.get_object()
-        if player.user_id != request.user.id and not can_manage_team(request.user, player.team):
-            return Response({"detail": "Only this player or their coach can review individual book evidence."}, status=status.HTTP_403_FORBIDDEN)
+        if player.user_id != request.user.id and not can_score_team(request.user, player.team):
+            return Response({"detail": "Only this player or an authorized team scorekeeper can review individual book evidence."}, status=status.HTTP_403_FORBIDDEN)
         return Response(player_book_audit(player))
 
     @action(detail=True, methods=["post"], url_path="link-member")
