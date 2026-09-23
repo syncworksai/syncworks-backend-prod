@@ -14,6 +14,7 @@ from django.utils import timezone
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
 from platform_social.models import EventMemberResponse, GroupMembership, GroupMessage
@@ -121,7 +122,7 @@ class TeamEngagementViewSet(viewsets.ViewSet):
     def _team(self, request, pk):
         team = get_object_or_404(SportsTeam.objects.select_related("group"), pk=pk)
         if not _membership(request.user, team):
-            raise serializers.ValidationError({"detail": "Join the team to access team polls."})
+            raise PermissionDenied("Join the team to access team polls.")
         return team
 
     @action(detail=True, methods=["get", "post"], url_path="weekly")
@@ -170,7 +171,7 @@ class TeamEngagementViewSet(viewsets.ViewSet):
                 deadline = field.run_validation(raw_deadline)
             except serializers.ValidationError as error:
                 return Response({"deadline": error.detail}, status=400)
-            if deadline >= max(game.start_at for game in games):
+            if deadline >= min(game.start_at for game in games):
                 return Response({"deadline": "The response deadline must be before the week's games."}, status=400)
         message = str(request.data.get("message") or "").strip()[:300]
         for game in games:
@@ -326,7 +327,7 @@ class TeamEngagementViewSet(viewsets.ViewSet):
             for poll in team.chat_polls.prefetch_related("votes").order_by("-created_at")[:16]
         ])
 
-    @action(detail=True, methods=["post"], url_path=r"polls/(?P<poll_id>\\d+)/vote")
+    @action(detail=True, methods=["post"], url_path=r"polls/(?P<poll_id>\d+)/vote")
     def poll_vote(self, request, pk=None, poll_id=None):
         team = self._team(request, pk)
         poll = get_object_or_404(SportsTeamPoll, pk=poll_id, team=team)
@@ -343,7 +344,7 @@ class TeamEngagementViewSet(viewsets.ViewSet):
         )
         return Response(_chat_poll_data(poll, request.user))
 
-    @action(detail=True, methods=["post"], url_path=r"polls/(?P<poll_id>\\d+)/close")
+    @action(detail=True, methods=["post"], url_path=r"polls/(?P<poll_id>\d+)/close")
     def poll_close(self, request, pk=None, poll_id=None):
         team = self._team(request, pk)
         if not can_manage_team(request.user, team):
@@ -376,6 +377,7 @@ class SportsCoachAwardSerializer(serializers.ModelSerializer):
                   "season_name", "award_date", "game", "awarded_by",
                   "awarded_by_name", "created_at", "updated_at")
         read_only_fields = ("id", "awarded_by", "awarded_by_name", "created_at", "updated_at")
+        extra_kwargs = {"season_name": {"required": False, "allow_blank": True}}
 
     def get_awarded_by_name(self, obj):
         return (f"{obj.awarded_by.first_name} {obj.awarded_by.last_name}".strip()
