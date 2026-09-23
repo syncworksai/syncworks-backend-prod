@@ -90,9 +90,9 @@ class SoftballPlateAppearanceSerializer(serializers.ModelSerializer):
         fields = (
             "id", "game", "player", "player_name", "sequence", "inning", "result",
             "result_label", "outs_recorded", "rbi", "runs_scored", "notes",
-            "created_by", "created_at",
+            "source_photo", "source_cell_key", "created_by", "created_at",
         )
-        read_only_fields = ("id", "sequence", "created_by", "created_at")
+        read_only_fields = ("id", "sequence", "source_photo", "source_cell_key", "created_by", "created_at")
 
 
 class SportsGameInningSerializer(serializers.ModelSerializer):

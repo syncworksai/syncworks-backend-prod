@@ -276,6 +276,11 @@ class SoftballPlateAppearance(models.Model):
     rbi = models.PositiveSmallIntegerField(default=0)
     runs_scored = models.PositiveSmallIntegerField(default=0)
     notes = models.CharField(max_length=240, blank=True)
+    source_photo = models.ForeignKey(
+        "platform_sports.SportsGameBookPhoto", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="transcribed_plays",
+    )
+    source_cell_key = models.CharField(max_length=80, blank=True, default="")
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -285,7 +290,14 @@ class SoftballPlateAppearance(models.Model):
 
     class Meta:
         ordering = ("sequence", "id")
-        constraints = [models.UniqueConstraint(fields=("game", "sequence"), name="sports_unique_pa_sequence")]
+        constraints = [
+            models.UniqueConstraint(fields=("game", "sequence"), name="sports_unique_pa_sequence"),
+            models.UniqueConstraint(
+                fields=("source_photo", "source_cell_key"),
+                condition=Q(source_photo__isnull=False) & ~Q(source_cell_key=""),
+                name="sports_unique_source_cell",
+            ),
+        ]
         indexes = [models.Index(fields=("game", "player"), name="sports_pa_game_player")]
 
     def clean(self):

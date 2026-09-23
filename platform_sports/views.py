@@ -1668,6 +1668,76 @@ class SportsGameViewSet(viewsets.ModelViewSet):
             "plays": recent,
         })
 
+    @action(detail=True, methods=["post"], url_path="add-historical-play")
+    @transaction.atomic
+    def add_historical_play(self, request, pk=None):
+        """Append one staff-reviewed scorebook entry without changing a FINAL result.
+
+        Source images and verified final scores must be recorded separately. A draft
+        entry is assigned to its roster player ID, never the batting slot.
+        """
+        game = SportsGame.objects.select_for_update().select_related("team").get(
+            pk=self.get_object().pk
+        )
+        if not can_score_team(request.user, game.team):
+            return Response({"detail": "Scorekeeper access is required."}, status=status.HTTP_403_FORBIDDEN)
+        if game.status != SportsGame.Status.FINAL:
+            return Response({"detail": "Historical entry is only available for FINAL games."}, status=status.HTTP_409_CONFLICT)
+        try:
+            photo_id = int(request.data.get("source_photo") or 0)
+            player_id = int(request.data.get("player") or 0)
+            inning = int(request.data.get("inning") or 0)
+            result = str(request.data.get("result") or "").upper()
+            outs = int(request.data.get("outs_recorded") or 0)
+            rbi = int(request.data.get("rbi") or 0)
+            scored = int(request.data.get("runs_scored") or 0)
+        except (TypeError, ValueError):
+            return Response({"detail": "Select a player, reviewed photo, inning and valid play."}, status=status.HTTP_400_BAD_REQUEST)
+        source = SportsGameBookPhoto.objects.filter(pk=photo_id, game=game).first()
+        if not source or source.review_status not in (
+            SportsGameBookPhoto.ReviewStatus.REVIEWED,
+            SportsGameBookPhoto.ReviewStatus.VERIFIED,
+        ):
+            return Response({"detail": "Attach and review this game's original scorebook photo before transcribing."}, status=status.HTTP_400_BAD_REQUEST)
+        player = SportsPlayer.objects.filter(pk=player_id, team=game.team, is_active=True).first()
+        if not player:
+            return Response({"detail": "Select an active player on this team."}, status=status.HTTP_400_BAD_REQUEST)
+        if not game.lineup_spots.filter(player=player).exists() and not game.substitutions.filter(
+            Q(incoming_player=player) | Q(outgoing_player=player)
+        ).exists():
+            return Response({"detail": "This player is not in the recorded lineup. Review and correct the historical lineup first."}, status=status.HTTP_400_BAD_REQUEST)
+        if not (1 <= inning <= 20) or result not in SoftballPlateAppearance.Result.values or not (
+            0 <= outs <= 3 and 0 <= rbi <= 4 and 0 <= scored <= 4
+        ):
+            return Response({"detail": "Review inning, result, outs, RBI and runs."}, status=status.HTTP_400_BAD_REQUEST)
+        attributed = sum(game.plate_appearances.values_list("runs_scored", flat=True))
+        if attributed + scored > game.runs_for:
+            return Response({"detail": "Attributed runs would exceed the confirmed final score. Review the scorebook."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cell_key = str(request.data.get("source_cell_key") or "").strip()[:80]
+        if not cell_key:
+            return Response({"detail": "Select a unique cell from the original scorebook."}, status=status.HTTP_400_BAD_REQUEST)
+        if game.plate_appearances.filter(source_photo=source, source_cell_key=cell_key).exists():
+            return Response({"detail": "This paper scorebook cell was already transcribed. Tap its existing digital cell to edit."}, status=status.HTTP_409_CONFLICT)
+        order = (game.plate_appearances.aggregate(max_seq=Max("sequence"))["max_seq"] or 0) + 1
+        entry = SoftballPlateAppearance.objects.create(
+            game=game, player=player, sequence=order, inning=inning,
+            result=result, outs_recorded=outs, rbi=rbi, runs_scored=scored,
+            notes=str(request.data.get("notes") or "")[:240],
+            source_photo=source, source_cell_key=cell_key, created_by=request.user,
+        )
+        # Do not overwrite the recorded final or inning scores from a partial
+        # transcription. Source photos marked VERIFIED require another review.
+        SportsGameBookPhoto.objects.filter(
+            game=game, review_status=SportsGameBookPhoto.ReviewStatus.VERIFIED
+        ).update(review_status=SportsGameBookPhoto.ReviewStatus.REVIEWED)
+        return Response({
+            "play": SoftballPlateAppearanceSerializer(entry).data,
+            "official_score": {"for": game.runs_for, "against": game.runs_against},
+            "attributed_runs": attributed + scored,
+            "source_review_required": True,
+        }, status=status.HTTP_201_CREATED)
+
     @action(detail=True, methods=["post"], url_path="import-historical-book")
     @transaction.atomic
     def import_historical_book(self, request, pk=None):
@@ -1862,13 +1932,19 @@ class SoftballPlateAppearanceViewSet(viewsets.ReadOnlyModelViewSet):
         corrected = serializer.save()
 
         game = SportsGame.objects.select_for_update().get(pk=appearance.game_id)
-        rebuild_game_from_book(game)
         if game.status == SportsGame.Status.FINAL:
-            try:
-                from .league_views import sync_league_result_from_sports_game
-                sync_league_result_from_sports_game(game)
-            except Exception:
-                pass
+            attributed = sum(game.plate_appearances.values_list("runs_scored", flat=True))
+            if attributed > game.runs_for:
+                raise serializers.ValidationError({
+                    "runs_scored": "Attributed runs exceed the official final score. Edit the official final separately if it was wrong."
+                })
+            # A partial historical transcription is never allowed to rewrite the
+            # final score or the official inning totals.
+            SportsGameBookPhoto.objects.filter(
+                game=game, review_status=SportsGameBookPhoto.ReviewStatus.VERIFIED
+            ).update(review_status=SportsGameBookPhoto.ReviewStatus.REVIEWED)
+        else:
+            rebuild_game_from_book(game)
         fresh_game = SportsGame.objects.select_related("team__group", "rule_set").prefetch_related(
             "lineup_spots__player", "inning_lines", "plate_appearances"
         ).get(pk=game.pk)

@@ -49,6 +49,7 @@ class SoftballPlayContext(models.Model):
         validators=[MinValueValidator(0), MaxValueValidator(100)],
         help_text="Normalized field Y coordinate from 0 to 100.",
     )
+    outs_before = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MaxValueValidator(2)])
     runner_on_first_before = models.BooleanField(default=False)
     runner_on_second_before = models.BooleanField(default=False)
     runner_on_third_before = models.BooleanField(default=False)

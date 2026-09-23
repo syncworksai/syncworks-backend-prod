@@ -15,6 +15,7 @@ class SoftballPlayContextSerializer(serializers.ModelSerializer):
             "spray_zone",
             "spray_x",
             "spray_y",
+            "outs_before",
             "runner_on_first_before",
             "runner_on_second_before",
             "runner_on_third_before",
