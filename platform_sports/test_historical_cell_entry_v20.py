@@ -53,7 +53,7 @@ class HistoricalCellEntryTests(APITestCase):
 
     def payload(self, **overrides):
         value = {
-            "source_photo": self.photo.pk, "player": self.jake.pk, "inning": 1,
+            "source_photo": self.photo.pk, "source_cell_key": "jake:1:0", "player": self.jake.pk, "inning": 1,
             "result": "2B", "outs_recorded": 0, "rbi": 2,
             "runs_scored": 2, "notes": "Checked against scorebook photo",
         }
@@ -72,6 +72,10 @@ class HistoricalCellEntryTests(APITestCase):
         self.assertEqual((self.game.runs_for, self.game.runs_against), (14, 6))
         self.assertEqual(self.game.inning_lines.get(inning=1).team_runs, 5)
         self.assertEqual(SoftballPlateAppearance.objects.get(game=self.game).player_id, self.jake.pk)
+        self.assertEqual(SoftballPlateAppearance.objects.get(game=self.game).source_photo_id, self.photo.pk)
+        duplicate = self.client.post(self.endpoint, self.payload(), format="json")
+        self.assertEqual(duplicate.status_code, 409, duplicate.data)
+        self.assertEqual(SoftballPlateAppearance.objects.filter(game=self.game).count(), 1)
         corrected = self.client.patch(
             f"/api/v1/sports/plate-appearances/{created.data['play']['id']}/correct/",
             {"result": "1B", "rbi": 1, "runs_scored": 1},
