@@ -1714,11 +1714,17 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         if attributed + scored > game.runs_for:
             return Response({"detail": "Attributed runs would exceed the confirmed final score. Review the scorebook."}, status=status.HTTP_400_BAD_REQUEST)
 
+        cell_key = str(request.data.get("source_cell_key") or "").strip()[:80]
+        if not cell_key:
+            return Response({"detail": "Select a unique cell from the original scorebook."}, status=status.HTTP_400_BAD_REQUEST)
+        if game.plate_appearances.filter(source_photo=source, source_cell_key=cell_key).exists():
+            return Response({"detail": "This paper scorebook cell was already transcribed. Tap its existing digital cell to edit."}, status=status.HTTP_409_CONFLICT)
         order = (game.plate_appearances.aggregate(max_seq=Max("sequence"))["max_seq"] or 0) + 1
         entry = SoftballPlateAppearance.objects.create(
             game=game, player=player, sequence=order, inning=inning,
             result=result, outs_recorded=outs, rbi=rbi, runs_scored=scored,
-            notes=str(request.data.get("notes") or "")[:240], created_by=request.user,
+            notes=str(request.data.get("notes") or "")[:240],
+            source_photo=source, source_cell_key=cell_key, created_by=request.user,
         )
         # Do not overwrite the recorded final or inning scores from a partial
         # transcription. Source photos marked VERIFIED require another review.
