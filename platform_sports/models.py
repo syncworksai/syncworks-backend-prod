@@ -296,3 +296,41 @@ class SoftballPlateAppearance(models.Model):
 
     def __str__(self):
         return f"{self.game_id} · {self.sequence} · {self.player.display_name} · {self.result}"
+
+
+class SportsGameBookPhoto(models.Model):
+    class ReviewStatus(models.TextChoices):
+        UPLOADED = "UPLOADED", "Uploaded"
+        REVIEWED = "REVIEWED", "Reviewed"
+        VERIFIED = "VERIFIED", "Verified"
+
+    game = models.ForeignKey(SportsGame, on_delete=models.CASCADE, related_name="book_photos")
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="sports_game_book_photos_uploaded",
+    )
+    original_name = models.CharField(max_length=220, blank=True)
+    content_type = models.CharField(max_length=80, default="image/jpeg")
+    byte_size = models.PositiveIntegerField(default=0)
+    sha256 = models.CharField(max_length=64)
+    image_data = models.BinaryField()
+    page_label = models.CharField(max_length=80, blank=True)
+    review_status = models.CharField(
+        max_length=12,
+        choices=ReviewStatus.choices,
+        default=ReviewStatus.UPLOADED,
+    )
+    review_notes = models.TextField(blank=True)
+    extracted_data = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("created_at", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("game", "sha256"), name="sports_unique_book_photo_hash"),
+        ]
+
+    def __str__(self):
+        return f"{self.game_id} · {self.original_name or 'scorebook photo'}"
