@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import hashlib
 
 from django.contrib.auth import get_user_model
@@ -283,6 +285,76 @@ def team_dashboard(team):
     }
 
 
+def _week_start_from_request(request):
+    raw = str(request.query_params.get("week_start") or request.data.get("week_start") or "").strip()
+    if raw:
+        try:
+            day = datetime.strptime(raw, "%Y-%m-%d").date()
+        except ValueError:
+            raise serializers.ValidationError({"week_start": "Use YYYY-MM-DD."})
+    else:
+        day = timezone.localdate()
+    return day - timedelta(days=day.weekday())
+
+
+def _game_local_date(game):
+    try:
+        return timezone.localtime(game.start_at, ZoneInfo(game.timezone or "America/Chicago")).date()
+    except (KeyError, ValueError):
+        return timezone.localtime(game.start_at).date()
+
+
+def weekly_availability_payload(team, user, week_start, include_roster=False):
+    week_end = week_start + timedelta(days=6)
+    candidates = list(
+        team.games.exclude(status=SportsGame.Status.CANCELLED)
+        .filter(start_at__date__gte=week_start - timedelta(days=1), start_at__date__lte=week_end + timedelta(days=1))
+        .select_related("social_event")
+        .order_by("start_at", "id")
+    )
+    games = [game for game in candidates if week_start <= _game_local_date(game) <= week_end]
+    game_rows = []
+    player_rows = []
+    for game in games:
+        response = None
+        if game.social_event_id:
+            row = EventMemberResponse.objects.filter(
+                event_id=game.social_event_id, group_id=team.group_id, user=user
+            ).first()
+            if row:
+                response = {"id": row.id, "response": row.response, "responded_at": row.responded_at}
+        game_rows.append({
+            "game": SportsGameSerializer(game).data,
+            "my_response": response or {"id": None, "response": "PENDING", "responded_at": None},
+        })
+
+    if include_roster:
+        players = list(team.players.filter(is_active=True, user__isnull=False).select_related("user").order_by("sort_order", "display_name"))
+        for player in players:
+            responses = {}
+            for game in games:
+                value = "PENDING"
+                if game.social_event_id:
+                    row = EventMemberResponse.objects.filter(
+                        event_id=game.social_event_id, group_id=team.group_id, user_id=player.user_id
+                    ).first()
+                    if row:
+                        value = row.response
+                responses[str(game.id)] = value
+            player_rows.append({
+                "player": SportsPlayerSerializer(player).data,
+                "responses": responses,
+                "all_yes": bool(games) and all(value == "YES" for value in responses.values()),
+                "pending": sum(1 for value in responses.values() if value == "PENDING"),
+            })
+    return {
+        "week_start": week_start,
+        "week_end": week_end,
+        "games": game_rows,
+        "roster": player_rows,
+    }
+
+
 def sync_game_social_event(game):
     event_status = SocialEvent.Status.PUBLISHED
     if game.status == SportsGame.Status.FINAL:
@@ -480,6 +552,99 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
             sent += 1
         return Response({"sent": sent})
 
+    @action(detail=True, methods=["get"], url_path="weekly-availability")
+    def weekly_availability(self, request, pk=None):
+        team = self.get_object()
+        if team.group_id not in active_group_ids(request.user):
+            return Response({"detail": "Join this team to view availability."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            week_start = _week_start_from_request(request)
+        except serializers.ValidationError as error:
+            return Response(error.detail, status=status.HTTP_400_BAD_REQUEST)
+        return Response(weekly_availability_payload(
+            team, request.user, week_start, include_roster=can_manage_team(request.user, team)
+        ))
+
+    @action(detail=True, methods=["post"], url_path="respond-weekly-availability")
+    @transaction.atomic
+    def respond_weekly_availability(self, request, pk=None):
+        team = self.get_object()
+        if team.group_id not in active_group_ids(request.user):
+            return Response({"detail": "Join this team before responding."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            week_start = _week_start_from_request(request)
+        except serializers.ValidationError as error:
+            return Response(error.detail, status=status.HTTP_400_BAD_REQUEST)
+        payload = weekly_availability_payload(team, request.user, week_start, include_roster=False)
+        game_map = {int(row["game"]["id"]): row["game"] for row in payload["games"]}
+        responses = request.data.get("responses") or {}
+        if not isinstance(responses, dict):
+            return Response({"detail": "responses must map game IDs to YES, MAYBE or NO."}, status=status.HTTP_400_BAD_REQUEST)
+        allowed = {EventMemberResponse.Response.YES, EventMemberResponse.Response.MAYBE, EventMemberResponse.Response.NO}
+        changed = 0
+        for raw_game_id, value in responses.items():
+            try:
+                game_id = int(raw_game_id)
+            except (TypeError, ValueError):
+                continue
+            value = str(value or "").upper()
+            if game_id not in game_map or value not in allowed:
+                continue
+            game = team.games.select_related("social_event").filter(pk=game_id).first()
+            if not game or not game.social_event_id:
+                continue
+            row, _ = EventMemberResponse.objects.get_or_create(
+                event_id=game.social_event_id,
+                group_id=team.group_id,
+                user=request.user,
+                defaults={"response": EventMemberResponse.Response.PENDING},
+            )
+            row.response = value
+            row.responded_at = timezone.now()
+            row.save(update_fields=("response", "responded_at", "updated_at"))
+            changed += 1
+        return Response({
+            "updated": changed,
+            **weekly_availability_payload(team, request.user, week_start, include_roster=False),
+        })
+
+    @action(detail=True, methods=["post"], url_path="open-weekly-availability")
+    def open_weekly_availability(self, request, pk=None):
+        team = self.get_object()
+        if not can_manage_team(request.user, team):
+            return Response({"detail": "Only a coach or manager can open weekly availability."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            week_start = _week_start_from_request(request)
+        except serializers.ValidationError as error:
+            return Response(error.detail, status=status.HTTP_400_BAD_REQUEST)
+        payload = weekly_availability_payload(team, request.user, week_start, include_roster=True)
+        games = payload["games"]
+        if not games:
+            return Response({"detail": "No games are scheduled for that week."}, status=status.HTTP_400_BAD_REQUEST)
+        sent = 0
+        for row in payload["roster"]:
+            if not row["pending"]:
+                continue
+            player_id = row["player"]["id"]
+            player = team.players.filter(pk=player_id).select_related("user").first()
+            if not player or not player.user_id:
+                continue
+            notify(
+                player.user,
+                f"{team.group.name} availability needed",
+                f"Please confirm which games you can play the week of {week_start.strftime('%b %d')}.",
+                {
+                    "source": "SOCIAL", "sync_alert": True, "severity": "MEDIUM",
+                    "kind": "TEAM_WEEK_AVAILABILITY", "group_id": team.group_id,
+                    "team_id": team.id, "week_start": week_start.isoformat(),
+                    "route": f"/connect/groups/{team.group_id}/sports",
+                },
+                actor=request.user,
+                type=Notification.TYPE_REMINDER,
+            )
+            sent += 1
+        return Response({"sent": sent, **payload})
+
     @action(detail=True, methods=["get"])
     def dashboard(self, request, pk=None):
         team = self.get_object()
@@ -491,8 +656,8 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
         from .league_models import LeagueTeamEntry
         from .league_serializers import LeagueDivisionSerializer, LeagueSeasonSerializer, SportsOrganizationSerializer
         from .league_views import division_standings, division_team_stats
-        from .ops_models import SportsPlayerProfile, TeamFeeAssignment, TeamPaymentSettings
-        from .ops_serializers import SportsPlayerProfileSerializer, TeamFeeAssignmentSerializer, TeamPaymentSettingsSerializer
+        from .ops_models import SportsPlayerProfile, SportsPlayerAward, TeamFeeAssignment, TeamPaymentSettings
+        from .ops_serializers import SportsPlayerProfileSerializer, SportsPlayerAwardSerializer, TeamFeeAssignmentSerializer, TeamPaymentSettingsSerializer
         from .ops_views import softball_stats_summary
 
         team = self.get_object()
@@ -585,7 +750,18 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
                 "leaders": league_stats.get("leaders", {}),
             }
 
+        week_start = timezone.localdate() - timedelta(days=timezone.localdate().weekday())
+        weekly_availability = weekly_availability_payload(team, request.user, week_start, include_roster=False)
+        awards = []
+        if player:
+            awards = SportsPlayerAwardSerializer(
+                SportsPlayerAward.objects.filter(player=player).select_related("player", "awarded_by")[:50],
+                many=True,
+            ).data
+
         return Response({
+            "weekly_availability": weekly_availability,
+            "awards": awards,
             "team": base["team"],
             "record": base["record"],
             "team_stats": base["team_stats"],
