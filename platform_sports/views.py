@@ -17,6 +17,7 @@ from platform_social.views import ensure_group_event_responses, sync_social_even
 from user_accounts.models import Notification
 from user_accounts.services.notifications import notify
 
+from .scorebook_views import ScorebookMixin
 from .emails import frontend_url, send_syncworks_team_invite
 from .player_merge import PlayerMergeMixin
 from .player_progress import PlayerProgressMixin
@@ -1044,7 +1045,7 @@ class SportsPlayerViewSet(PlayerProgressMixin, PlayerMergeMixin, viewsets.ModelV
         instance.save(update_fields=("is_active", "updated_at"))
 
 
-class SportsGameViewSet(viewsets.ModelViewSet):
+class SportsGameViewSet(ScorebookMixin, viewsets.ModelViewSet):
     serializer_class = SportsGameSerializer
     permission_classes = [IsAuthenticated]
 
