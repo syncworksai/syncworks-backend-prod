@@ -1831,6 +1831,49 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         sync_game_social_event(game)
         return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
 
+    @action(detail=True, methods=["post"], url_path="add-book-play")
+    @transaction.atomic
+    def add_book_play(self, request, pk=None):
+        game = SportsGame.objects.select_for_update().select_related("team__group").get(pk=pk)
+        if not can_score_team(request.user, game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        if game.status != SportsGame.Status.FINAL:
+            return Response({"detail": "Use live scoring while a game is in progress."}, status=status.HTTP_409_CONFLICT)
+        try:
+            player_id = int(request.data.get("player") or 0)
+            inning = max(1, int(request.data.get("inning") or 1))
+            outs_recorded = max(0, min(3, int(request.data.get("outs_recorded") or 0)))
+            rbi = max(0, int(request.data.get("rbi") or 0))
+            runs_scored = max(0, int(request.data.get("runs_scored") or 0))
+            runners_advanced = max(0, min(3, int(request.data.get("runners_advanced") or 0)))
+        except (TypeError, ValueError):
+            return Response({"detail": "Player, inning and play totals must be whole numbers."}, status=status.HTTP_400_BAD_REQUEST)
+        player = get_object_or_404(SportsPlayer, pk=player_id, team=game.team)
+        result_value = str(request.data.get("result") or "").upper()
+        if result_value not in SoftballPlateAppearance.Result.values:
+            return Response({"detail": "Choose a valid plate-appearance result."}, status=status.HTTP_400_BAD_REQUEST)
+        sequence = (SoftballPlateAppearance.objects.filter(game=game).aggregate(max_seq=Max("sequence"))["max_seq"] or 0) + 1
+        success_raw = request.data.get("situation_success")
+        appearance = SoftballPlateAppearance.objects.create(
+            game=game, player=player, sequence=sequence, inning=inning, result=result_value,
+            outs_recorded=outs_recorded, rbi=rbi, runs_scored=runs_scored,
+            outs_before=(None if request.data.get("outs_before") in (None, "") else max(0, min(2, int(request.data.get("outs_before"))))),
+            base_state=str(request.data.get("base_state") or "").strip()[:8],
+            situation_objective=str(request.data.get("situation_objective") or "").strip()[:24],
+            runners_advanced=runners_advanced,
+            situation_success=(None if success_raw in (None, "") else str(success_raw).lower() in ("1", "true", "yes")),
+            notes=str(request.data.get("notes") or "").strip()[:240],
+            created_by=request.user,
+        )
+        official_score = (game.runs_for, game.runs_against)
+        rebuild_game_from_book(game)
+        game.runs_for, game.runs_against = official_score
+        game.save(update_fields=("runs_for", "runs_against", "updated_at"))
+        return Response({
+            "play": SoftballPlateAppearanceSerializer(appearance, context={"request": request}).data,
+            "game": self.get_serializer(self.get_queryset().get(pk=game.pk)).data,
+        }, status=status.HTTP_201_CREATED)
+
     @action(detail=True, methods=["post"], url_path="reopen")
     def reopen(self, request, pk=None):
         game = self.get_object()
@@ -1897,7 +1940,11 @@ class SoftballPlateAppearanceViewSet(viewsets.ReadOnlyModelViewSet):
         corrected = serializer.save()
 
         game = SportsGame.objects.select_for_update().get(pk=appearance.game_id)
+        official_final_score = (game.runs_for, game.runs_against) if game.status == SportsGame.Status.FINAL else None
         rebuild_game_from_book(game)
+        if official_final_score is not None:
+            game.runs_for, game.runs_against = official_final_score
+            game.save(update_fields=("runs_for", "runs_against", "updated_at"))
         if game.status == SportsGame.Status.FINAL:
             try:
                 from .league_views import sync_league_result_from_sports_game
