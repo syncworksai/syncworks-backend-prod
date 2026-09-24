@@ -341,3 +341,59 @@ class SportsGameBookPhoto(models.Model):
 
     def __str__(self):
         return f"{self.game_id} · {self.original_name or 'scorebook photo'}"
+
+
+class SportsGameBookCandidate(models.Model):
+    """Photographed paper-book mark that has NOT entered official player stats.
+
+    A scorekeeper must reconcile runs/RBI and approve this record before a
+    SoftballPlateAppearance is created. The original official final score and
+    inning run totals are never recomputed from a partial transcription.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Needs verification"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+
+    class Confidence(models.TextChoices):
+        CLEAR = "CLEAR", "Clear notation"
+        REVIEW = "REVIEW", "Review handwriting"
+        UNCERTAIN = "UNCERTAIN", "Uncertain"
+
+    game = models.ForeignKey(SportsGame, on_delete=models.CASCADE, related_name="book_candidates")
+    player = models.ForeignKey(SportsPlayer, on_delete=models.PROTECT, related_name="book_candidates")
+    source_label = models.CharField(max_length=100)
+    inning = models.PositiveSmallIntegerField()
+    source_slot = models.PositiveSmallIntegerField(default=1)
+    result = models.CharField(max_length=4, blank=True, choices=SoftballPlateAppearance.Result.choices)
+    outs_recorded = models.PositiveSmallIntegerField(null=True, blank=True)
+    rbi = models.PositiveSmallIntegerField(null=True, blank=True)
+    runs_scored = models.PositiveSmallIntegerField(null=True, blank=True)
+    confidence = models.CharField(max_length=10, choices=Confidence.choices, default=Confidence.REVIEW)
+    transcription_note = models.CharField(max_length=240, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    verified_appearance = models.OneToOneField(
+        SoftballPlateAppearance, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="source_candidate",
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="scorebook_candidates_reviewed",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("game_id", "inning", "player_id", "source_slot", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("game", "source_label", "player", "inning", "source_slot"),
+                name="sports_unique_book_draft_mark",
+            )
+        ]
+
+    def clean(self):
+        if self.game_id and self.player_id and self.player.team_id != self.game.team_id:
+            raise ValidationError({"player": "The scorebook player must belong to the game team."})
