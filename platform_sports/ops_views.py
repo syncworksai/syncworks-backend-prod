@@ -463,10 +463,10 @@ class SportsPracticeSessionViewSet(viewsets.ModelViewSet):
             return Response({"detail": "You may only log reps for your own practice."}, status=status.HTTP_403_FORBIDDEN)
         data = request.data.copy()
         data["session"] = session.id
-        data["sequence"] = (session.reps.order_by("-sequence").values_list("sequence", flat=True).first() or 0) + 1
+        sequence = (session.reps.order_by("-sequence").values_list("sequence", flat=True).first() or 0) + 1
         serializer = SportsPracticeRepSerializer(data=data)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        serializer.save(sequence=sequence)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["get"], url_path="summary")
