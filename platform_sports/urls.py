@@ -26,6 +26,7 @@ from .views import (
     SoftballPlateAppearanceViewSet,
     SportsGameViewSet,
     SportsGameBookPhotoViewSet,
+    SportsGameBookCandidateViewSet,
     SportsPlayerViewSet,
     SportsTeamViewSet,
 )
@@ -35,6 +36,7 @@ router.register("teams", SportsTeamViewSet, basename="sports-teams")
 router.register("players", SportsPlayerViewSet, basename="sports-players")
 router.register("games", SportsGameViewSet, basename="sports-games")
 router.register("game-book-photos", SportsGameBookPhotoViewSet, basename="sports-game-book-photos")
+router.register("game-book-candidates", SportsGameBookCandidateViewSet, basename="sports-game-book-candidates")
 router.register("plate-appearances", SoftballPlateAppearanceViewSet, basename="sports-plate-appearances")
 router.register("player-profiles", SportsPlayerProfileViewSet, basename="sports-player-profiles")
 router.register("player-awards", SportsPlayerAwardViewSet, basename="sports-player-awards")
