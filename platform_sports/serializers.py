@@ -7,6 +7,7 @@ from .models import (
     SoftballPlateAppearance,
     SportsGame,
     SportsGameBookPhoto,
+    SportsGameBookCandidate,
     SportsGameInning,
     SportsLineupSpot,
     SportsSubstitution,
@@ -243,3 +244,25 @@ class SportsGameBookPhotoSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         path = f"/api/v1/sports/game-book-photos/{obj.pk}/image/"
         return request.build_absolute_uri(path) if request else path
+
+
+class SportsGameBookCandidateSerializer(serializers.ModelSerializer):
+    player_name = serializers.CharField(source="player.display_name", read_only=True)
+    jersey_number = serializers.CharField(source="player.jersey_number", read_only=True)
+    batting_order = serializers.SerializerMethodField()
+    result_label = serializers.CharField(source="get_result_display", read_only=True)
+
+    class Meta:
+        model = SportsGameBookCandidate
+        fields = (
+            "id", "game", "player", "player_name", "jersey_number", "batting_order",
+            "source_label", "inning", "source_slot", "result", "result_label",
+            "outs_recorded", "rbi", "runs_scored", "confidence",
+            "transcription_note", "status", "verified_appearance", "reviewed_by",
+            "reviewed_at", "created_at",
+        )
+        read_only_fields = fields
+
+    def get_batting_order(self, obj):
+        spots = self.context.get("batting_orders") or {}
+        return spots.get(obj.player_id)
