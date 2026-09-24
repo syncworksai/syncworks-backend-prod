@@ -2081,6 +2081,10 @@ class SportsGameBookCandidateViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({"detail": "Rejected drafts cannot be approved without a new review."}, status=status.HTTP_409_CONFLICT)
         if game.status != SportsGame.Status.FINAL:
             return Response({"detail": "Review the live game using live scoring."}, status=status.HTTP_409_CONFLICT)
+        if not SportsGameBookPhoto.objects.filter(game=game).exists():
+            return Response({
+                "detail": "Attach the original scorebook photo to this game before approving a transcribed mark."
+            }, status=status.HTTP_409_CONFLICT)
 
         result_value = str(request.data.get("result") or candidate.result or "").upper()
         if result_value not in SoftballPlateAppearance.Result.values:
