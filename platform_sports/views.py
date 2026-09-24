@@ -1475,6 +1475,14 @@ class SportsGameViewSet(viewsets.ModelViewSet):
                 outs_recorded=outs_recorded,
                 rbi=rbi,
                 runs_scored=runs_scored,
+                outs_before=game.outs,
+                base_state=str(request.data.get("base_state") or "").strip()[:8],
+                situation_objective=str(request.data.get("situation_objective") or "").strip()[:24],
+                runners_advanced=max(0, min(3, int(request.data.get("runners_advanced") or 0))),
+                situation_success=(
+                    None if request.data.get("situation_success") in (None, "")
+                    else str(request.data.get("situation_success")).lower() in ("1","true","yes")
+                ),
                 notes=str(request.data.get("notes") or "").strip(),
                 created_by=request.user,
             )
@@ -1855,7 +1863,7 @@ class SoftballPlateAppearanceViewSet(viewsets.ReadOnlyModelViewSet):
         if not can_score_team(request.user, appearance.game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
 
-        allowed = {"inning", "result", "outs_recorded", "rbi", "runs_scored", "notes"}
+        allowed = {"inning", "result", "outs_recorded", "rbi", "runs_scored", "outs_before", "base_state", "situation_objective", "runners_advanced", "situation_success", "notes"}
         payload = {key: value for key, value in request.data.items() if key in allowed}
         serializer = self.get_serializer(appearance, data=payload, partial=True)
         serializer.is_valid(raise_exception=True)
