@@ -109,3 +109,32 @@ class PracticeModeAndSituationsTests(APITestCase):
             f"/api/v1/sports/practice-sessions/summary/?team={self.team.id}&player={self.player.id}"
         )
         self.assertEqual(response.status_code, 403)
+
+
+    def test_player_center_returns_every_game_on_next_game_day(self):
+        from datetime import timedelta
+        from platform_sports.views import sync_game_social_event
+
+        start = timezone.now() + timedelta(days=3)
+        start = start.replace(hour=23, minute=30, second=0, microsecond=0)
+        games = []
+        for offset_hours, opponent in ((0, "Doubleheader One"), (1, "Doubleheader Two"), (25, "Next Day")):
+            game = SportsGame.objects.create(
+                team=self.team,
+                opponent_name=opponent,
+                start_at=start + timedelta(hours=offset_hours),
+                status=SportsGame.Status.SCHEDULED,
+                venue_name="Dean Fain Park · Field 1",
+                home_away="HOME" if offset_hours else "AWAY",
+                created_by=self.coach,
+            )
+            sync_game_social_event(game)
+            games.append(game)
+
+        self.client.force_authenticate(self.user)
+        response = self.client.get(f"/api/v1/sports/teams/{self.team.id}/player-center/")
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = response.data["next_game_day"]
+        # The first two games are the same local game day; the third is not.
+        self.assertEqual([row["game"]["id"] for row in rows], [games[0].id, games[1].id])
+        self.assertTrue(all(row["my_response"]["response"] == "PENDING" for row in rows))
