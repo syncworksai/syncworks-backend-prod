@@ -501,10 +501,14 @@ class SportsPracticeSessionViewSet(viewsets.ModelViewSet):
             hits = queryset.filter(result__in=("1B","2B","3B","HR")).count()
             return round(hits / at_bats, 3) if at_bats else 0.0, at_bats, hits
 
-        practice_avg, practice_count, practice_hits = average(reps)
-        live_avg, live_count, live_hits = average(live)
-        practice_two_avg, practice_two_count, _ = average(reps.filter(outs_before=2))
-        live_two_avg, live_two_count, _ = average(live.filter(outs_before=2))
+        practice_avg, practice_ab, practice_hits = average(reps)
+        live_avg, live_ab, live_hits = average(live)
+        practice_two_avg, practice_two_ab, _ = average(reps.filter(outs_before=2))
+        live_two_avg, live_two_ab, _ = average(live.filter(outs_before=2))
+        practice_reps = reps.count()
+        live_pa = live.count()
+        practice_two_reps = reps.filter(outs_before=2).count()
+        live_two_pa = live.filter(outs_before=2).count()
 
         objectives = []
         for key, label in SportsPracticeRep.Objective.choices:
@@ -541,7 +545,7 @@ class SportsPracticeSessionViewSet(viewsets.ModelViewSet):
                     "title": f"Transfer {row['label'].lower()} into games",
                     "reason": "Practice success is materially ahead of live-game success.",
                 })
-        if live_two_count >= 3 and live_two_avg < live_avg:
+        if live_two_ab >= 3 and live_two_avg < live_avg:
             recommendation.append({
                 "priority": "MEDIUM", "objective": "TWO_OUT_HIT",
                 "title": "Two-out hitting round",
@@ -550,8 +554,8 @@ class SportsPracticeSessionViewSet(viewsets.ModelViewSet):
 
         return Response({
             "player": SportsPlayerSerializer(player).data if player else None,
-            "practice": {"avg": practice_avg, "reps": practice_count, "hits": practice_hits, "two_out_avg": practice_two_avg, "two_out_reps": practice_two_count},
-            "live": {"avg": live_avg, "pa": live_count, "hits": live_hits, "two_out_avg": live_two_avg, "two_out_pa": live_two_count},
+            "practice": {"avg": practice_avg, "reps": practice_reps, "ab": practice_ab, "hits": practice_hits, "two_out_avg": practice_two_avg, "two_out_reps": practice_two_reps, "two_out_ab": practice_two_ab},
+            "live": {"avg": live_avg, "pa": live_pa, "ab": live_ab, "hits": live_hits, "two_out_avg": live_two_avg, "two_out_pa": live_two_pa, "two_out_ab": live_two_ab},
             "objectives": objectives,
             "recommendations": recommendation[:5],
             "tracking_note": "Live comparisons only include plate appearances where the Game Book scorer recorded situation context.",
