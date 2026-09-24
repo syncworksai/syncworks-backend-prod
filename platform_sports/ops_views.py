@@ -515,16 +515,24 @@ class SportsPracticeSessionViewSet(viewsets.ModelViewSet):
             p = reps.filter(objective=key)
             p_total = p.count()
             p_success = p.filter(successful=True).count()
+            p_avg, p_ab, p_hits = average(p)
             l = live.filter(situation_objective=key)
             l_total = l.count()
             l_success = l.filter(situation_success=True).count()
+            l_avg, l_ab, l_hits = average(l)
             objectives.append({
                 "key": key,
                 "label": label,
                 "practice_attempts": p_total,
+                "practice_ab": p_ab,
+                "practice_hits": p_hits,
+                "practice_avg": p_avg,
                 "practice_successes": p_success,
                 "practice_rate": round(p_success / p_total, 3) if p_total else None,
                 "live_attempts": l_total,
+                "live_ab": l_ab,
+                "live_hits": l_hits,
+                "live_avg": l_avg,
                 "live_successes": l_success,
                 "live_rate": round(l_success / l_total, 3) if l_total else None,
             })
