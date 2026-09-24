@@ -157,7 +157,7 @@ def _ratio(numerator, denominator):
 
 
 def softball_player_stats(team):
-    players = list(team.players.filter(merged_into__isnull=True).order_by("sort_order", "display_name", "id"))
+    players = list(team.players.filter(merged_into__isnull=True).select_related("user").order_by("sort_order", "display_name", "id"))
     stats = {
         player.id: {
             "player": SportsPlayerSerializer(player).data,
@@ -181,15 +181,18 @@ def softball_player_stats(team):
     ).exclude(game__status=SportsGame.Status.CANCELLED).select_related("player", "game")
 
     for pa in appearances:
-        row = stats.setdefault(
-            pa.player_id,
-            {
+        # dict.setdefault evaluates its default even for existing players.
+        # Building nested player serializers for *every* PA was causing
+        # avoidable database traffic on the team dashboard.
+        row = stats.get(pa.player_id)
+        if row is None:
+            row = {
                 "player": SportsPlayerSerializer(pa.player).data,
                 "games": set(), "pa": 0, "ab": 0, "h": 0, "single": 0,
                 "double": 0, "triple": 0, "hr": 0, "bb": 0, "sf": 0,
                 "rbi": 0, "tb": 0,
-            },
-        )
+            }
+            stats[pa.player_id] = row
         row["games"].add(pa.game_id)
         row["pa"] += 1
         row["rbi"] += pa.rbi
@@ -650,6 +653,11 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get"])
     def dashboard(self, request, pk=None):
         team = self.get_object()
+        if request.query_params.get("compact") == "1":
+            from .dashboard_fast import fast_team_dashboard
+
+            player_stats = softball_player_stats(team) if team.sport == SportsTeam.Sport.SOFTBALL else []
+            return Response(fast_team_dashboard(team, request.user, player_stats))
         return Response(team_dashboard(team))
 
 
