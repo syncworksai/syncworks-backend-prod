@@ -138,3 +138,40 @@ class PracticeModeAndSituationsTests(APITestCase):
         # The first two games are the same local game day; the third is not.
         self.assertEqual([row["game"]["id"] for row in rows], [games[0].id, games[1].id])
         self.assertTrue(all(row["my_response"]["response"] == "PENDING" for row in rows))
+
+
+    def test_historical_book_entry_preserves_official_final_score(self):
+        game = SportsGame.objects.create(
+            team=self.team, opponent_name="Historical Opponent", start_at=timezone.now(),
+            status=SportsGame.Status.FINAL, runs_for=27, runs_against=12, created_by=self.coach,
+        )
+        SportsLineupSpot.objects.create(
+            game=game, player=self.player, batting_order=1, defensive_position="SS", is_starter=True,
+        )
+        self.client.force_authenticate(self.coach)
+        added = self.client.post(f"/api/v1/sports/games/{game.id}/add-book-play/", {
+            "player": self.player.id,
+            "inning": 1,
+            "result": "1B",
+            "outs_recorded": 0,
+            "runs_scored": 1,
+            "rbi": 1,
+            "outs_before": 2,
+            "base_state": "2",
+            "situation_objective": "TWO_OUT_HIT",
+            "runners_advanced": 1,
+            "situation_success": True,
+        }, format="json")
+        self.assertEqual(added.status_code, 201, added.data)
+        game.refresh_from_db()
+        self.assertEqual((game.runs_for, game.runs_against), (27, 12))
+        play_id = added.data["play"]["id"]
+
+        corrected = self.client.patch(
+            f"/api/v1/sports/plate-appearances/{play_id}/correct/",
+            {"runs_scored": 2, "rbi": 2},
+            format="json",
+        )
+        self.assertEqual(corrected.status_code, 200, corrected.data)
+        game.refresh_from_db()
+        self.assertEqual((game.runs_for, game.runs_against), (27, 12))
