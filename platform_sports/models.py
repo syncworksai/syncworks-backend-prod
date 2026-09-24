@@ -275,6 +275,11 @@ class SoftballPlateAppearance(models.Model):
     outs_recorded = models.PositiveSmallIntegerField(default=0)
     rbi = models.PositiveSmallIntegerField(default=0)
     runs_scored = models.PositiveSmallIntegerField(default=0)
+    outs_before = models.PositiveSmallIntegerField(null=True, blank=True)
+    base_state = models.CharField(max_length=8, blank=True, default="")
+    situation_objective = models.CharField(max_length=24, blank=True, default="")
+    runners_advanced = models.PositiveSmallIntegerField(default=0)
+    situation_success = models.BooleanField(null=True, blank=True)
     notes = models.CharField(max_length=240, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -293,6 +298,8 @@ class SoftballPlateAppearance(models.Model):
             raise ValidationError({"player": "Plate appearance player must belong to the game's team."})
         if self.outs_recorded > 3:
             raise ValidationError({"outs_recorded": "Outs recorded cannot exceed 3."})
+        if self.outs_before is not None and self.outs_before > 2:
+            raise ValidationError({"outs_before": "Outs before the play must be 0, 1 or 2."})
 
     def __str__(self):
         return f"{self.game_id} · {self.sequence} · {self.player.display_name} · {self.result}"

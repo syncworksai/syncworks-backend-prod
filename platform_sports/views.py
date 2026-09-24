@@ -701,6 +701,32 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
                 start_at__gte=timezone.now(),
             ).select_related("social_event").order_by("start_at").first()
         )
+        next_game_day = []
+        if next_game:
+            target_date = _game_local_date(next_game)
+            candidates = team.games.filter(
+                status__in=(SportsGame.Status.SCHEDULED, SportsGame.Status.LIVE),
+                start_at__gte=timezone.now() - timedelta(days=1),
+            ).select_related("social_event").order_by("start_at")
+            for candidate in candidates:
+                if _game_local_date(candidate) != target_date:
+                    continue
+                candidate_response = None
+                if candidate.social_event_id:
+                    candidate_response = EventMemberResponse.objects.filter(
+                        event_id=candidate.social_event_id,
+                        group_id=team.group_id,
+                        user=request.user,
+                    ).first()
+                next_game_day.append({
+                    "game": SportsGameSerializer(candidate, context={"request": request}).data,
+                    "my_response": {
+                        "id": candidate_response.id if candidate_response else None,
+                        "response": candidate_response.response if candidate_response else EventMemberResponse.Response.PENDING,
+                        "responded_at": candidate_response.responded_at if candidate_response else None,
+                    },
+                })
+
         response = None
         if next_game and next_game.social_event_id:
             response_obj = EventMemberResponse.objects.filter(
@@ -774,8 +800,9 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
             "dues": dues,
             "balance_cents": balance_cents,
             "payment_settings": payment_settings,
-            "next_game": SportsGameSerializer(next_game).data if next_game else None,
+            "next_game": SportsGameSerializer(next_game, context={"request": request}).data if next_game else None,
             "next_game_response": response,
+            "next_game_day": next_game_day,
             "league": league_context,
         })
 
@@ -1475,6 +1502,14 @@ class SportsGameViewSet(viewsets.ModelViewSet):
                 outs_recorded=outs_recorded,
                 rbi=rbi,
                 runs_scored=runs_scored,
+                outs_before=game.outs,
+                base_state=str(request.data.get("base_state") or "").strip()[:8],
+                situation_objective=str(request.data.get("situation_objective") or "").strip()[:24],
+                runners_advanced=max(0, min(3, int(request.data.get("runners_advanced") or 0))),
+                situation_success=(
+                    None if request.data.get("situation_success") in (None, "")
+                    else str(request.data.get("situation_success")).lower() in ("1","true","yes")
+                ),
                 notes=str(request.data.get("notes") or "").strip(),
                 created_by=request.user,
             )
@@ -1796,6 +1831,49 @@ class SportsGameViewSet(viewsets.ModelViewSet):
         sync_game_social_event(game)
         return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
 
+    @action(detail=True, methods=["post"], url_path="add-book-play")
+    @transaction.atomic
+    def add_book_play(self, request, pk=None):
+        game = SportsGame.objects.select_for_update().select_related("team__group").get(pk=pk)
+        if not can_score_team(request.user, game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        if game.status != SportsGame.Status.FINAL:
+            return Response({"detail": "Use live scoring while a game is in progress."}, status=status.HTTP_409_CONFLICT)
+        try:
+            player_id = int(request.data.get("player") or 0)
+            inning = max(1, int(request.data.get("inning") or 1))
+            outs_recorded = max(0, min(3, int(request.data.get("outs_recorded") or 0)))
+            rbi = max(0, int(request.data.get("rbi") or 0))
+            runs_scored = max(0, int(request.data.get("runs_scored") or 0))
+            runners_advanced = max(0, min(3, int(request.data.get("runners_advanced") or 0)))
+        except (TypeError, ValueError):
+            return Response({"detail": "Player, inning and play totals must be whole numbers."}, status=status.HTTP_400_BAD_REQUEST)
+        player = get_object_or_404(SportsPlayer, pk=player_id, team=game.team)
+        result_value = str(request.data.get("result") or "").upper()
+        if result_value not in SoftballPlateAppearance.Result.values:
+            return Response({"detail": "Choose a valid plate-appearance result."}, status=status.HTTP_400_BAD_REQUEST)
+        sequence = (SoftballPlateAppearance.objects.filter(game=game).aggregate(max_seq=Max("sequence"))["max_seq"] or 0) + 1
+        success_raw = request.data.get("situation_success")
+        appearance = SoftballPlateAppearance.objects.create(
+            game=game, player=player, sequence=sequence, inning=inning, result=result_value,
+            outs_recorded=outs_recorded, rbi=rbi, runs_scored=runs_scored,
+            outs_before=(None if request.data.get("outs_before") in (None, "") else max(0, min(2, int(request.data.get("outs_before"))))),
+            base_state=str(request.data.get("base_state") or "").strip()[:8],
+            situation_objective=str(request.data.get("situation_objective") or "").strip()[:24],
+            runners_advanced=runners_advanced,
+            situation_success=(None if success_raw in (None, "") else str(success_raw).lower() in ("1", "true", "yes")),
+            notes=str(request.data.get("notes") or "").strip()[:240],
+            created_by=request.user,
+        )
+        official_score = (game.runs_for, game.runs_against)
+        rebuild_game_from_book(game)
+        game.runs_for, game.runs_against = official_score
+        game.save(update_fields=("runs_for", "runs_against", "updated_at"))
+        return Response({
+            "play": SoftballPlateAppearanceSerializer(appearance, context={"request": request}).data,
+            "game": self.get_serializer(self.get_queryset().get(pk=game.pk)).data,
+        }, status=status.HTTP_201_CREATED)
+
     @action(detail=True, methods=["post"], url_path="reopen")
     def reopen(self, request, pk=None):
         game = self.get_object()
@@ -1855,14 +1933,18 @@ class SoftballPlateAppearanceViewSet(viewsets.ReadOnlyModelViewSet):
         if not can_score_team(request.user, appearance.game.team):
             return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
 
-        allowed = {"inning", "result", "outs_recorded", "rbi", "runs_scored", "notes"}
+        allowed = {"inning", "result", "outs_recorded", "rbi", "runs_scored", "outs_before", "base_state", "situation_objective", "runners_advanced", "situation_success", "notes"}
         payload = {key: value for key, value in request.data.items() if key in allowed}
         serializer = self.get_serializer(appearance, data=payload, partial=True)
         serializer.is_valid(raise_exception=True)
         corrected = serializer.save()
 
         game = SportsGame.objects.select_for_update().get(pk=appearance.game_id)
+        official_final_score = (game.runs_for, game.runs_against) if game.status == SportsGame.Status.FINAL else None
         rebuild_game_from_book(game)
+        if official_final_score is not None:
+            game.runs_for, game.runs_against = official_final_score
+            game.save(update_fields=("runs_for", "runs_against", "updated_at"))
         if game.status == SportsGame.Status.FINAL:
             try:
                 from .league_views import sync_league_result_from_sports_game

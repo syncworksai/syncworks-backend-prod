@@ -16,6 +16,8 @@ from .ops_views import (
     SoftballStatLedgerEntryViewSet,
     SportsPlayerProfileViewSet,
     SportsPlayerAwardViewSet,
+    SportsPracticeSessionViewSet,
+    SportsPracticeRepViewSet,
     TeamFeeAssignmentViewSet,
     TeamFeeViewSet,
     TeamPaymentSettingsViewSet,
@@ -36,6 +38,8 @@ router.register("game-book-photos", SportsGameBookPhotoViewSet, basename="sports
 router.register("plate-appearances", SoftballPlateAppearanceViewSet, basename="sports-plate-appearances")
 router.register("player-profiles", SportsPlayerProfileViewSet, basename="sports-player-profiles")
 router.register("player-awards", SportsPlayerAwardViewSet, basename="sports-player-awards")
+router.register("practice-sessions", SportsPracticeSessionViewSet, basename="sports-practice-sessions")
+router.register("practice-reps", SportsPracticeRepViewSet, basename="sports-practice-reps")
 router.register("payment-settings", TeamPaymentSettingsViewSet, basename="sports-payment-settings")
 router.register("team-fees", TeamFeeViewSet, basename="sports-team-fees")
 router.register("fee-assignments", TeamFeeAssignmentViewSet, basename="sports-fee-assignments")

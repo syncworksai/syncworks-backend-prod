@@ -8,6 +8,8 @@ from .ops_models import (
     SoftballStatLedgerEntry,
     SportsPlayerAward,
     SportsPlayerProfile,
+    SportsPracticeSession,
+    SportsPracticeRep,
     TeamFee,
     TeamFeeAssignment,
     TeamPaymentSettings,
@@ -221,4 +223,39 @@ class SportsPlayerAwardSerializer(serializers.ModelSerializer):
         if not title:
             title = dict(SportsPlayerAward.Kind.choices).get(kind, "Coach Award")
             attrs["title"] = title
+        return attrs
+
+
+class SportsPracticeRepSerializer(serializers.ModelSerializer):
+    result_label = serializers.CharField(source="get_result_display", read_only=True)
+    objective_label = serializers.CharField(source="get_objective_display", read_only=True)
+
+    class Meta:
+        model = SportsPracticeRep
+        fields = (
+            "id", "session", "sequence", "outs_before", "base_state", "objective",
+            "objective_label", "result", "result_label", "runners_advanced", "rbi",
+            "successful", "notes", "created_at",
+        )
+        read_only_fields = ("id", "sequence", "created_at")
+
+
+class SportsPracticeSessionSerializer(serializers.ModelSerializer):
+    player_detail = SportsPlayerSerializer(source="player", read_only=True)
+    reps = SportsPracticeRepSerializer(many=True, read_only=True)
+    rep_count = serializers.IntegerField(source="reps.count", read_only=True)
+
+    class Meta:
+        model = SportsPracticeSession
+        fields = (
+            "id", "team", "player", "player_detail", "kind", "practiced_at", "title",
+            "notes", "rep_count", "reps", "created_by", "created_at", "updated_at",
+        )
+        read_only_fields = ("id", "created_by", "rep_count", "reps", "created_at", "updated_at")
+
+    def validate(self, attrs):
+        team = attrs.get("team", getattr(self.instance, "team", None))
+        player = attrs.get("player", getattr(self.instance, "player", None))
+        if team and player and player.team_id != team.id:
+            raise serializers.ValidationError({"player": "Practice player must belong to this team."})
         return attrs

@@ -13,6 +13,8 @@ from .models import SoftballPlateAppearance, SportsGame, SportsPlayer, SportsTea
 from .ops_models import (
     SoftballStatLedgerEntry,
     SportsPlayerProfile,
+    SportsPracticeSession,
+    SportsPracticeRep,
     SportsPlayerAward,
     TeamFee,
     TeamFeeAssignment,
@@ -21,6 +23,8 @@ from .ops_models import (
 from .ops_serializers import (
     SoftballStatLedgerEntrySerializer,
     SportsPlayerProfileSerializer,
+    SportsPracticeSessionSerializer,
+    SportsPracticeRepSerializer,
     SportsPlayerAwardSerializer,
     TeamFeeAssignmentSerializer,
     TeamFeeSerializer,
@@ -408,4 +412,185 @@ class SportsPlayerAwardViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         if not can_manage_team(self.request.user, instance.team):
             raise serializers.ValidationError("Only a coach or manager can remove team awards.")
+        instance.delete()
+
+
+class SportsPracticeSessionViewSet(viewsets.ModelViewSet):
+    serializer_class = SportsPracticeSessionSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        group_ids = active_group_ids(self.request.user)
+        queryset = SportsPracticeSession.objects.filter(
+            team__group_id__in=group_ids
+        ).select_related("team__group", "player__user", "created_by").prefetch_related("reps")
+        team_id = self.request.query_params.get("team")
+        player_id = self.request.query_params.get("player")
+        if team_id:
+            queryset = queryset.filter(team_id=team_id)
+        if player_id:
+            queryset = queryset.filter(player_id=player_id)
+        if not self.request.user.is_staff:
+            manager_groups = set(managed_group_ids(self.request.user))
+            queryset = queryset.filter(
+                Q(team__group_id__in=manager_groups) | Q(player__user=self.request.user)
+            )
+        return queryset
+
+    def perform_create(self, serializer):
+        team = serializer.validated_data["team"]
+        player = serializer.validated_data["player"]
+        if not can_manage_team(self.request.user, team) and player.user_id != self.request.user.id:
+            raise serializers.ValidationError("You may only log your own practice.")
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        session = self.get_object()
+        if not can_manage_team(self.request.user, session.team) and session.player.user_id != self.request.user.id:
+            raise serializers.ValidationError("You may only edit your own practice.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not can_manage_team(self.request.user, instance.team) and instance.player.user_id != self.request.user.id:
+            raise serializers.ValidationError("You may only remove your own practice.")
+        instance.delete()
+
+    @action(detail=True, methods=["post"], url_path="add-rep")
+    def add_rep(self, request, pk=None):
+        session = self.get_object()
+        if not can_manage_team(request.user, session.team) and session.player.user_id != request.user.id:
+            return Response({"detail": "You may only log reps for your own practice."}, status=status.HTTP_403_FORBIDDEN)
+        data = request.data.copy()
+        data["session"] = session.id
+        sequence = (session.reps.order_by("-sequence").values_list("sequence", flat=True).first() or 0) + 1
+        serializer = SportsPracticeRepSerializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(sequence=sequence)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["get"], url_path="summary")
+    def summary(self, request):
+        try:
+            team_id = int(request.query_params.get("team") or 0)
+        except (TypeError, ValueError):
+            return Response({"detail": "Choose a team."}, status=status.HTTP_400_BAD_REQUEST)
+        team = get_object_or_404(SportsTeam, pk=team_id)
+        if team.group_id not in set(active_group_ids(request.user)):
+            return Response({"detail": "Join this team to view practice."}, status=status.HTTP_403_FORBIDDEN)
+        player_id = request.query_params.get("player")
+        player = None
+        if player_id:
+            player = get_object_or_404(SportsPlayer, pk=player_id, team=team)
+            if player.user_id != request.user.id and not can_manage_team(request.user, team):
+                return Response({"detail": "Only the player or coach can view individual practice analysis."}, status=status.HTTP_403_FORBIDDEN)
+        elif not can_manage_team(request.user, team):
+            player = SportsPlayer.objects.filter(team=team, user=request.user, is_active=True).first()
+            if not player:
+                return Response({"detail": "Link your player card first."}, status=status.HTTP_400_BAD_REQUEST)
+
+        sessions = SportsPracticeSession.objects.filter(team=team)
+        live = SoftballPlateAppearance.objects.filter(game__team=team).exclude(game__status=SportsGame.Status.CANCELLED)
+        if player:
+            sessions = sessions.filter(player=player)
+            live = live.filter(player=player)
+        reps = SportsPracticeRep.objects.filter(session__in=sessions)
+
+        def average(queryset):
+            at_bats = queryset.exclude(result__in=("BB", "SF")).count()
+            hits = queryset.filter(result__in=("1B","2B","3B","HR")).count()
+            return round(hits / at_bats, 3) if at_bats else 0.0, at_bats, hits
+
+        practice_avg, practice_ab, practice_hits = average(reps)
+        live_avg, live_ab, live_hits = average(live)
+        practice_two_avg, practice_two_ab, _ = average(reps.filter(outs_before=2))
+        live_two_avg, live_two_ab, _ = average(live.filter(outs_before=2))
+        practice_reps = reps.count()
+        live_pa = live.count()
+        practice_two_reps = reps.filter(outs_before=2).count()
+        live_two_pa = live.filter(outs_before=2).count()
+
+        objectives = []
+        for key, label in SportsPracticeRep.Objective.choices:
+            p = reps.filter(objective=key)
+            p_total = p.count()
+            p_success = p.filter(successful=True).count()
+            p_avg, p_ab, p_hits = average(p)
+            l = live.filter(situation_objective=key)
+            l_total = l.count()
+            l_success = l.filter(situation_success=True).count()
+            l_avg, l_ab, l_hits = average(l)
+            objectives.append({
+                "key": key,
+                "label": label,
+                "practice_attempts": p_total,
+                "practice_ab": p_ab,
+                "practice_hits": p_hits,
+                "practice_avg": p_avg,
+                "practice_successes": p_success,
+                "practice_rate": round(p_success / p_total, 3) if p_total else None,
+                "live_attempts": l_total,
+                "live_ab": l_ab,
+                "live_hits": l_hits,
+                "live_avg": l_avg,
+                "live_successes": l_success,
+                "live_rate": round(l_success / l_total, 3) if l_total else None,
+            })
+
+        recommendation = []
+        for row in objectives:
+            if row["live_attempts"] >= 3 and (row["live_rate"] or 0) < .5:
+                recommendation.append({
+                    "priority": "HIGH",
+                    "objective": row["key"],
+                    "title": f"Work on {row['label'].lower()}",
+                    "reason": f"Live success is {round((row['live_rate'] or 0)*100)}% over {row['live_attempts']} tracked chances.",
+                })
+            elif row["practice_attempts"] >= 5 and row["live_attempts"] and row["practice_rate"] is not None and row["live_rate"] is not None and row["practice_rate"] - row["live_rate"] >= .2:
+                recommendation.append({
+                    "priority": "MEDIUM",
+                    "objective": row["key"],
+                    "title": f"Transfer {row['label'].lower()} into games",
+                    "reason": "Practice success is materially ahead of live-game success.",
+                })
+        if live_two_ab >= 3 and live_two_avg < live_avg:
+            recommendation.append({
+                "priority": "MEDIUM", "objective": "TWO_OUT_HIT",
+                "title": "Two-out hitting round",
+                "reason": f"Two-out AVG {live_two_avg:.3f} trails tracked live AVG {live_avg:.3f}.",
+            })
+
+        return Response({
+            "player": SportsPlayerSerializer(player).data if player else None,
+            "practice": {"avg": practice_avg, "reps": practice_reps, "ab": practice_ab, "hits": practice_hits, "two_out_avg": practice_two_avg, "two_out_reps": practice_two_reps, "two_out_ab": practice_two_ab},
+            "live": {"avg": live_avg, "pa": live_pa, "ab": live_ab, "hits": live_hits, "two_out_avg": live_two_avg, "two_out_pa": live_two_pa, "two_out_ab": live_two_ab},
+            "objectives": objectives,
+            "recommendations": recommendation[:5],
+            "tracking_note": "Live comparisons only include plate appearances where the Game Book scorer recorded situation context.",
+        })
+
+
+class SportsPracticeRepViewSet(viewsets.ModelViewSet):
+    serializer_class = SportsPracticeRepSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        group_ids = active_group_ids(self.request.user)
+        queryset = SportsPracticeRep.objects.filter(session__team__group_id__in=group_ids).select_related("session__team", "session__player")
+        session_id = self.request.query_params.get("session")
+        if session_id:
+            queryset = queryset.filter(session_id=session_id)
+        manager_groups = set(managed_group_ids(self.request.user))
+        return queryset.filter(Q(session__team__group_id__in=manager_groups) | Q(session__player__user=self.request.user))
+
+    def perform_update(self, serializer):
+        rep = self.get_object()
+        if not can_manage_team(self.request.user, rep.session.team) and rep.session.player.user_id != self.request.user.id:
+            raise serializers.ValidationError("You may only edit your own practice rep.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not can_manage_team(self.request.user, instance.session.team) and instance.session.player.user_id != self.request.user.id:
+            raise serializers.ValidationError("You may only remove your own practice rep.")
         instance.delete()
