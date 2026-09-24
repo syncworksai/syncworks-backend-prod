@@ -497,9 +497,9 @@ class SportsPracticeSessionViewSet(viewsets.ModelViewSet):
         reps = SportsPracticeRep.objects.filter(session__in=sessions)
 
         def average(queryset):
-            total = queryset.count()
+            at_bats = queryset.exclude(result__in=("BB", "SF")).count()
             hits = queryset.filter(result__in=("1B","2B","3B","HR")).count()
-            return round(hits / total, 3) if total else 0.0, total, hits
+            return round(hits / at_bats, 3) if at_bats else 0.0, at_bats, hits
 
         practice_avg, practice_count, practice_hits = average(reps)
         live_avg, live_count, live_hits = average(live)
