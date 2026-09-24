@@ -8,6 +8,7 @@ import hashlib
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Max, Q
+from django.db import models
 from django.shortcuts import get_object_or_404
 from django.http import HttpResponse
 from django.utils import timezone
@@ -26,13 +27,14 @@ from .player_merge import PlayerMergeMixin
 from .player_book_audit import player_book_audit
 from .player_progress import PlayerProgressMixin
 from .models import (
-    SoftballPlateAppearance, SportsGame, SportsGameBookPhoto, SportsGameInning,
+    SoftballPlateAppearance, SportsGame, SportsGameBookPhoto, SportsGameBookCandidate, SportsGameInning,
     SportsLineupSpot, SportsPlayer, SportsSubstitution, SportsTeam,
 )
 from .serializers import (
     SoftballPlateAppearanceSerializer,
     SportsGameSerializer,
     SportsGameBookPhotoSerializer,
+    SportsGameBookCandidateSerializer,
     SportsGameInningSerializer,
     SportsLineupSpotSerializer,
     SportsPlayerSerializer,
@@ -2032,3 +2034,133 @@ class SportsGameBookPhotoViewSet(viewsets.ModelViewSet):
         response["Content-Disposition"] = f'inline; filename="{photo.original_name or "scorebook.jpg"}"'
         response["Cache-Control"] = "private, max-age=300"
         return response
+
+
+class SportsGameBookCandidateViewSet(viewsets.ReadOnlyModelViewSet):
+    """Approve readable marks without fabricating any missing run or RBI.
+
+    Only approved candidates enter player stats. Source photos are uploaded by
+    the scorer via the existing authenticated Game Book photo endpoint.
+    """
+    serializer_class = SportsGameBookCandidateSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+
+    def get_queryset(self):
+        group_ids = active_group_ids(self.request.user)
+        queryset = SportsGameBookCandidate.objects.filter(
+            game__team__group_id__in=group_ids
+        ).select_related("game__team", "player", "verified_appearance")
+        game_id = self.request.query_params.get("game")
+        return queryset.filter(game_id=game_id) if game_id else queryset
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        game_id = self.request.query_params.get("game")
+        if not game_id and getattr(self, "action", None) in ("approve", "reject"):
+            game_id = self.get_object().game_id
+        if game_id:
+            context["batting_orders"] = dict(
+                SportsLineupSpot.objects.filter(game_id=game_id)
+                .values_list("player_id", "batting_order")
+            )
+        return context
+
+    @action(detail=True, methods=["post"], url_path="approve")
+    @transaction.atomic
+    def approve(self, request, pk=None):
+        candidate = SportsGameBookCandidate.objects.select_for_update().select_related(
+            "game__team", "player", "verified_appearance"
+        ).get(pk=self.get_object().pk)
+        game = SportsGame.objects.select_for_update().get(pk=candidate.game_id)
+        if not can_score_team(request.user, candidate.game.team):
+            return Response({"detail": "Team scorekeeping access is required."}, status=status.HTTP_403_FORBIDDEN)
+        if candidate.status == SportsGameBookCandidate.Status.APPROVED and candidate.verified_appearance_id:
+            return Response(self.get_serializer(candidate).data)
+        if candidate.status != SportsGameBookCandidate.Status.PENDING:
+            return Response({"detail": "Rejected drafts cannot be approved without a new review."}, status=status.HTTP_409_CONFLICT)
+        if game.status != SportsGame.Status.FINAL:
+            return Response({"detail": "Review the live game using live scoring."}, status=status.HTTP_409_CONFLICT)
+
+        result_value = str(request.data.get("result") or candidate.result or "").upper()
+        if result_value not in SoftballPlateAppearance.Result.values:
+            return Response({"detail": "Choose a valid hit or out before approving."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            outs = int(request.data.get("outs_recorded", candidate.outs_recorded))
+            rbi = int(request.data.get("rbi"))
+            runs = int(request.data.get("runs_scored"))
+        except (TypeError, ValueError):
+            return Response({
+                "detail": "Confirm the number of outs, RBI and runs from the original paper sheet. None are assumed."
+            }, status=status.HTTP_400_BAD_REQUEST)
+        if not (0 <= outs <= 3 and 0 <= rbi <= 4 and 0 <= runs <= 4) or rbi > runs:
+            return Response({"detail": "Review the out, run and RBI counts; RBI cannot exceed runs on this play."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Do not approve into a cell already entered by a coach another way.
+        if SoftballPlateAppearance.objects.filter(
+            game=game, player=candidate.player, inning=candidate.inning
+        ).exists():
+            return Response({
+                "detail": "This player already has a recorded PA for that inning. Inspect the book before approving a duplicate."
+            }, status=status.HTTP_409_CONFLICT)
+
+        official_inning = SportsGameInning.objects.filter(
+            game=game, inning=candidate.inning
+        ).first()
+        if official_inning and (
+            SoftballPlateAppearance.objects.filter(game=game, inning=candidate.inning)
+            .aggregate(total=models.Sum("runs_scored"))["total"] or 0
+        ) + runs > official_inning.team_runs:
+            return Response({
+                "detail": "Approved play runs would exceed the official inning total. Check the sheet."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        sequence = (
+            SoftballPlateAppearance.objects.filter(game=game)
+            .aggregate(max_seq=Max("sequence"))["max_seq"] or 0
+        ) + 1
+        appearance = SoftballPlateAppearance.objects.create(
+            game=game,
+            player=candidate.player,
+            sequence=sequence,
+            inning=candidate.inning,
+            result=result_value,
+            outs_recorded=outs,
+            rbi=rbi,
+            runs_scored=runs,
+            notes=f"Reviewed paper book candidate #{candidate.id}: {candidate.transcription_note}"[:240],
+            created_by=request.user,
+        )
+        candidate.result = result_value
+        candidate.outs_recorded = outs
+        candidate.rbi = rbi
+        candidate.runs_scored = runs
+        candidate.verified_appearance = appearance
+        candidate.status = SportsGameBookCandidate.Status.APPROVED
+        candidate.reviewed_by = request.user
+        candidate.reviewed_at = timezone.now()
+        candidate.save(update_fields=(
+            "result", "outs_recorded", "rbi", "runs_scored", "verified_appearance",
+            "status", "reviewed_by", "reviewed_at", "updated_at",
+        ))
+        # Deliberately do not rebuild partial historical Game Books: that
+        # would overwrite the independently verified final score/inning totals.
+        return Response({
+            "candidate": self.get_serializer(candidate).data,
+            "play": SoftballPlateAppearanceSerializer(appearance).data,
+            "official_score": {"for": game.runs_for, "against": game.runs_against},
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="reject")
+    @transaction.atomic
+    def reject(self, request, pk=None):
+        candidate = SportsGameBookCandidate.objects.select_for_update().select_related("game__team").get(pk=self.get_object().pk)
+        if not can_score_team(request.user, candidate.game.team):
+            return Response({"detail": "Team scorekeeping access is required."}, status=status.HTTP_403_FORBIDDEN)
+        if candidate.status == SportsGameBookCandidate.Status.APPROVED:
+            return Response({"detail": "Correct the recorded plate appearance instead of rejecting an approved draft."}, status=status.HTTP_409_CONFLICT)
+        candidate.status = SportsGameBookCandidate.Status.REJECTED
+        candidate.reviewed_by = request.user
+        candidate.reviewed_at = timezone.now()
+        candidate.save(update_fields=("status", "reviewed_by", "reviewed_at", "updated_at"))
+        return Response(self.get_serializer(candidate).data)
