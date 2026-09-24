@@ -326,3 +326,85 @@ class SportsPlayerAward(models.Model):
 
     def __str__(self):
         return f"{self.player} · {self.title}"
+
+
+class SportsPracticeSession(models.Model):
+    class Kind(models.TextChoices):
+        BATTING_PRACTICE = "BP", "Batting practice"
+        SITUATIONS = "SITUATIONS", "Situations"
+        FIELDING = "FIELDING", "Fielding"
+        TRAINING = "TRAINING", "Training"
+
+    team = models.ForeignKey("platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="practice_sessions")
+    player = models.ForeignKey("platform_sports.SportsPlayer", on_delete=models.CASCADE, related_name="practice_sessions")
+    kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.BATTING_PRACTICE)
+    practiced_at = models.DateTimeField(default=timezone.now)
+    title = models.CharField(max_length=120, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="sports_practice_sessions_created")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-practiced_at", "-id")
+        indexes = [
+            models.Index(fields=("team", "practiced_at"), name="sports_practice_team_date"),
+            models.Index(fields=("player", "practiced_at"), name="sports_practice_player_date"),
+        ]
+
+    def clean(self):
+        if self.player_id and self.team_id and self.player.team_id != self.team_id:
+            raise ValidationError({"player": "Practice player must belong to this team."})
+
+    def __str__(self):
+        return f"{self.player} · {self.get_kind_display()} · {self.practiced_at:%Y-%m-%d}"
+
+
+class SportsPracticeRep(models.Model):
+    class Result(models.TextChoices):
+        SINGLE = "1B", "Single"
+        DOUBLE = "2B", "Double"
+        TRIPLE = "3B", "Triple"
+        HOME_RUN = "HR", "Home run"
+        WALK = "BB", "Walk"
+        OUT = "OUT", "Out"
+        STRIKEOUT = "K", "Strikeout"
+        ERROR = "ROE", "Reached on error"
+        FIELDERS_CHOICE = "FC", "Fielder's choice"
+        SAC_FLY = "SF", "Sacrifice fly"
+
+    class Objective(models.TextChoices):
+        QUALITY_AB = "QUALITY_AB", "Quality at-bat"
+        ADVANCE_RUNNER = "ADVANCE_RUNNER", "Move the runner"
+        SAC_FLY = "SAC_FLY", "Sacrifice fly"
+        SCORE_RUNNER = "SCORE_RUNNER", "Score the runner"
+        TWO_OUT_HIT = "TWO_OUT_HIT", "Two-out hitting"
+        HIT_BEHIND_RUNNER = "HIT_BEHIND_RUNNER", "Hit behind runner"
+
+    session = models.ForeignKey(SportsPracticeSession, on_delete=models.CASCADE, related_name="reps")
+    sequence = models.PositiveIntegerField()
+    outs_before = models.PositiveSmallIntegerField(default=0)
+    base_state = models.CharField(max_length=8, blank=True, default="")
+    objective = models.CharField(max_length=24, choices=Objective.choices, default=Objective.QUALITY_AB)
+    result = models.CharField(max_length=4, choices=Result.choices)
+    runners_advanced = models.PositiveSmallIntegerField(default=0)
+    rbi = models.PositiveSmallIntegerField(default=0)
+    successful = models.BooleanField(default=False)
+    notes = models.CharField(max_length=240, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("sequence", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("session", "sequence"), name="sports_unique_practice_rep_seq"),
+        ]
+        indexes = [
+            models.Index(fields=("session", "objective"), name="sports_practice_rep_obj"),
+        ]
+
+    def clean(self):
+        if self.outs_before > 2:
+            raise ValidationError({"outs_before": "Outs before the rep must be 0, 1 or 2."})
+
+    def __str__(self):
+        return f"{self.session_id} · {self.sequence} · {self.objective} · {self.result}"
