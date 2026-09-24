@@ -701,6 +701,32 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
                 start_at__gte=timezone.now(),
             ).select_related("social_event").order_by("start_at").first()
         )
+        next_game_day = []
+        if next_game:
+            target_date = _game_local_date(next_game)
+            candidates = team.games.filter(
+                status__in=(SportsGame.Status.SCHEDULED, SportsGame.Status.LIVE),
+                start_at__gte=timezone.now() - timedelta(days=1),
+            ).select_related("social_event").order_by("start_at")
+            for candidate in candidates:
+                if _game_local_date(candidate) != target_date:
+                    continue
+                candidate_response = None
+                if candidate.social_event_id:
+                    candidate_response = EventMemberResponse.objects.filter(
+                        event_id=candidate.social_event_id,
+                        group_id=team.group_id,
+                        user=request.user,
+                    ).first()
+                next_game_day.append({
+                    "game": SportsGameSerializer(candidate, context={"request": request}).data,
+                    "my_response": {
+                        "id": candidate_response.id if candidate_response else None,
+                        "response": candidate_response.response if candidate_response else EventMemberResponse.Response.PENDING,
+                        "responded_at": candidate_response.responded_at if candidate_response else None,
+                    },
+                })
+
         response = None
         if next_game and next_game.social_event_id:
             response_obj = EventMemberResponse.objects.filter(
@@ -774,8 +800,9 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
             "dues": dues,
             "balance_cents": balance_cents,
             "payment_settings": payment_settings,
-            "next_game": SportsGameSerializer(next_game).data if next_game else None,
+            "next_game": SportsGameSerializer(next_game, context={"request": request}).data if next_game else None,
             "next_game_response": response,
+            "next_game_day": next_game_day,
             "league": league_context,
         })
 
