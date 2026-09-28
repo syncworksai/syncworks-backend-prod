@@ -32,7 +32,17 @@ class CalendarRuntimeAPIView(APIView):
 
         calendar_result = sync_due_connections()
         travel_result = refresh_due_trip_monitors()
-        alert_result = refresh_sync_alerts()
+
+        # Alert intelligence is intentionally bounded. The runtime is hit by a
+        # frequent GitHub schedule and previously tried to build finance,
+        # health and calendar context for every active user in one web request,
+        # which exceeded Gunicorn's worker timeout.
+        alert_batch_size = 6
+        slot = int(timezone.now().timestamp() // 300)
+        alert_result = refresh_sync_alerts(
+            user_limit=alert_batch_size,
+            user_offset=slot * alert_batch_size,
+        )
         operational_alert_result = refresh_operational_sync_alerts()
         return Response(
             {

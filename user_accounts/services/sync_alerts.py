@@ -258,10 +258,35 @@ def sync_alerts_for_user(user, *, send_email=True, now=None) -> dict[str, int]:
     return {"candidates": len(candidates), "created": created, "updated": updated, "emailed": emailed}
 
 
-def refresh_sync_alerts(*, user_limit=250, send_email=True) -> dict[str, int]:
+def refresh_sync_alerts(*, user_limit=250, user_offset=0, send_email=True) -> dict[str, int]:
+    """Refresh a bounded slice of active users.
+
+    Scheduled runtime calls can rotate the offset so finance/health/calendar
+    alert work never monopolizes the web worker. The slice wraps at the end.
+    """
     User = get_user_model()
-    totals = {"users": 0, "candidates": 0, "created": 0, "updated": 0, "emailed": 0, "failed": 0}
-    users = User.objects.filter(is_active=True).order_by("id")[: max(1, int(user_limit))]
+    limit = max(1, int(user_limit))
+    base = User.objects.filter(is_active=True).order_by("id")
+    total_active = base.count()
+    totals = {
+        "users": 0, "candidates": 0, "created": 0, "updated": 0,
+        "emailed": 0, "failed": 0, "total_active_users": total_active,
+        "batch_limit": limit, "batch_offset": 0,
+    }
+    if not total_active:
+        return totals
+
+    offset = max(0, int(user_offset or 0)) % total_active
+    totals["batch_offset"] = offset
+    ids = list(base.values_list("id", flat=True)[offset:offset + limit])
+    if len(ids) < min(limit, total_active):
+        ids.extend(list(base.values_list("id", flat=True)[: min(limit, total_active) - len(ids)]))
+
+    users_by_id = {
+        user.id: user for user in User.objects.filter(id__in=ids)
+    }
+    users = [users_by_id[user_id] for user_id in ids if user_id in users_by_id]
+
     for user in users:
         try:
             result = sync_alerts_for_user(user, send_email=send_email)

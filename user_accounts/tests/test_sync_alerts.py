@@ -6,7 +6,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
 from user_accounts.models import CommunicationPreference, Notification
-from user_accounts.services.sync_alerts import AlertCandidate, sync_alerts_for_user
+from user_accounts.services.sync_alerts import AlertCandidate, refresh_sync_alerts, sync_alerts_for_user
 
 
 class SyncAlertEngineTests(APITestCase):
@@ -118,3 +118,21 @@ class SyncAlertEngineTests(APITestCase):
         response = self.client.get("/api/v1/communication-preferences/current/?scope=PERSONAL")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.data["email_notifications_enabled"])
+
+
+    @patch("user_accounts.services.sync_alerts.sync_alerts_for_user")
+    def test_refresh_sync_alerts_rotates_bounded_batch(self, sync_user):
+        sync_user.return_value = {"candidates": 0, "created": 0, "updated": 0, "emailed": 0}
+        User = get_user_model()
+        extra = [
+            User.objects.create_user(username=f"batch-{index}", email=f"batch-{index}@example.com", password="x")
+            for index in range(4)
+        ]
+        active_ids = list(User.objects.filter(is_active=True).order_by("id").values_list("id", flat=True))
+        result = refresh_sync_alerts(user_limit=3, user_offset=len(active_ids) - 1, send_email=False)
+        called_ids = [call.args[0].id for call in sync_user.call_args_list]
+        self.assertEqual(len(called_ids), 3)
+        self.assertEqual(called_ids[0], active_ids[-1])
+        self.assertEqual(called_ids[1:], active_ids[:2])
+        self.assertEqual(result["batch_offset"], len(active_ids) - 1)
+        self.assertEqual(result["total_active_users"], len(active_ids))
