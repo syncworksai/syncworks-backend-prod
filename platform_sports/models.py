@@ -145,7 +145,7 @@ class SportsGame(models.Model):
     home_runs_against = models.PositiveSmallIntegerField(default=0)
     gamecast_enabled = models.BooleanField(default=False)
     fan_gamecast_notified_at = models.DateTimeField(null=True, blank=True)
-    gamecast_token = models.UUIDField(default=uuid.uuid4, editable=False)
+    gamecast_token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     gamecast_show_batter = models.BooleanField(default=True)
     gamecast_show_recent_plays = models.BooleanField(default=True)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.SCHEDULED)
