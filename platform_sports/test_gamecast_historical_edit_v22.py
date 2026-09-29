@@ -3,7 +3,13 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from platform_social.models import GroupMembership, SocialGroup
-from platform_sports.models import SportsGame, SportsTeam
+from platform_sports.models import (
+    SoftballPlateAppearance,
+    SportsGame,
+    SportsLineupSpot,
+    SportsPlayer,
+    SportsTeam,
+)
 
 
 User = get_user_model()
@@ -52,6 +58,29 @@ class GameCastTokenAndHistoricalEditTests(APITestCase):
             runs_against=12,
             created_by=self.coach,
         )
+        self.player = SportsPlayer.objects.create(
+            team=self.team,
+            display_name="Book Hitter",
+            jersey_number="7",
+            primary_position="2B",
+            created_by=self.coach,
+        )
+        SportsLineupSpot.objects.create(
+            game=self.first,
+            player=self.player,
+            batting_order=1,
+            defensive_position="2B",
+        )
+        SoftballPlateAppearance.objects.create(
+            game=self.first,
+            player=self.player,
+            sequence=1,
+            inning=1,
+            result=SoftballPlateAppearance.Result.HOME_RUN,
+            rbi=1,
+            runs_scored=1,
+            created_by=self.coach,
+        )
         self.client.force_authenticate(self.coach)
 
     def test_every_game_has_unique_gamecast_token(self):
@@ -71,6 +100,13 @@ class GameCastTokenAndHistoricalEditTests(APITestCase):
         )
         self.assertEqual(public.status_code, 200, public.data)
         self.assertEqual(public.data["game"]["id"], self.first.id)
+        self.assertIsNone(public.data["game"]["current_batter"])
+        self.assertEqual(public.data["lineup"][0]["player_detail"]["display_name"], "Book Hitter")
+        self.assertNotIn("user", public.data["lineup"][0]["player_detail"])
+        self.assertEqual(public.data["book"][0]["result"], SoftballPlateAppearance.Result.HOME_RUN)
+        self.assertEqual(public.data["book_players"][0]["stats"]["h"], 1)
+        self.assertEqual(public.data["book_players"][0]["stats"]["hr"], 1)
+        self.assertEqual(public.data["game_totals"]["h"], 1)
 
     def test_manager_edits_final_score_without_reopening_game(self):
         response = self.client.post(
