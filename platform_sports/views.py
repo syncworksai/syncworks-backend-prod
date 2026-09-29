@@ -1639,13 +1639,15 @@ class SportsGameViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="gamecast-public", permission_classes=[AllowAny])
     def gamecast_public(self, request):
         token = request.query_params.get("token")
-        game = get_object_or_404(
-            SportsGame.objects.select_related("team__group", "rule_set").prefetch_related(
-                "lineup_spots__player", "inning_lines", "plate_appearances__player"
-            ),
-            gamecast_token=token,
+        if not token:
+            return Response({"detail": "GameCast token is required."}, status=status.HTTP_400_BAD_REQUEST)
+        game = (
+            SportsGame.objects.select_related("team__group", "rule_set")
+            .prefetch_related("lineup_spots__player", "inning_lines", "plate_appearances__player")
+            .filter(gamecast_token=token, gamecast_enabled=True)
+            .first()
         )
-        if not game.gamecast_enabled:
+        if not game:
             return Response({"detail": "This GameCast is not currently shared."}, status=status.HTTP_404_NOT_FOUND)
         plays = list(game.plate_appearances.order_by("sequence").select_related("player"))
         inning_grid = []
@@ -1881,6 +1883,39 @@ class SportsGameViewSet(viewsets.ModelViewSet):
             "play": SoftballPlateAppearanceSerializer(appearance, context={"request": request}).data,
             "game": self.get_serializer(self.get_queryset().get(pk=game.pk)).data,
         }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="edit-final")
+    @transaction.atomic
+    def edit_final(self, request, pk=None):
+        game = SportsGame.objects.select_for_update().select_related("team__group").get(pk=pk)
+        if not can_manage_team(request.user, game.team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        if game.status != SportsGame.Status.FINAL:
+            return Response({"detail": "Only a completed game can use final-score editing."}, status=status.HTTP_409_CONFLICT)
+
+        changed = []
+        for field in ("runs_for", "runs_against"):
+            if field not in request.data:
+                continue
+            try:
+                value = int(request.data[field])
+            except (TypeError, ValueError):
+                return Response({"detail": f"{field} must be a whole number."}, status=status.HTTP_400_BAD_REQUEST)
+            if value < 0:
+                return Response({"detail": "Scores cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
+            setattr(game, field, value)
+            changed.append(field)
+
+        if changed:
+            game.save(update_fields=tuple(changed + ["updated_at"]))
+            sync_game_social_event(game)
+            try:
+                from .league_views import sync_league_result_from_sports_game
+                sync_league_result_from_sports_game(game)
+            except Exception:
+                pass
+
+        return Response(self.get_serializer(self.get_queryset().get(pk=game.pk)).data)
 
     @action(detail=True, methods=["post"], url_path="reopen")
     def reopen(self, request, pk=None):
