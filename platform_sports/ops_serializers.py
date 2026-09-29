@@ -184,15 +184,16 @@ class SoftballStatLedgerEntrySerializer(serializers.ModelSerializer):
         player = attrs.get("player", getattr(self.instance, "player", None))
         if team and player and player.team_id != team.id:
             raise serializers.ValidationError({"player": "Player must belong to this team."})
-        hits = int(attrs.get("hits", getattr(self.instance, "hits", 0)) or 0)
-        at_bats = int(attrs.get("ab", getattr(self.instance, "ab", 0)) or 0)
-        doubles = int(attrs.get("doubles", getattr(self.instance, "doubles", 0)) or 0)
-        triples = int(attrs.get("triples", getattr(self.instance, "triples", 0)) or 0)
-        home_runs = int(attrs.get("home_runs", getattr(self.instance, "home_runs", 0)) or 0)
-        if hits > at_bats:
-            raise serializers.ValidationError({"hits": "Hits cannot exceed at-bats."})
-        if doubles + triples + home_runs > hits:
-            raise serializers.ValidationError({"hits": "Extra-base hits cannot exceed total hits."})
+        source = attrs.get("source", getattr(self.instance, "source", SoftballStatLedgerEntry.Source.MANUAL))
+        fields = ("games", "pa", "ab", "hits", "doubles", "triples", "home_runs", "walks", "sac_flies", "rbi", "runs")
+        values = {field: int(attrs.get(field, getattr(self.instance, field, 0)) or 0) for field in fields}
+        if source != SoftballStatLedgerEntry.Source.CORRECTION:
+            if any(value < 0 for value in values.values()):
+                raise serializers.ValidationError("Historical stat entries cannot be negative.")
+            if values["hits"] > values["ab"]:
+                raise serializers.ValidationError({"hits": "Hits cannot exceed at-bats."})
+            if values["doubles"] + values["triples"] + values["home_runs"] > values["hits"]:
+                raise serializers.ValidationError({"hits": "Extra-base hits cannot exceed total hits."})
         return attrs
 
 
