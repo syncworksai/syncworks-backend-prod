@@ -162,6 +162,7 @@ def softball_player_stats(team):
         player.id: {
             "player": SportsPlayerSerializer(player).data,
             "games": set(),
+            "manual_games": 0,
             "pa": 0,
             "ab": 0,
             "h": 0,
@@ -188,7 +189,7 @@ def softball_player_stats(team):
         if row is None:
             row = {
                 "player": SportsPlayerSerializer(pa.player).data,
-                "games": set(), "pa": 0, "ab": 0, "h": 0, "single": 0,
+                "games": set(), "manual_games": 0, "pa": 0, "ab": 0, "h": 0, "single": 0,
                 "double": 0, "triple": 0, "hr": 0, "bb": 0, "sf": 0,
                 "rbi": 0, "tb": 0,
             }
@@ -217,13 +218,38 @@ def softball_player_stats(team):
         elif pa.result == SoftballPlateAppearance.Result.SAC_FLY:
             row["sf"] += 1
 
+    ledger = team.stat_ledger_entries.filter(scope__in=("LEAGUE", "TOURNAMENT")).select_related("player")
+    for entry in ledger:
+        row = stats.get(entry.player_id)
+        if row is None:
+            row = {
+                "player": SportsPlayerSerializer(entry.player).data,
+                "games": set(), "manual_games": 0, "pa": 0, "ab": 0, "h": 0, "single": 0,
+                "double": 0, "triple": 0, "hr": 0, "bb": 0, "sf": 0,
+                "rbi": 0, "tb": 0,
+            }
+            stats[entry.player_id] = row
+        singles = entry.hits - entry.doubles - entry.triples - entry.home_runs
+        row["manual_games"] += entry.games
+        row["pa"] += entry.pa
+        row["ab"] += entry.ab
+        row["h"] += entry.hits
+        row["single"] += singles
+        row["double"] += entry.doubles
+        row["triple"] += entry.triples
+        row["hr"] += entry.home_runs
+        row["bb"] += entry.walks
+        row["sf"] += entry.sac_flies
+        row["rbi"] += entry.rbi
+        row["tb"] += singles + (2 * entry.doubles) + (3 * entry.triples) + (4 * entry.home_runs)
+
     output = []
     for row in stats.values():
         ab = row["ab"]
         h = row["h"]
         bb = row["bb"]
         sf = row["sf"]
-        row["g"] = len(row.pop("games"))
+        row["g"] = len(row.pop("games")) + row.pop("manual_games", 0)
         row["avg"] = _ratio(h, ab)
         row["obp"] = _ratio(h + bb, ab + bb + sf)
         row["slg"] = _ratio(row["tb"], ab)

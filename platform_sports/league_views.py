@@ -49,6 +49,7 @@ from .league_serializers import (
     SoftballRuleSetSerializer,
 )
 from .models import SoftballPlateAppearance, SportsGame, SportsPlayer, SportsTeam
+from .ops_models import SoftballStatLedgerEntry
 from .serializers import SportsPlayerSerializer, SportsTeamSerializer
 from .views import AB_EXCLUDED_RESULTS, HIT_RESULTS, can_manage_team, sync_game_social_event
 
@@ -361,49 +362,33 @@ def division_standings(division):
 
 
 def division_team_stats(division):
-    standings = {row["team"]["id"]: row for row in division_standings(division)}
-    game_links = list(
-        LeagueGame.objects.filter(division=division, source=LeagueGame.Source.LEAGUE)
-        .select_related("home_team", "away_team")
-    )
-    team_game_ids = {}
-    for game in game_links:
-        if game.home_sports_game_id:
-            team_game_ids.setdefault(game.home_team_id, []).append(game.home_sports_game_id)
-        if game.away_sports_game_id:
-            team_game_ids.setdefault(game.away_team_id, []).append(game.away_sports_game_id)
+    """League team/player leaderboards use the same LEAGUE stat source as the team workspace.
 
+    This keeps commissioner leaderboards, team leaders, lineup cards, and manager corrections
+    on one set of totals instead of letting linked LeagueGame rows drift from a team's visible
+    stats grid.
+    """
+    from .ops_views import softball_stats_summary
+
+    standings = {row["team"]["id"]: row for row in division_standings(division)}
     teams = []
     player_leaders = []
-    for entry in LeagueTeamEntry.objects.filter(division=division, status=LeagueTeamEntry.Status.ACTIVE).select_related("team__group"):
+
+    for entry in LeagueTeamEntry.objects.filter(
+        division=division,
+        status=LeagueTeamEntry.Status.ACTIVE,
+    ).select_related("team__group"):
         team = entry.team
-        game_ids = team_game_ids.get(team.id, [])
-        appearances = list(
-            SoftballPlateAppearance.objects.filter(game_id__in=game_ids)
-            .select_related("player", "game")
-        )
-        ab = hits = walks = sf = tb = hr = rbi = 0
-        player_rows = {}
-        for pa in appearances:
-            prow = player_rows.setdefault(pa.player_id, {"player": pa.player, "pa": 0, "ab": 0, "h": 0, "bb": 0, "sf": 0, "tb": 0, "hr": 0, "rbi": 0})
-            prow["pa"] += 1; prow["rbi"] += pa.rbi
-            rbi += pa.rbi
-            if pa.result not in AB_EXCLUDED_RESULTS:
-                ab += 1; prow["ab"] += 1
-            if pa.result in HIT_RESULTS:
-                hits += 1; prow["h"] += 1
-            if pa.result == SoftballPlateAppearance.Result.WALK:
-                walks += 1; prow["bb"] += 1
-            elif pa.result == SoftballPlateAppearance.Result.SAC_FLY:
-                sf += 1; prow["sf"] += 1
-            elif pa.result == SoftballPlateAppearance.Result.SINGLE:
-                tb += 1; prow["tb"] += 1
-            elif pa.result == SoftballPlateAppearance.Result.DOUBLE:
-                tb += 2; prow["tb"] += 2
-            elif pa.result == SoftballPlateAppearance.Result.TRIPLE:
-                tb += 3; prow["tb"] += 3
-            elif pa.result == SoftballPlateAppearance.Result.HOME_RUN:
-                tb += 4; hr += 1; prow["tb"] += 4; prow["hr"] += 1
+        player_rows = softball_stats_summary(team, "LEAGUE")
+
+        ab = sum(int(row["ab"] or 0) for row in player_rows)
+        hits = sum(int(row["h"] or 0) for row in player_rows)
+        walks = sum(int(row["bb"] or 0) for row in player_rows)
+        sf = sum(int(row["sf"] or 0) for row in player_rows)
+        tb = sum(int(row["tb"] or 0) for row in player_rows)
+        hr = sum(int(row["hr"] or 0) for row in player_rows)
+        rbi = sum(int(row["rbi"] or 0) for row in player_rows)
+
         avg = round(hits / ab, 3) if ab else 0
         obp = round((hits + walks) / (ab + walks + sf), 3) if (ab + walks + sf) else 0
         slg = round(tb / ab, 3) if ab else 0
@@ -411,25 +396,37 @@ def division_team_stats(division):
         teams.append({
             "team": SportsTeamSerializer(team).data,
             "g": standing.get("games", 0),
-            "avg": avg, "obp": obp, "slg": slg, "ops": round(obp + slg, 3),
-            "h": hits, "hr": hr, "rbi": rbi,
+            "avg": avg,
+            "obp": obp,
+            "slg": slg,
+            "ops": round(obp + slg, 3),
+            "h": hits,
+            "hr": hr,
+            "rbi": rbi,
             "runs_for": standing.get("runs_for", 0),
             "runs_against": standing.get("runs_against", 0),
-            "runs_per_game": round(standing.get("runs_for", 0) / standing.get("games", 1), 2) if standing.get("games") else 0,
+            "runs_per_game": round(
+                standing.get("runs_for", 0) / standing.get("games", 1), 2
+            ) if standing.get("games") else 0,
         })
-        for prow in player_rows.values():
-            pab = prow["ab"]; ph = prow["h"]; pbb = prow["bb"]; psf = prow["sf"]
-            pobp = (ph + pbb) / (pab + pbb + psf) if (pab + pbb + psf) else 0
-            pslg = prow["tb"] / pab if pab else 0
+
+        for row in player_rows:
             player_leaders.append({
                 "team_id": team.id,
                 "team_name": team.group.name,
-                "player": SportsPlayerSerializer(prow["player"]).data,
-                "pa": prow["pa"], "avg": round(ph / pab, 3) if pab else 0,
-                "ops": round(pobp + pslg, 3), "hr": prow["hr"], "rbi": prow["rbi"],
+                "player": row["player"],
+                "pa": row["pa"],
+                "avg": row["avg"],
+                "ops": row["ops"],
+                "hr": row["hr"],
+                "rbi": row["rbi"],
             })
+
     return {
-        "teams": sorted(teams, key=lambda row: (-row["ops"], -row["avg"], row["team"]["group_name"].lower())),
+        "teams": sorted(
+            teams,
+            key=lambda row: (-row["ops"], -row["avg"], row["team"]["group_name"].lower()),
+        ),
         "leaders": {
             "ops": sorted(player_leaders, key=lambda row: (-row["ops"], -row["pa"]))[:10],
             "avg": sorted(player_leaders, key=lambda row: (-row["avg"], -row["pa"]))[:10],

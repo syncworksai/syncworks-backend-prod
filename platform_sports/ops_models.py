@@ -173,17 +173,17 @@ class SoftballStatLedgerEntry(models.Model):
     )
     season_name = models.CharField(max_length=120, blank=True)
     scope = models.CharField(max_length=16, choices=Scope.choices, default=Scope.LEAGUE)
-    games = models.PositiveIntegerField(default=0)
-    pa = models.PositiveIntegerField(default=0)
-    ab = models.PositiveIntegerField(default=0)
-    hits = models.PositiveIntegerField(default=0)
-    doubles = models.PositiveIntegerField(default=0)
-    triples = models.PositiveIntegerField(default=0)
-    home_runs = models.PositiveIntegerField(default=0)
-    walks = models.PositiveIntegerField(default=0)
-    sac_flies = models.PositiveIntegerField(default=0)
-    rbi = models.PositiveIntegerField(default=0)
-    runs = models.PositiveIntegerField(default=0)
+    games = models.IntegerField(default=0)
+    pa = models.IntegerField(default=0)
+    ab = models.IntegerField(default=0)
+    hits = models.IntegerField(default=0)
+    doubles = models.IntegerField(default=0)
+    triples = models.IntegerField(default=0)
+    home_runs = models.IntegerField(default=0)
+    walks = models.IntegerField(default=0)
+    sac_flies = models.IntegerField(default=0)
+    rbi = models.IntegerField(default=0)
+    runs = models.IntegerField(default=0)
     source = models.CharField(max_length=16, choices=Source.choices, default=Source.MANUAL)
     note = models.CharField(max_length=240, blank=True)
     created_by = models.ForeignKey(
@@ -201,10 +201,17 @@ class SoftballStatLedgerEntry(models.Model):
     def clean(self):
         if self.player_id and self.team_id and self.player.team_id != self.team_id:
             raise ValidationError({"player": "Player must belong to this team."})
-        if self.hits > self.ab:
-            raise ValidationError({"hits": "Hits cannot exceed at-bats."})
-        if self.doubles + self.triples + self.home_runs > self.hits:
-            raise ValidationError("Extra-base hits cannot exceed total hits.")
+        if self.source != self.Source.CORRECTION:
+            values = (
+                self.games, self.pa, self.ab, self.hits, self.doubles, self.triples,
+                self.home_runs, self.walks, self.sac_flies, self.rbi, self.runs,
+            )
+            if any(value < 0 for value in values):
+                raise ValidationError("Historical stat entries cannot be negative.")
+            if self.hits > self.ab:
+                raise ValidationError({"hits": "Hits cannot exceed at-bats."})
+            if self.doubles + self.triples + self.home_runs > self.hits:
+                raise ValidationError("Extra-base hits cannot exceed total hits.")
 
     def __str__(self):
         return f"{self.player} · {self.scope} · {self.season_name or 'stats'}"

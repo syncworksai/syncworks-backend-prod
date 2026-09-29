@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -136,7 +137,7 @@ def softball_stats_summary(team, scope="ALL"):
             "single": 0, "double": 0, "triple": 0, "hr": 0, "bb": 0, "sf": 0,
             "rbi": 0, "runs": 0, "tb": 0,
         })
-        singles = max(0, entry.hits - entry.doubles - entry.triples - entry.home_runs)
+        singles = entry.hits - entry.doubles - entry.triples - entry.home_runs
         row["manual_games"] += entry.games
         row["pa"] += entry.pa
         row["ab"] += entry.ab
@@ -367,6 +368,105 @@ class SoftballStatLedgerEntryViewSet(viewsets.ModelViewSet):
         if not can_manage_team(self.request.user, instance.team):
             raise serializers.ValidationError("You do not manage this sports team.")
         instance.delete()
+
+    @action(detail=False, methods=["post"], url_path="adjust-totals")
+    def adjust_totals(self, request):
+        """Set the visible player totals by writing an auditable signed correction row.
+
+        Official Game Book rows are never rewritten here. The correction ledger stores only
+        the delta needed to make the selected League/Tournament totals match what the manager
+        entered in the editable grid.
+        """
+        try:
+            team_id = int(request.data.get("team") or 0)
+            player_id = int(request.data.get("player") or 0)
+        except (TypeError, ValueError):
+            return Response({"detail": "Choose a valid team and player."}, status=status.HTTP_400_BAD_REQUEST)
+
+        team = get_object_or_404(SportsTeam.objects.select_related("group"), pk=team_id)
+        if not can_manage_team(request.user, team):
+            return Response({"detail": "You do not manage this sports team."}, status=status.HTTP_403_FORBIDDEN)
+        player = get_object_or_404(SportsPlayer, pk=player_id, team=team, merged_into__isnull=True)
+
+        scope = str(request.data.get("scope") or "LEAGUE").upper()
+        if scope not in (SoftballStatLedgerEntry.Scope.LEAGUE, SoftballStatLedgerEntry.Scope.TOURNAMENT):
+            return Response({"detail": "Choose League or Tournament before adjusting totals."}, status=status.HTTP_400_BAD_REQUEST)
+
+        current_rows = softball_stats_summary(team, scope)
+        current = next((row for row in current_rows if int(row["player"]["id"]) == player.id), None)
+        if current is None:
+            return Response({"detail": "Player statistics could not be loaded."}, status=status.HTTP_404_NOT_FOUND)
+
+        fields = {
+            "games": "g",
+            "pa": "pa",
+            "ab": "ab",
+            "hits": "h",
+            "doubles": "double",
+            "triples": "triple",
+            "home_runs": "hr",
+            "walks": "bb",
+            "sac_flies": "sf",
+            "rbi": "rbi",
+            "runs": "runs",
+        }
+        requested = request.data.get("totals")
+        if requested is None:
+            requested = {key: request.data.get(key) for key in fields if key in request.data}
+        if not isinstance(requested, dict):
+            return Response({"detail": "totals must be an object of stat columns."}, status=status.HTTP_400_BAD_REQUEST)
+
+        target = {field: int(current[column] or 0) for field, column in fields.items()}
+        for field in fields:
+            if field not in requested:
+                continue
+            try:
+                value = int(requested[field])
+            except (TypeError, ValueError):
+                return Response({"detail": f"{field} must be a whole number."}, status=status.HTTP_400_BAD_REQUEST)
+            if value < 0:
+                return Response({"detail": f"{field} cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
+            target[field] = value
+
+        if target["hits"] > target["ab"]:
+            return Response({"detail": "Hits cannot exceed at-bats."}, status=status.HTTP_400_BAD_REQUEST)
+        if target["doubles"] + target["triples"] + target["home_runs"] > target["hits"]:
+            return Response({"detail": "2B + 3B + HR cannot exceed total hits."}, status=status.HTTP_400_BAD_REQUEST)
+
+        delta = {
+            field: target[field] - int(current[column] or 0)
+            for field, column in fields.items()
+        }
+        correction = None
+        if any(delta.values()):
+            correction = SoftballStatLedgerEntry.objects.create(
+                team=team,
+                player=player,
+                season_name=(team.season_name or str(timezone.localdate().year)).strip(),
+                scope=scope,
+                source=SoftballStatLedgerEntry.Source.CORRECTION,
+                note=str(request.data.get("note") or f"Editable {scope.title()} stats grid adjustment")[:240],
+                created_by=request.user,
+                **delta,
+            )
+
+        fresh_rows = softball_stats_summary(team, scope)
+        fresh = next((row for row in fresh_rows if int(row["player"]["id"]) == player.id), current)
+        from .player_badges import card_progress
+        badge_card = card_progress(player)
+        return Response({
+            "scope": scope,
+            "player": player.id,
+            "target": target,
+            "delta": delta,
+            "correction": self.get_serializer(correction).data if correction else None,
+            "row": fresh,
+            "badge_card": {
+                "season_totals": badge_card["season_totals"],
+                "badges": badge_card["badges"],
+                "card_border": badge_card["card_border"],
+            },
+        })
 
     @action(detail=False, methods=["get"])
     def summary(self, request):
