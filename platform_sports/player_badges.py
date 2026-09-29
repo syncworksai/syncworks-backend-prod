@@ -72,7 +72,7 @@ def sum_history(row, entry):
     row["sf"] += entry.sac_flies
     row["rbi"] += entry.rbi
     row["runs"] += entry.runs
-    row["tb"] += max(0, entry.hits - entry.doubles - entry.triples - entry.home_runs) + (
+    row["tb"] += (entry.hits - entry.doubles - entry.triples - entry.home_runs) + (
         2 * entry.doubles + 3 * entry.triples + 4 * entry.home_runs
     )
 
@@ -178,15 +178,21 @@ def card_progress(player):
         scope__in=(SoftballStatLedgerEntry.Scope.LEAGUE, SoftballStatLedgerEntry.Scope.TOURNAMENT),
     ).order_by("id"))
     for entry in historical:
-        match = re.search(r"\b(?:19|20)\d{2}\b", entry.season_name or "")
+        entry_season = (entry.season_name or "").strip()
+        match = re.search(r"\b(?:19|20)\d{2}\b", entry_season)
         hist_year = int(match.group()) if match else None
+        if hist_year is None and (not entry_season or entry_season == (player.team.season_name or "").strip()):
+            hist_year = season_year
         for row in (all_time, by_competition[entry.scope]):
             sum_history(row, entry)
         if hist_year:
             sum_history(yearly[hist_year], entry)
             sum_history(by_season[(hist_year, entry.scope)], entry)
-        if hist_year == season_year and (not player.team.season_name or
-                                           (entry.season_name or "").strip() == player.team.season_name.strip()):
+        if hist_year == season_year and (
+            not player.team.season_name
+            or not entry_season
+            or entry_season == player.team.season_name.strip()
+        ):
             sum_history(season_totals, entry)
 
     moments = list(SportsPlayerMoment.objects.filter(
