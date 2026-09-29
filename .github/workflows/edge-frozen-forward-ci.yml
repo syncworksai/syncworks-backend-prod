@@ -28,8 +28,8 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: Compile frozen EDGE modules
-        run: python -m py_compile platform_edge/server_paper.py platform_edge/strategy_e.py platform_edge/strategy_scoreboard.py
+        run: python -m py_compile platform_edge/server_paper.py platform_edge/strategy_e.py platform_edge/strategy_scoreboard.py platform_edge/football.py
       - name: Django system check
         run: python manage.py check
       - name: EDGE focused tests
-        run: python manage.py test platform_edge.test_portfolio_engine platform_edge.test_strategy_a --verbosity 1
+        run: python manage.py test platform_edge.test_portfolio_engine platform_edge.test_strategy_a platform_edge.test_football --verbosity 1
