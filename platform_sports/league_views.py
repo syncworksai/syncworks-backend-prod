@@ -49,6 +49,7 @@ from .league_serializers import (
     SoftballRuleSetSerializer,
 )
 from .models import SoftballPlateAppearance, SportsGame, SportsPlayer, SportsTeam
+from .ops_models import SoftballStatLedgerEntry
 from .serializers import SportsPlayerSerializer, SportsTeamSerializer
 from .views import AB_EXCLUDED_RESULTS, HIT_RESULTS, can_manage_team, sync_game_social_event
 
@@ -404,6 +405,45 @@ def division_team_stats(division):
                 tb += 3; prow["tb"] += 3
             elif pa.result == SoftballPlateAppearance.Result.HOME_RUN:
                 tb += 4; hr += 1; prow["tb"] += 4; prow["hr"] += 1
+
+        # Manager-entered current-season League history/corrections participates in
+        # the same team and player leader math as official Game Book rows.
+        season_names = {
+            str(getattr(division.season, "name", "") or "").strip(),
+            str(team.season_name or "").strip(),
+        }
+        season_names.discard("")
+        ledger = SoftballStatLedgerEntry.objects.filter(
+            team=team,
+            scope=SoftballStatLedgerEntry.Scope.LEAGUE,
+        ).select_related("player")
+        if season_names:
+            ledger = ledger.filter(season_name__in=season_names)
+        else:
+            ledger = ledger.filter(season_name="")
+
+        for stat in ledger:
+            singles = stat.hits - stat.doubles - stat.triples - stat.home_runs
+            stat_tb = singles + (2 * stat.doubles) + (3 * stat.triples) + (4 * stat.home_runs)
+            prow = player_rows.setdefault(stat.player_id, {
+                "player": stat.player, "pa": 0, "ab": 0, "h": 0, "bb": 0,
+                "sf": 0, "tb": 0, "hr": 0, "rbi": 0,
+            })
+            prow["pa"] += stat.pa
+            prow["ab"] += stat.ab
+            prow["h"] += stat.hits
+            prow["bb"] += stat.walks
+            prow["sf"] += stat.sac_flies
+            prow["tb"] += stat_tb
+            prow["hr"] += stat.home_runs
+            prow["rbi"] += stat.rbi
+            ab += stat.ab
+            hits += stat.hits
+            walks += stat.walks
+            sf += stat.sac_flies
+            tb += stat_tb
+            hr += stat.home_runs
+            rbi += stat.rbi
         avg = round(hits / ab, 3) if ab else 0
         obp = round((hits + walks) / (ab + walks + sf), 3) if (ab + walks + sf) else 0
         slg = round(tb / ab, 3) if ab else 0
