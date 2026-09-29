@@ -4,7 +4,7 @@ from rest_framework.routers import DefaultRouter
 from .backtest_views import mlb_backtest
 from .btc15m_runner import btc15m_dashboard, system_btc15m_tick
 from .historical_views import replay_summary, sync_mlb_kalshi
-from .live_views import live_mlb_board
+from .live_views import live_mlb_board, live_ncaaf_board, live_nfl_board
 from .portfolio_views import portfolio_live, portfolio_paper_tick
 from .research_views import mlb_research_board, paper_simulate, paper_summary
 from .server_paper import server_paper_status
@@ -21,6 +21,8 @@ router.register("paper-trades", PaperTradeViewSet, basename="edge-paper-trade")
 urlpatterns = [
     path("dashboard/", dashboard, name="edge-dashboard"),
     path("live/mlb/", live_mlb_board, name="edge-live-mlb"),
+    path("live/nfl/", live_nfl_board, name="edge-live-nfl"),
+    path("live/ncaaf/", live_ncaaf_board, name="edge-live-ncaaf"),
     path("btc15m/dashboard/", btc15m_dashboard, name="edge-btc15m-dashboard"),
     path("strategy-a/live/", strategy_a_live, name="edge-strategy-a-live"),
     path("strategy-a/paper/tick/", strategy_a_paper_tick, name="edge-strategy-a-paper-tick"),
