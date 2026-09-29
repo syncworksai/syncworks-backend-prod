@@ -88,6 +88,16 @@ def softball_stats_summary(team, scope="ALL"):
         for player in players
     }
 
+    lineup_games = SportsLineupSpot.objects.filter(
+        game__team=team,
+        game__status=SportsGame.Status.FINAL,
+        game__game_type__in=_scope_game_types(scope),
+        player_id__in=rows.keys(),
+    ).values_list("player_id", "game_id")
+    for player_id, game_id in lineup_games:
+        if player_id in rows:
+            rows[player_id]["game_ids"].add(game_id)
+
     appearances = SoftballPlateAppearance.objects.filter(
         game__team=team,
         game__game_type__in=_scope_game_types(scope),
