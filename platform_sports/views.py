@@ -176,6 +176,17 @@ def softball_player_stats(team):
         }
         for player in players
     }
+    # Games played is participation, not "games that already have a transcribed PA".
+    # This keeps historical books honest while older paper sheets are still being reviewed.
+    lineup_games = SportsLineupSpot.objects.filter(
+        game__team=team,
+        game__status=SportsGame.Status.FINAL,
+        player_id__in=stats.keys(),
+    ).values_list("player_id", "game_id")
+    for player_id, game_id in lineup_games:
+        if player_id in stats:
+            stats[player_id]["games"].add(game_id)
+
     appearances = SoftballPlateAppearance.objects.filter(
         game__team=team,
     ).exclude(game__status=SportsGame.Status.CANCELLED).select_related("player", "game")
