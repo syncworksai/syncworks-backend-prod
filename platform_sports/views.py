@@ -1643,7 +1643,14 @@ class SportsGameViewSet(viewsets.ModelViewSet):
             return Response({"detail": "GameCast token is required."}, status=status.HTTP_400_BAD_REQUEST)
         game = (
             SportsGame.objects.select_related("team__group", "rule_set")
-            .prefetch_related("lineup_spots__player", "inning_lines", "plate_appearances__player")
+            .prefetch_related(
+                "lineup_spots__player",
+                "inning_lines",
+                "plate_appearances__player",
+                "team__players",
+                "substitutions__outgoing_player",
+                "substitutions__incoming_player",
+            )
             .filter(gamecast_token=token, gamecast_enabled=True)
             .first()
         )
@@ -1664,7 +1671,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
                 "opponent_hits": int(line.opponent_hits or 0) if line else 0,
             })
         current_batter = None
-        if game.gamecast_show_batter:
+        if game.gamecast_show_batter and game.status == SportsGame.Status.LIVE:
             spot = game.lineup_spots.filter(batting_order=game.current_batter_order).select_related("player").first()
             if spot:
                 # Public watch links must never expose the internal roster
@@ -1675,6 +1682,98 @@ class SportsGameViewSet(viewsets.ModelViewSet):
                     "jersey_number": spot.player.jersey_number,
                     "primary_position": spot.player.primary_position,
                 }
+        def safe_player(player):
+            return {
+                "id": player.id,
+                "display_name": player.display_name,
+                "jersey_number": player.jersey_number,
+                "primary_position": player.primary_position,
+            }
+
+        lineup_spots = list(game.lineup_spots.all().order_by("batting_order"))
+        lineup = [
+            {
+                "id": spot.id,
+                "player": spot.player_id,
+                "batting_order": spot.batting_order,
+                "defensive_position": spot.defensive_position,
+                "is_starter": spot.is_starter,
+                "player_detail": safe_player(spot.player),
+            }
+            for spot in lineup_spots
+        ]
+        lineup_ids = {spot.player_id for spot in lineup_spots}
+        bench = [
+            safe_player(player)
+            for player in game.team.players.all()
+            if player.is_active and not player.merged_into_id and player.id not in lineup_ids
+        ]
+
+        batting_order_by_player = {spot.player_id: spot.batting_order for spot in lineup_spots}
+        for sub in game.substitutions.all():
+            batting_order_by_player[sub.outgoing_player_id] = sub.batting_order
+            batting_order_by_player[sub.incoming_player_id] = sub.batting_order
+
+        first_sequence = {}
+        players_by_id = {}
+        for pa in plays:
+            players_by_id[pa.player_id] = pa.player
+            first_sequence.setdefault(pa.player_id, pa.sequence)
+        for spot in lineup_spots:
+            players_by_id.setdefault(spot.player_id, spot.player)
+            first_sequence.setdefault(spot.player_id, 100000 + spot.batting_order)
+
+        book_players = []
+        for player_id, player in sorted(
+            players_by_id.items(),
+            key=lambda item: (
+                batting_order_by_player.get(item[0], 999),
+                first_sequence.get(item[0], 999999),
+                item[1].display_name.lower(),
+            ),
+        ):
+            player_plays = [pa for pa in plays if pa.player_id == player_id]
+            at_bats = sum(1 for pa in player_plays if pa.result not in (SoftballPlateAppearance.Result.WALK, SoftballPlateAppearance.Result.SAC_FLY))
+            hits = sum(1 for pa in player_plays if pa.result in HIT_RESULTS)
+            book_players.append({
+                "player": player_id,
+                "batting_order": batting_order_by_player.get(player_id),
+                "player_detail": safe_player(player),
+                "stats": {
+                    "pa": len(player_plays),
+                    "ab": at_bats,
+                    "h": hits,
+                    "rbi": sum(int(pa.rbi or 0) for pa in player_plays),
+                    "runs": sum(int(pa.runs_scored or 0) for pa in player_plays),
+                    "hr": sum(1 for pa in player_plays if pa.result == SoftballPlateAppearance.Result.HOME_RUN),
+                },
+            })
+
+        book = [
+            {
+                "id": pa.id,
+                "player": pa.player_id,
+                "player_name": pa.player.display_name,
+                "sequence": pa.sequence,
+                "inning": pa.inning,
+                "result": pa.result,
+                "result_label": pa.get_result_display(),
+                "outs_recorded": pa.outs_recorded,
+                "rbi": pa.rbi,
+                "runs_scored": pa.runs_scored,
+                "notes": pa.notes,
+            }
+            for pa in plays
+        ]
+        game_totals = {
+            "pa": len(plays),
+            "ab": sum(1 for pa in plays if pa.result not in (SoftballPlateAppearance.Result.WALK, SoftballPlateAppearance.Result.SAC_FLY)),
+            "h": sum(1 for pa in plays if pa.result in HIT_RESULTS),
+            "rbi": sum(int(pa.rbi or 0) for pa in plays),
+            "runs": sum(int(pa.runs_scored or 0) for pa in plays),
+            "hr": sum(1 for pa in plays if pa.result == SoftballPlateAppearance.Result.HOME_RUN),
+        }
+
         recent = []
         if game.gamecast_show_recent_plays:
             for pa in plays[-12:]:
@@ -1711,6 +1810,11 @@ class SportsGameViewSet(viewsets.ModelViewSet):
                 "home_runs_against": game.home_runs_against,
             },
             "plays": recent,
+            "lineup": lineup,
+            "bench": bench,
+            "book_players": book_players,
+            "book": book,
+            "game_totals": game_totals,
         })
 
     @action(detail=True, methods=["post"], url_path="import-historical-book")
