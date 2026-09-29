@@ -1671,7 +1671,7 @@ class SportsGameViewSet(viewsets.ModelViewSet):
                 "opponent_hits": int(line.opponent_hits or 0) if line else 0,
             })
         current_batter = None
-        if game.gamecast_show_batter and game.status == SportsGame.Status.LIVE:
+        if game.gamecast_show_batter and game.status != SportsGame.Status.FINAL:
             spot = game.lineup_spots.filter(batting_order=game.current_batter_order).select_related("player").first()
             if spot:
                 # Public watch links must never expose the internal roster
