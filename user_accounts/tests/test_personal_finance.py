@@ -106,13 +106,22 @@ class PersonalFinanceFoundationTests(APITestCase):
             minimum_payment=Decimal("240.00"),
             is_manual=True,
         )
+        FinanceLiability.objects.create(
+            user=self.user,
+            name="Cash Flow Unlock",
+            kind=FinanceLiability.Kind.PERSONAL_LOAN,
+            outstanding_balance=Decimal("1103.69"),
+            minimum_payment=Decimal("538.00"),
+            is_manual=True,
+        )
 
         response = self.client.get("/api/v1/personal-finance/automation/?extra_monthly=500")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["plan_1"]["first_target"]["name"], "Small High APR")
         self.assertEqual(Decimal(str(response.data["plan_1"]["extra_monthly"])), Decimal("500"))
-        self.assertEqual(Decimal(str(response.data["plan_1"]["known_minimum_payments"])), Decimal("275.00"))
-        self.assertEqual(response.data["plan_1"]["priority"][1]["name"], "Large High APR")
+        self.assertEqual(Decimal(str(response.data["plan_1"]["known_minimum_payments"])), Decimal("813.00"))
+        self.assertEqual(response.data["plan_1"]["priority"][1]["name"], "Cash Flow Unlock")
+        self.assertEqual(response.data["plan_1"]["priority"][2]["name"], "Large High APR")
 
     def test_manual_card_endpoint_creates_account_and_liability_together(self):
         response = self.client.post(
