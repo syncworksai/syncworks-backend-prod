@@ -34,6 +34,7 @@ class HouseholdMemberSettings(models.Model):
     share_finance_income = models.BooleanField(default=False)
     share_finance_transactions = models.BooleanField(default=False)
     share_finance_budgets = models.BooleanField(default=False)
+    share_finance_with_ai = models.BooleanField(default=False)
     availability_status = models.CharField(max_length=20, default="AVAILABLE")
     phone_available = models.BooleanField(default=True)
     computer_available = models.BooleanField(default=True)
