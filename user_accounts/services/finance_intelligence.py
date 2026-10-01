@@ -239,6 +239,25 @@ def build_debt_plan_1(
         key=lambda row: (-float(_decimal(row["apr"])), float(_decimal(row["balance"]))),
     )[0] if quick_wins else None
 
+    # A very large listed minimum relative to the remaining balance can be a
+    # powerful cash-flow unlock. This is intentionally labeled "verify" because
+    # the amount may be a temporary past-due/catch-up payment rather than the
+    # normal recurring minimum.
+    cash_flow_unlocks = [
+        row for row in rows
+        if row["minimum_payment"] is not None
+        and _decimal(row["balance"]) > 0
+        and (_decimal(row["minimum_payment"]) / _decimal(row["balance"])) >= Decimal("0.20")
+        and (not quick_win or row["id"] != quick_win["id"])
+    ]
+    cash_flow_unlocks = sorted(
+        cash_flow_unlocks,
+        key=lambda row: (
+            float(_decimal(row["balance"]) / max(_decimal(row["minimum_payment"]), CENT)),
+            float(_decimal(row["balance"])),
+        ),
+    )
+
     interest_order = sorted(
         known_interest,
         key=lambda row: (-float(_decimal(row["apr"])), float(_decimal(row["balance"]))),
@@ -246,16 +265,33 @@ def build_debt_plan_1(
     priority = []
     if quick_win:
         priority.append(quick_win)
-    priority.extend(row for row in interest_order if not quick_win or row["id"] != quick_win["id"])
-    priority.extend(sorted(unknown_apr, key=lambda row: float(_decimal(row["balance"]))))
-    priority.extend(sorted(zero_interest, key=lambda row: float(_decimal(row["balance"]))))
+    priority.extend(cash_flow_unlocks)
+    used_ids = {row["id"] for row in priority}
+    priority.extend(row for row in interest_order if row["id"] not in used_ids)
+    used_ids = {row["id"] for row in priority}
+    priority.extend(
+        row for row in sorted(unknown_apr, key=lambda row: float(_decimal(row["balance"])))
+        if row["id"] not in used_ids
+    )
+    used_ids = {row["id"] for row in priority}
+    priority.extend(
+        row for row in sorted(zero_interest, key=lambda row: float(_decimal(row["balance"])))
+        if row["id"] not in used_ids
+    )
 
+    cash_flow_unlock_ids = {row["id"] for row in cash_flow_unlocks}
     for index, row in enumerate(priority, 1):
         row["rank"] = index
-        if row["apr"] is None:
-            row["priority_reason"] = "Needs APR before SyncWorks can safely rank extra payments."
-        elif quick_win and row["id"] == quick_win["id"]:
+        if quick_win and row["id"] == quick_win["id"]:
             row["priority_reason"] = "Small high-interest balance: close it, then roll its payment forward."
+        elif row["id"] in cash_flow_unlock_ids:
+            ratio = round(float((_decimal(row["minimum_payment"]) / _decimal(row["balance"])) * 100), 1)
+            row["priority_reason"] = (
+                f"Potential cash-flow unlock: the listed minimum is {ratio}% of the remaining balance. "
+                "Verify that minimum is recurring; if it is, payoff can free meaningful monthly cash."
+            )
+        elif row["apr"] is None:
+            row["priority_reason"] = "Needs APR before SyncWorks can safely rank it against other extra-payment targets."
         elif _decimal(row["apr"]) > 0:
             row["priority_reason"] = "Highest known APR remaining."
         else:
@@ -304,10 +340,12 @@ def build_debt_plan_1(
         "priority": priority,
         "missing_data": missing_data,
         "promo_watch": sorted(promo_watch, key=lambda row: row["promo_apr_end_date"]),
+        "cash_flow_unlocks": cash_flow_unlocks,
         "rules": [
             "Keep every required minimum current before sending extra money.",
             "Do not add new revolving balances while Plan 1 is active unless necessary.",
             "Close the first target, then roll its old minimum plus the extra amount into the next target.",
+            "Verify unusually large minimums; a true recurring minimum can make that balance a cash-flow unlock.",
             "Debts with missing APR or minimum data stay flagged until the ranking is trustworthy.",
             "Protect 0% promotional balances by tracking the expiration date and required payoff pace.",
         ],
