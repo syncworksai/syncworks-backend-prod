@@ -1,4 +1,5 @@
 from datetime import timedelta
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -6,6 +7,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from personal_calendar.models import PersonalCalendarEvent
 from platform_social.models import GroupMembership, SocialGroup
+from user_accounts.models.personal_finance import FinanceAccount, FinanceLiability
 
 from .models import HouseholdMemberSettings, HouseholdProfile, SharedTask
 
@@ -82,6 +84,7 @@ class HouseholdPrivacyTests(APITestCase):
         self.assertFalse(settings.share_finance_income)
         self.assertFalse(settings.share_finance_transactions)
         self.assertFalse(settings.share_finance_budgets)
+        self.assertFalse(settings.share_finance_with_ai)
 
     def test_late_accepted_member_gets_own_private_settings_on_first_load(self):
         owner = self.user("late-owner@example.com")
@@ -131,6 +134,63 @@ class HouseholdPrivacyTests(APITestCase):
         owner_settings.refresh_from_db()
         self.assertFalse(owner_settings.share_finance_accounts)
         self.assertFalse(owner_settings.share_finance_transactions)
+
+
+    def test_household_finance_respects_member_summary_and_ai_permissions(self):
+        owner = self.user("household-fin-owner@example.com")
+        member = self.user("household-fin-member@example.com")
+        group = self.group_for(owner)
+        GroupMembership.objects.create(
+            group=group,
+            user=member,
+            role=GroupMembership.Role.MEMBER,
+            status=GroupMembership.Status.ACTIVE,
+            invited_by=owner,
+        )
+        household = HouseholdProfile.objects.create(group=group, created_by=owner)
+        HouseholdMemberSettings.objects.create(household=household, user=owner)
+        member_settings = HouseholdMemberSettings.objects.create(household=household, user=member)
+
+        account = FinanceAccount.objects.create(
+            user=member,
+            name="Private Card",
+            kind=FinanceAccount.Kind.CREDIT_CARD,
+            current_balance="900.00",
+            credit_limit="1000.00",
+            is_manual=True,
+        )
+        FinanceLiability.objects.create(
+            user=member,
+            account=account,
+            name="Private Card",
+            kind=FinanceLiability.Kind.CREDIT_CARD,
+            outstanding_balance="900.00",
+            minimum_payment="40.00",
+            apr="27.9900",
+            is_manual=True,
+        )
+
+        hidden = self.client_for(owner).get(f"/api/v1/household/households/{household.id}/finance/")
+        self.assertEqual(hidden.status_code, 200)
+        hidden_member = next(row for row in hidden.json()["members"] if row["user_id"] == member.id)
+        self.assertEqual(hidden_member["privacy_status"], "PRIVATE")
+        self.assertIsNone(hidden_member["summary"])
+        self.assertEqual(Decimal(str(hidden.json()["summary"]["visible_total_debt"])), Decimal("0.00"))
+        self.assertEqual(Decimal(str(hidden.json()["plan_1"]["total_debt"])), Decimal("0.00"))
+
+        member_settings.share_finance_summary = True
+        member_settings.save(update_fields=["share_finance_summary", "updated_at"])
+        summary_only = self.client_for(owner).get(f"/api/v1/household/households/{household.id}/finance/")
+        self.assertEqual(summary_only.status_code, 200)
+        self.assertEqual(Decimal(str(summary_only.json()["summary"]["visible_total_debt"])), Decimal("900.00"))
+        self.assertEqual(Decimal(str(summary_only.json()["plan_1"]["total_debt"])), Decimal("0.00"))
+
+        member_settings.share_finance_with_ai = True
+        member_settings.save(update_fields=["share_finance_with_ai", "updated_at"])
+        shared_ai = self.client_for(owner).get(f"/api/v1/household/households/{household.id}/finance/")
+        self.assertEqual(shared_ai.status_code, 200)
+        self.assertEqual(Decimal(str(shared_ai.json()["plan_1"]["total_debt"])), Decimal("900.00"))
+        self.assertEqual(shared_ai.json()["plan_1"]["first_target"]["name"], "Private Card")
 
     def test_active_household_member_can_add_task_but_outsider_cannot_read_it(self):
         owner = self.user("task-owner@example.com")

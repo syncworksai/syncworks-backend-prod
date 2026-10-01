@@ -388,13 +388,30 @@ class SocialGroupViewSet(viewsets.ModelViewSet):
         role = str(request.data.get("role") or GroupMembership.Role.MEMBER).upper()
         if role != GroupMembership.Role.MEMBER:
             return Response({"detail": "Shared links grant member access only. Use a direct invitation for elevated roles."}, status=status.HTTP_400_BAD_REQUEST)
-        link = GroupInviteLink.objects.filter(
-            group=group,
-            role=role,
-            is_active=True,
-        ).order_by("-created_at").first()
-        if not link or not link.usable:
-            link = GroupInviteLink.objects.create(group=group, role=role, created_by=request.user)
+        if group.kind == SocialGroup.Kind.HOUSEHOLD:
+            # Household links are intentionally short lived and single use.
+            # Redeeming the link only creates a REQUESTED membership; a manager
+            # must still approve it, and Finance sharing remains off by default.
+            GroupInviteLink.objects.filter(
+                group=group,
+                role=role,
+                is_active=True,
+            ).update(is_active=False)
+            link = GroupInviteLink.objects.create(
+                group=group,
+                role=role,
+                created_by=request.user,
+                expires_at=timezone.now() + timedelta(hours=24),
+                max_uses=1,
+            )
+        else:
+            link = GroupInviteLink.objects.filter(
+                group=group,
+                role=role,
+                is_active=True,
+            ).order_by("-created_at").first()
+            if not link or not link.usable:
+                link = GroupInviteLink.objects.create(group=group, role=role, created_by=request.user)
         return Response(GroupInviteLinkSerializer(link, context={"request": request}).data)
 
     @action(detail=True, methods=["get"], url_path="members")

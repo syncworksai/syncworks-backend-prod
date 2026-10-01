@@ -1,5 +1,6 @@
 import calendar
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 from django.utils import timezone
@@ -11,6 +12,8 @@ from rest_framework.response import Response
 from personal_calendar.models import PersonalCalendarEvent
 from platform_social.models import GroupMembership, SocialGroup
 from platform_social.views import MANAGEMENT_ROLES
+from user_accounts.models.personal_finance import FinanceAccount, FinanceBudget, FinanceLiability, FinanceObligation
+from user_accounts.services.finance_intelligence import build_debt_plan_1, build_finance_briefing
 
 from .models import HouseholdGoal, HouseholdMemberSettings, HouseholdProfile, MealPlanEntry, SharedTask, ShoppingItem
 from .serializers import HouseholdGoalSerializer, HouseholdMemberSettingsSerializer, HouseholdProfileSerializer, MealPlanEntrySerializer, SharedTaskSerializer, ShoppingItemSerializer
@@ -205,6 +208,172 @@ class HouseholdProfileViewSet(viewsets.ModelViewSet):
         for task in household.tasks.exclude(status=SharedTask.Status.DONE):
             sync_task_to_household_calendars(task)
         return Response({"created": created})
+
+    @action(detail=True, methods=["get"], url_path="finance")
+    def finance(self, request, pk=None):
+        """Privacy-aware household finance summary.
+
+        Finance records remain owned by the individual user. This endpoint only
+        combines another member's data when that member explicitly enabled the
+        corresponding Household sharing permission.
+        """
+        household = self.get_object()
+        try:
+            extra_monthly = max(Decimal("0"), Decimal(str(request.query_params.get("extra_monthly") or "0")))
+        except (InvalidOperation, TypeError, ValueError):
+            extra_monthly = Decimal("0")
+
+        memberships = list(
+            GroupMembership.objects.filter(
+                group=household.group,
+                status=GroupMembership.Status.ACTIVE,
+            ).select_related("user")
+        )
+        settings_by_user = {}
+        for membership in memberships:
+            settings_obj, _ = HouseholdMemberSettings.objects.get_or_create(
+                household=household,
+                user=membership.user,
+            )
+            settings_by_user[membership.user_id] = settings_obj
+
+        owner_labels = {}
+        members_payload = []
+        plan_liabilities = []
+        total_debt = Decimal("0")
+        total_cash = Decimal("0")
+        total_minimums = Decimal("0")
+        total_due = Decimal("0")
+        total_income = Decimal("0")
+        total_spending = Decimal("0")
+        shared_summary_members = 0
+        ai_plan_members = 0
+
+        for membership in memberships:
+            member = membership.user
+            member_settings = settings_by_user[member.id]
+            display_name = (
+                f"{getattr(member, 'first_name', '')} {getattr(member, 'last_name', '')}".strip()
+                or getattr(member, "email", "")
+                or f"Member {member.id}"
+            )
+            owner_labels[member.id] = display_name
+            is_self = member.id == request.user.id
+
+            share_summary = is_self or member_settings.share_finance_summary
+            share_accounts = is_self or member_settings.share_finance_accounts
+            share_bills = is_self or member_settings.share_finance_bills
+            share_income = is_self or member_settings.share_finance_income
+            share_transactions = is_self or member_settings.share_finance_transactions
+            share_budgets = is_self or member_settings.share_finance_budgets
+            share_with_ai = is_self or (
+                member_settings.share_finance_summary
+                and member_settings.share_finance_with_ai
+            )
+
+            briefing = build_finance_briefing(member) if (
+                share_summary or share_income or share_transactions
+            ) else None
+            visible_summary = {}
+            if briefing and share_summary:
+                source = briefing["summary"]
+                visible_summary.update({
+                    "available_cash": source["available_cash"],
+                    "total_debt": source["total_debt"],
+                    "known_minimum_payments": source["known_minimum_payments"],
+                    "credit_utilization_percent": source["credit_utilization_percent"],
+                })
+                total_cash += source["available_cash"] or Decimal("0")
+                total_debt += source["total_debt"] or Decimal("0")
+                total_minimums += source["known_minimum_payments"] or Decimal("0")
+                shared_summary_members += 1
+            if briefing and share_bills:
+                visible_summary["known_30_day_obligations"] = briefing["summary"]["known_30_day_obligations"]
+                total_due += briefing["summary"]["known_30_day_obligations"] or Decimal("0")
+            if briefing and share_income:
+                visible_summary["month_income"] = briefing["summary"]["month_income"]
+                total_income += briefing["summary"]["month_income"] or Decimal("0")
+            if briefing and share_transactions:
+                visible_summary["month_spending"] = briefing["summary"]["month_spending"]
+                total_spending += briefing["summary"]["month_spending"] or Decimal("0")
+
+            details = {}
+            if share_accounts:
+                details["accounts"] = list(
+                    FinanceAccount.objects.filter(user=member, is_hidden=False)
+                    .values("id", "name", "kind", "mask", "current_balance", "available_balance", "credit_limit", "is_manual")
+                )
+            if share_bills:
+                details["obligations"] = list(
+                    FinanceObligation.objects.filter(user=member, active=True)
+                    .values("id", "name", "category", "expected_amount", "minimum_amount", "next_due_date", "autopay", "cadence")
+                )
+                details["debt_payments"] = list(
+                    FinanceLiability.objects.filter(user=member, outstanding_balance__gt=0)
+                    .values("id", "name", "kind", "minimum_payment", "next_payment_amount", "next_payment_date")
+                )
+            if share_budgets:
+                details["budgets"] = list(
+                    FinanceBudget.objects.filter(user=member, active=True)
+                    .values("id", "name", "category", "monthly_limit", "priority")
+                )
+            if share_transactions and briefing:
+                details["spending_by_category"] = briefing["top_spending_categories"]
+
+            if share_with_ai:
+                member_debts = list(
+                    FinanceLiability.objects.filter(
+                        user=member,
+                        outstanding_balance__gt=0,
+                    ).select_related("account")
+                )
+                plan_liabilities.extend(member_debts)
+                ai_plan_members += 1
+
+            members_payload.append({
+                "user_id": member.id,
+                "display_name": display_name,
+                "is_self": is_self,
+                "privacy_status": "MY_FINANCE" if is_self else ("SHARED" if share_summary else "PRIVATE"),
+                "sharing": {
+                    "summary": member_settings.share_finance_summary,
+                    "accounts": member_settings.share_finance_accounts,
+                    "bills": member_settings.share_finance_bills,
+                    "income": member_settings.share_finance_income,
+                    "transactions": member_settings.share_finance_transactions,
+                    "budgets": member_settings.share_finance_budgets,
+                    "with_ai": member_settings.share_finance_with_ai,
+                },
+                "summary": visible_summary if visible_summary else None,
+                "details": details,
+            })
+
+        plan_1 = build_debt_plan_1(
+            plan_liabilities,
+            extra_monthly=extra_monthly,
+            owner_labels=owner_labels,
+        )
+
+        return Response({
+            "household": {
+                "id": household.id,
+                "name": household.group.name,
+            },
+            "summary": {
+                "visible_total_debt": total_debt,
+                "visible_available_cash": total_cash,
+                "visible_known_minimum_payments": total_minimums,
+                "visible_30_day_obligations": total_due,
+                "visible_month_income": total_income,
+                "visible_month_spending": total_spending,
+                "shared_summary_members": shared_summary_members,
+                "active_members": len(memberships),
+                "ai_plan_members": ai_plan_members,
+            },
+            "plan_1": plan_1,
+            "members": members_payload,
+            "privacy_note": "Each finance record stays owned by its user. Household totals only include data that user chose to share; your own data is always visible to you.",
+        })
 
 
 class HouseholdMemberSettingsViewSet(viewsets.ModelViewSet):

@@ -69,6 +69,86 @@ class PersonalFinanceFoundationTests(APITestCase):
         self.assertEqual(response.data["debt_strategy"]["snowball"][0]["name"], "Card B")
         self.assertIn("actions", response.data)
 
+    def test_plan_1_uses_small_high_interest_quick_win_then_avalanche(self):
+        card_small = FinanceAccount.objects.create(
+            user=self.user,
+            name="Small High APR",
+            kind=FinanceAccount.Kind.CREDIT_CARD,
+            current_balance=Decimal("360.00"),
+            credit_limit=Decimal("3600.00"),
+            is_manual=True,
+        )
+        FinanceLiability.objects.create(
+            user=self.user,
+            account=card_small,
+            name="Small High APR",
+            kind=FinanceLiability.Kind.CREDIT_CARD,
+            outstanding_balance=Decimal("360.00"),
+            apr=Decimal("29.74"),
+            minimum_payment=Decimal("35.00"),
+            is_manual=True,
+        )
+        card_large = FinanceAccount.objects.create(
+            user=self.user,
+            name="Large High APR",
+            kind=FinanceAccount.Kind.CREDIT_CARD,
+            current_balance=Decimal("7800.00"),
+            credit_limit=Decimal("10000.00"),
+            is_manual=True,
+        )
+        FinanceLiability.objects.create(
+            user=self.user,
+            account=card_large,
+            name="Large High APR",
+            kind=FinanceLiability.Kind.CREDIT_CARD,
+            outstanding_balance=Decimal("7800.00"),
+            apr=Decimal("28.49"),
+            minimum_payment=Decimal("240.00"),
+            is_manual=True,
+        )
+        FinanceLiability.objects.create(
+            user=self.user,
+            name="Cash Flow Unlock",
+            kind=FinanceLiability.Kind.PERSONAL_LOAN,
+            outstanding_balance=Decimal("1103.69"),
+            minimum_payment=Decimal("538.00"),
+            is_manual=True,
+        )
+
+        response = self.client.get("/api/v1/personal-finance/automation/?extra_monthly=500")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["plan_1"]["first_target"]["name"], "Small High APR")
+        self.assertEqual(Decimal(str(response.data["plan_1"]["extra_monthly"])), Decimal("500"))
+        self.assertEqual(Decimal(str(response.data["plan_1"]["known_minimum_payments"])), Decimal("813.00"))
+        self.assertEqual(response.data["plan_1"]["priority"][1]["name"], "Cash Flow Unlock")
+        self.assertEqual(response.data["plan_1"]["priority"][2]["name"], "Large High APR")
+
+    def test_manual_card_endpoint_creates_account_and_liability_together(self):
+        response = self.client.post(
+            "/api/v1/personal-finance/automation/manual-card/",
+            {
+                "name": "Promo Card",
+                "balance": "11434.98",
+                "credit_limit": "12000.00",
+                "minimum_payment": "64.00",
+                "next_payment_date": (timezone.localdate() + timedelta(days=7)).isoformat(),
+                "apr": "0",
+                "promo_apr": "0",
+                "promo_apr_end_date": (timezone.localdate() + timedelta(days=365)).isoformat(),
+                "account_status": "OPEN",
+                "paid_this_cycle": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+        account = FinanceAccount.objects.get(user=self.user, name="Promo Card")
+        liability = FinanceLiability.objects.get(user=self.user, name="Promo Card")
+        self.assertEqual(liability.account_id, account.id)
+        self.assertEqual(account.credit_limit, Decimal("12000.00"))
+        self.assertEqual(liability.metadata["account_status"], "OPEN")
+        self.assertTrue(liability.metadata["paid_this_cycle"])
+        self.assertIn("promo_apr_end_date", liability.metadata)
+
     def test_budget_api_is_user_scoped(self):
         FinanceBudget.objects.create(user=self.user, name="Dining", category="FOOD_AND_DRINK", monthly_limit=Decimal("500.00"))
         other = User.objects.create_user(username="budget-other", email="budget-other@example.com", password="test-password-123")
