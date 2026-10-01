@@ -1,4 +1,5 @@
 from datetime import timedelta
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -174,21 +175,21 @@ class HouseholdPrivacyTests(APITestCase):
         hidden_member = next(row for row in hidden.json()["members"] if row["user_id"] == member.id)
         self.assertEqual(hidden_member["privacy_status"], "PRIVATE")
         self.assertIsNone(hidden_member["summary"])
-        self.assertEqual(hidden.json()["summary"]["visible_total_debt"], "0.00")
-        self.assertEqual(hidden.json()["plan_1"]["total_debt"], "0.00")
+        self.assertEqual(Decimal(str(hidden.json()["summary"]["visible_total_debt"])), Decimal("0.00"))
+        self.assertEqual(Decimal(str(hidden.json()["plan_1"]["total_debt"])), Decimal("0.00"))
 
         member_settings.share_finance_summary = True
         member_settings.save(update_fields=["share_finance_summary", "updated_at"])
         summary_only = self.client_for(owner).get(f"/api/v1/household/households/{household.id}/finance/")
         self.assertEqual(summary_only.status_code, 200)
-        self.assertEqual(summary_only.json()["summary"]["visible_total_debt"], "900.00")
-        self.assertEqual(summary_only.json()["plan_1"]["total_debt"], "0.00")
+        self.assertEqual(Decimal(str(summary_only.json()["summary"]["visible_total_debt"])), Decimal("900.00"))
+        self.assertEqual(Decimal(str(summary_only.json()["plan_1"]["total_debt"])), Decimal("0.00"))
 
         member_settings.share_finance_with_ai = True
         member_settings.save(update_fields=["share_finance_with_ai", "updated_at"])
         shared_ai = self.client_for(owner).get(f"/api/v1/household/households/{household.id}/finance/")
         self.assertEqual(shared_ai.status_code, 200)
-        self.assertEqual(shared_ai.json()["plan_1"]["total_debt"], "900.00")
+        self.assertEqual(Decimal(str(shared_ai.json()["plan_1"]["total_debt"])), Decimal("900.00"))
         self.assertEqual(shared_ai.json()["plan_1"]["first_target"]["name"], "Private Card")
 
     def test_active_household_member_can_add_task_but_outsider_cannot_read_it(self):
