@@ -14,7 +14,7 @@ class HouseholdMemberSettingsSerializer(serializers.ModelSerializer):
         fields = (
             "id", "household", "user", "user_detail", "share_calendar", "share_tasks", "share_shopping",
             "share_meals", "share_goals", "share_finance_summary", "share_finance_accounts", "share_finance_bills",
-            "share_finance_income", "share_finance_transactions", "share_finance_budgets", "availability_status",
+            "share_finance_income", "share_finance_transactions", "share_finance_budgets", "share_finance_with_ai", "availability_status",
             "phone_available", "computer_available", "updated_at",
         )
         read_only_fields = ("id", "user", "user_detail", "updated_at")
