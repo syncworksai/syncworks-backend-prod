@@ -106,34 +106,66 @@ class FinanceAutomationViewSet(viewsets.ViewSet):
             except ValueError as exc:
                 return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        account = FinanceAccount.objects.create(
+        account = FinanceAccount.objects.filter(
             user=request.user,
-            name=name,
-            official_name=str(request.data.get("official_name") or ""),
+            is_manual=True,
             kind=FinanceAccount.Kind.CREDIT_CARD,
-            current_balance=balance,
-            credit_limit=credit_limit,
-            is_manual=True,
-            metadata=metadata,
-        )
-        liability = FinanceLiability.objects.create(
+            name__iexact=name,
+        ).order_by("id").first()
+        account_created = account is None
+        if account is None:
+            account = FinanceAccount(user=request.user, name=name, kind=FinanceAccount.Kind.CREDIT_CARD, is_manual=True)
+        account.name = name
+        account.official_name = str(request.data.get("official_name") or "")
+        account.current_balance = balance
+        account.credit_limit = credit_limit
+        account.metadata = {**(account.metadata or {}), **metadata}
+        account.save()
+
+        liability = FinanceLiability.objects.filter(
             user=request.user,
-            account=account,
-            name=name,
-            kind=FinanceLiability.Kind.CREDIT_CARD,
-            lender=str(request.data.get("lender") or ""),
-            outstanding_balance=balance,
-            minimum_payment=minimum,
-            next_payment_amount=minimum,
-            next_payment_date=due_date,
-            apr=apr,
             is_manual=True,
-            metadata={**metadata, "credit_limit": str(credit_limit) if credit_limit is not None else None},
-        )
+            kind=FinanceLiability.Kind.CREDIT_CARD,
+            account=account,
+        ).order_by("id").first()
+        if liability is None:
+            liability = FinanceLiability.objects.filter(
+                user=request.user,
+                is_manual=True,
+                kind=FinanceLiability.Kind.CREDIT_CARD,
+                name__iexact=name,
+                account__isnull=True,
+            ).order_by("id").first()
+        liability_created = liability is None
+        if liability is None:
+            liability = FinanceLiability(
+                user=request.user,
+                account=account,
+                name=name,
+                kind=FinanceLiability.Kind.CREDIT_CARD,
+                is_manual=True,
+            )
+        else:
+            liability.account = account
+        liability.name = name
+        liability.lender = str(request.data.get("lender") or "")
+        liability.outstanding_balance = balance
+        liability.minimum_payment = minimum
+        liability.next_payment_amount = minimum
+        liability.next_payment_date = due_date
+        liability.apr = apr
+        liability.metadata = {
+            **(liability.metadata or {}),
+            **metadata,
+            "credit_limit": str(credit_limit) if credit_limit is not None else None,
+        }
+        liability.save()
+
         return Response(
             {
                 "account": FinanceAccountSerializer(account).data,
                 "liability": FinanceLiabilitySerializer(liability).data,
+                "created": bool(account_created or liability_created),
             },
-            status=status.HTTP_201_CREATED,
+            status=status.HTTP_201_CREATED if (account_created or liability_created) else status.HTTP_200_OK,
         )

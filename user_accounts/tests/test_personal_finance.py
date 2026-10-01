@@ -149,6 +149,25 @@ class PersonalFinanceFoundationTests(APITestCase):
         self.assertTrue(liability.metadata["paid_this_cycle"])
         self.assertIn("promo_apr_end_date", liability.metadata)
 
+        updated = self.client.post(
+            "/api/v1/personal-finance/automation/manual-card/",
+            {
+                "name": "Promo Card",
+                "balance": "11000.00",
+                "credit_limit": "12000.00",
+                "minimum_payment": "80.00",
+                "apr": "0",
+                "account_status": "OPEN",
+            },
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(FinanceAccount.objects.filter(user=self.user, name="Promo Card").count(), 1)
+        self.assertEqual(FinanceLiability.objects.filter(user=self.user, name="Promo Card").count(), 1)
+        liability.refresh_from_db()
+        self.assertEqual(liability.outstanding_balance, Decimal("11000.00"))
+        self.assertEqual(liability.minimum_payment, Decimal("80.00"))
+
     def test_budget_api_is_user_scoped(self):
         FinanceBudget.objects.create(user=self.user, name="Dining", category="FOOD_AND_DRINK", monthly_limit=Decimal("500.00"))
         other = User.objects.create_user(username="budget-other", email="budget-other@example.com", password="test-password-123")
