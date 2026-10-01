@@ -58,12 +58,15 @@ def _finance_summary(user) -> dict[str, Any]:
     debt = briefing.get("debt_strategy") or {}
     avalanche = debt.get("avalanche") or []
     top_target = avalanche[0] if avalanche else None
+    plan = briefing.get("plan_1") or {}
+    plan_target = plan.get("first_target") or None
     return {
         "available": True,
         "as_of": str(briefing.get("as_of") or ""),
         "safe_to_spend_now": _money(summary.get("safe_to_spend_now")),
         "available_cash": _money(summary.get("available_cash")),
         "known_30_day_obligations": _money(summary.get("known_30_day_obligations")),
+        "known_minimum_payments": _money(summary.get("known_minimum_payments")),
         "month_cash_flow": _money(summary.get("month_cash_flow")),
         "total_debt": _money(summary.get("total_debt")),
         "credit_utilization_percent": summary.get("credit_utilization_percent"),
@@ -85,6 +88,54 @@ def _finance_summary(user) -> dict[str, Any]:
                 "apr": _money(top_target.get("apr")) if top_target.get("apr") is not None else None,
                 "minimum_payment": _money(top_target.get("minimum_payment")),
             } if top_target else None),
+        },
+        "plan_1": {
+            "status": plan.get("status"),
+            "method": plan.get("method"),
+            "data_completeness_percent": plan.get("data_completeness_percent"),
+            "known_minimum_payments": _money(plan.get("known_minimum_payments")),
+            "extra_monthly": _money(plan.get("extra_monthly")),
+            "target_monthly_payment": _money(plan.get("target_monthly_payment")),
+            "first_target": ({
+                "name": plan_target.get("name"),
+                "owner_name": plan_target.get("owner_name"),
+                "balance": _money(plan_target.get("balance")),
+                "apr": _money(plan_target.get("apr")) if plan_target.get("apr") is not None else None,
+                "minimum_payment": _money(plan_target.get("minimum_payment")),
+                "utilization_percent": plan_target.get("utilization_percent"),
+                "priority_reason": plan_target.get("priority_reason"),
+            } if plan_target else None),
+            "priority": [
+                {
+                    "rank": item.get("rank"),
+                    "name": item.get("name"),
+                    "owner_name": item.get("owner_name"),
+                    "balance": _money(item.get("balance")),
+                    "apr": _money(item.get("apr")) if item.get("apr") is not None else None,
+                    "minimum_payment": _money(item.get("minimum_payment")),
+                    "utilization_percent": item.get("utilization_percent"),
+                    "priority_reason": item.get("priority_reason"),
+                }
+                for item in (plan.get("priority") or [])[:8]
+            ],
+            "missing_data": [
+                {
+                    "name": item.get("name"),
+                    "owner_name": item.get("owner_name"),
+                    "missing": item.get("missing") or [],
+                }
+                for item in (plan.get("missing_data") or [])[:8]
+            ],
+            "promo_watch": [
+                {
+                    "name": item.get("name"),
+                    "owner_name": item.get("owner_name"),
+                    "promo_apr_end_date": str(item.get("promo_apr_end_date") or ""),
+                    "days_remaining": item.get("days_remaining"),
+                    "estimated_monthly_to_clear": _money(item.get("estimated_monthly_to_clear")),
+                }
+                for item in (plan.get("promo_watch") or [])[:5]
+            ],
         },
     }
 
