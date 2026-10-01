@@ -47,7 +47,7 @@ def _credentials() -> dict:
     client_id = os.getenv("PLAID_CLIENT_ID", "")
     secret = os.getenv("PLAID_SECRET", "")
     if not client_id or not secret:
-        raise RuntimeError("Plaid is not configured. Set PLAID_CLIENT_ID and PLAID_SECRET.")
+        raise RuntimeError("Bank connection is not configured yet. Use Add manually or Import debt list for now.")
     return {"client_id": client_id, "secret": secret}
 
 
