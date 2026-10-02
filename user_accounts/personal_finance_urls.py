@@ -8,6 +8,7 @@ from user_accounts.viewsets.personal_finance import (
     FinanceConnectionViewSet,
     FinanceDashboardViewSet,
     FinanceGoalViewSet,
+    FinanceIncomeSourceViewSet,
     FinanceLiabilityViewSet,
     FinanceObligationViewSet,
     FinanceTransactionViewSet,
@@ -19,6 +20,7 @@ router.register(r"accounts", FinanceAccountViewSet, basename="finance-accounts")
 router.register(r"liabilities", FinanceLiabilityViewSet, basename="finance-liabilities")
 router.register(r"obligations", FinanceObligationViewSet, basename="finance-obligations")
 router.register(r"transactions", FinanceTransactionViewSet, basename="finance-transactions")
+router.register(r"income-sources", FinanceIncomeSourceViewSet, basename="finance-income-sources")
 router.register(r"goals", FinanceGoalViewSet, basename="finance-goals")
 router.register(r"budgets", FinanceBudgetViewSet, basename="finance-budgets")
 router.register(r"dashboard", FinanceDashboardViewSet, basename="finance-dashboard")
