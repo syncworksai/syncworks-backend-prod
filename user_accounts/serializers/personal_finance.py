@@ -5,6 +5,7 @@ from user_accounts.models.personal_finance import (
     FinanceBudget,
     FinanceConnection,
     FinanceGoal,
+    FinanceIncomeSource,
     FinanceLiability,
     FinanceObligation,
     FinanceTransaction,
@@ -42,6 +43,13 @@ class FinanceObligationSerializer(serializers.ModelSerializer):
 class FinanceTransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = FinanceTransaction
+        fields = "__all__"
+        read_only_fields = ["user", "created_at", "updated_at"]
+
+
+class FinanceIncomeSourceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FinanceIncomeSource
         fields = "__all__"
         read_only_fields = ["user", "created_at", "updated_at"]
 
