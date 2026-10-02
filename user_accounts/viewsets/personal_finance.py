@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import os
 from decimal import Decimal
 
 from django.db.models import Sum
@@ -28,7 +29,7 @@ from user_accounts.serializers.personal_finance import (
     FinanceObligationSerializer,
     FinanceTransactionSerializer,
 )
-from user_accounts.services.plaid_finance import create_link_token, exchange_public_token, sync_connection
+from user_accounts.services.plaid_finance import create_link_token, exchange_public_token, plaid_is_configured, sync_connection
 
 
 class UserScopedModelViewSet(viewsets.ModelViewSet):
@@ -90,6 +91,14 @@ class FinanceConnectionViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         return FinanceConnection.objects.filter(user=self.request.user)
+
+    @action(detail=False, methods=["get"], url_path="plaid/status")
+    def plaid_status(self, request):
+        return Response({
+            "configured": plaid_is_configured(),
+            "provider": "PLAID",
+            "environment": (os.getenv("PLAID_ENV") or "sandbox").lower(),
+        })
 
     @action(detail=False, methods=["post"], url_path="plaid/link-token")
     def plaid_link_token(self, request):
