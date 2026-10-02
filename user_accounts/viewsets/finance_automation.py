@@ -88,9 +88,8 @@ class FinanceAutomationViewSet(viewsets.ViewSet):
             FinanceAccount.objects.filter(
                 user=request.user,
                 is_manual=False,
-                provider_account_id__gt="",
                 is_hidden=False,
-            ).values("id", "name", "official_name", "kind", "mask", "current_balance", "credit_limit", "connection_id")
+            ).exclude(provider_account_id="").values("id", "name", "official_name", "kind", "mask", "current_balance", "credit_limit", "connection_id")
         )
         return Response({"manual": manual, "connected": connected})
 
