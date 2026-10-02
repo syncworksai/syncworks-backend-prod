@@ -82,6 +82,7 @@ def softball_stats_summary(team, scope="ALL"):
             "hr": 0,
             "bb": 0,
             "sf": 0,
+            "gidp": 0,
             "rbi": 0,
             "runs": 0,
             "tb": 0,
@@ -97,7 +98,7 @@ def softball_stats_summary(team, scope="ALL"):
         row = rows.setdefault(pa.player_id, {
             "player": SportsPlayerSerializer(pa.player).data,
             "game_ids": set(), "manual_games": 0, "pa": 0, "ab": 0, "h": 0,
-            "single": 0, "double": 0, "triple": 0, "hr": 0, "bb": 0, "sf": 0,
+            "single": 0, "double": 0, "triple": 0, "hr": 0, "bb": 0, "sf": 0, "gidp": 0,
             "rbi": 0, "runs": 0, "tb": 0,
         })
         row["game_ids"].add(pa.game_id)
@@ -129,12 +130,16 @@ def softball_stats_summary(team, scope="ALL"):
     if scope in ("LEAGUE", "TOURNAMENT"):
         ledger = ledger.filter(scope=scope)
     else:
-        ledger = ledger.filter(scope__in=(SoftballStatLedgerEntry.Scope.LEAGUE, SoftballStatLedgerEntry.Scope.TOURNAMENT))
+        ledger = ledger.filter(scope__in=(
+            SoftballStatLedgerEntry.Scope.LEAGUE,
+            SoftballStatLedgerEntry.Scope.TOURNAMENT,
+            SoftballStatLedgerEntry.Scope.COMBINED,
+        ))
     for entry in ledger:
         row = rows.setdefault(entry.player_id, {
             "player": SportsPlayerSerializer(entry.player).data,
             "game_ids": set(), "manual_games": 0, "pa": 0, "ab": 0, "h": 0,
-            "single": 0, "double": 0, "triple": 0, "hr": 0, "bb": 0, "sf": 0,
+            "single": 0, "double": 0, "triple": 0, "hr": 0, "bb": 0, "sf": 0, "gidp": 0,
             "rbi": 0, "runs": 0, "tb": 0,
         })
         singles = entry.hits - entry.doubles - entry.triples - entry.home_runs
@@ -148,6 +153,7 @@ def softball_stats_summary(team, scope="ALL"):
         row["hr"] += entry.home_runs
         row["bb"] += entry.walks
         row["sf"] += entry.sac_flies
+        row["gidp"] += entry.double_plays
         row["rbi"] += entry.rbi
         row["runs"] += entry.runs
         row["tb"] += singles + (entry.doubles * 2) + (entry.triples * 3) + (entry.home_runs * 4)
@@ -389,10 +395,15 @@ class SoftballStatLedgerEntryViewSet(viewsets.ModelViewSet):
         player = get_object_or_404(SportsPlayer, pk=player_id, team=team, merged_into__isnull=True)
 
         scope = str(request.data.get("scope") or "LEAGUE").upper()
-        if scope not in (SoftballStatLedgerEntry.Scope.LEAGUE, SoftballStatLedgerEntry.Scope.TOURNAMENT):
-            return Response({"detail": "Choose League or Tournament before adjusting totals."}, status=status.HTTP_400_BAD_REQUEST)
+        if scope not in (
+            SoftballStatLedgerEntry.Scope.LEAGUE,
+            SoftballStatLedgerEntry.Scope.TOURNAMENT,
+            SoftballStatLedgerEntry.Scope.COMBINED,
+        ):
+            return Response({"detail": "Choose Combined, League or Tournament before adjusting totals."}, status=status.HTTP_400_BAD_REQUEST)
 
-        current_rows = softball_stats_summary(team, scope)
+        summary_scope = "ALL" if scope == SoftballStatLedgerEntry.Scope.COMBINED else scope
+        current_rows = softball_stats_summary(team, summary_scope)
         current = next((row for row in current_rows if int(row["player"]["id"]) == player.id), None)
         if current is None:
             return Response({"detail": "Player statistics could not be loaded."}, status=status.HTTP_404_NOT_FOUND)
@@ -407,6 +418,7 @@ class SoftballStatLedgerEntryViewSet(viewsets.ModelViewSet):
             "home_runs": "hr",
             "walks": "bb",
             "sac_flies": "sf",
+            "double_plays": "gidp",
             "rbi": "rbi",
             "runs": "runs",
         }
@@ -450,7 +462,7 @@ class SoftballStatLedgerEntryViewSet(viewsets.ModelViewSet):
                 **delta,
             )
 
-        fresh_rows = softball_stats_summary(team, scope)
+        fresh_rows = softball_stats_summary(team, summary_scope)
         fresh = next((row for row in fresh_rows if int(row["player"]["id"]) == player.id), current)
         from .player_badges import card_progress
         badge_card = card_progress(player)
