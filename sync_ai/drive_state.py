@@ -6,7 +6,6 @@ from .daily_intelligence import enrich_daily_state_with_inbox
 _ALLOWED_ATTENTION_CATEGORIES = {
     "calendar",
     "personal_requests",
-    "inbox",
     "business",
     "property",
     "weather",
@@ -62,8 +61,9 @@ def _attention(row):
 def build_drive_state(user):
     """Return the minimum driver-safe projection of SYNC daily intelligence.
 
-    The full daily-state contains private Finance and Health context. CarPlay never
-    receives those sections. This projection is intentionally allow-listed.
+    The full daily-state contains private Finance, Health, and connected-email
+    context. CarPlay never receives those sections. This projection is explicitly
+    allow-listed rather than passing through the web dashboard payload.
     """
     state = enrich_daily_state_with_inbox(user, build_daily_state(user))
 
