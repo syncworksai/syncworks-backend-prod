@@ -125,6 +125,7 @@ class EditableStatsGridTests(APITestCase):
             "home_runs": 2,
             "walks": 3,
             "sac_flies": 1,
+            "double_plays": 1,
             "rbi": 12,
             "runs": 10,
         }
@@ -154,6 +155,7 @@ class EditableStatsGridTests(APITestCase):
         self.assertEqual(row["hr"], 2)
         self.assertEqual(row["bb"], 3)
         self.assertEqual(row["sf"], 1)
+        self.assertEqual(row["gidp"], 1)
         self.assertEqual(row["rbi"], 12)
         self.assertEqual(row["runs"], 10)
         self.assertEqual(row["avg"], 0.55)
@@ -207,3 +209,56 @@ class EditableStatsGridTests(APITestCase):
         response = self.adjust(hits=3, doubles=2, triples=1, home_runs=2)
         self.assertEqual(response.status_code, 400)
         self.assertIn("cannot exceed", response.data["detail"])
+
+
+    def test_combined_adjustment_updates_combined_dashboard_and_badges_without_changing_league_split(self):
+        response = self.client.post(
+            "/api/v1/sports/stat-ledger/adjust-totals/",
+            {
+                "team": self.team.id,
+                "player": self.player.id,
+                "scope": "COMBINED",
+                "totals": {
+                    "games": 4,
+                    "pa": 24,
+                    "ab": 20,
+                    "hits": 12,
+                    "doubles": 2,
+                    "triples": 1,
+                    "home_runs": 1,
+                    "walks": 3,
+                    "sac_flies": 1,
+                    "double_plays": 2,
+                    "rbi": 8,
+                    "runs": 9,
+                },
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["row"]["h"], 12)
+        self.assertEqual(response.data["row"]["ab"], 20)
+        self.assertEqual(response.data["row"]["gidp"], 2)
+        self.assertEqual(response.data["row"]["avg"], 0.6)
+
+        combined = softball_stats_summary(self.team, "ALL")
+        combined_row = next(item for item in combined if item["player"]["id"] == self.player.id)
+        self.assertEqual(combined_row["h"], 12)
+        self.assertEqual(combined_row["gidp"], 2)
+
+        league = softball_stats_summary(self.team, "LEAGUE")
+        league_row = next(item for item in league if item["player"]["id"] == self.player.id)
+        self.assertEqual(league_row["h"], 1)
+        self.assertEqual(league_row["gidp"], 0)
+
+        dashboard_row = next(
+            item for item in softball_player_stats(self.team)
+            if int(item["player"]["id"]) == self.player.id
+        )
+        self.assertEqual(dashboard_row["h"], 12)
+        self.assertEqual(dashboard_row["gidp"], 2)
+        self.assertEqual(dashboard_row["runs"], 9)
+
+        card = card_progress(self.player)
+        self.assertEqual(card["season_totals"]["h"], 12)
+        self.assertEqual(card["season_totals"]["gidp"], 2)

@@ -154,6 +154,7 @@ class SoftballStatLedgerEntry(models.Model):
     class Scope(models.TextChoices):
         LEAGUE = "LEAGUE", "League"
         TOURNAMENT = "TOURNAMENT", "Tournament"
+        COMBINED = "COMBINED", "Combined season correction"
         OTHER = "OTHER", "Other"
 
     class Source(models.TextChoices):
@@ -182,6 +183,7 @@ class SoftballStatLedgerEntry(models.Model):
     home_runs = models.IntegerField(default=0)
     walks = models.IntegerField(default=0)
     sac_flies = models.IntegerField(default=0)
+    double_plays = models.IntegerField(default=0)
     rbi = models.IntegerField(default=0)
     runs = models.IntegerField(default=0)
     source = models.CharField(max_length=16, choices=Source.choices, default=Source.MANUAL)
@@ -204,7 +206,7 @@ class SoftballStatLedgerEntry(models.Model):
         if self.source != self.Source.CORRECTION:
             values = (
                 self.games, self.pa, self.ab, self.hits, self.doubles, self.triples,
-                self.home_runs, self.walks, self.sac_flies, self.rbi, self.runs,
+                self.home_runs, self.walks, self.sac_flies, self.double_plays, self.rbi, self.runs,
             )
             if any(value < 0 for value in values):
                 raise ValidationError("Historical stat entries cannot be negative.")
