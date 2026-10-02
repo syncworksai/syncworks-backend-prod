@@ -109,9 +109,14 @@ class FinanceLiability(models.Model):
 class FinanceObligation(models.Model):
     class Category(models.TextChoices):
         HOUSING = "HOUSING", "Housing"
+        MORTGAGE = "MORTGAGE", "Mortgage"
         UTILITIES = "UTILITIES", "Utilities"
+        PHONE = "PHONE", "Phone"
+        INTERNET = "INTERNET", "Internet"
         INSURANCE = "INSURANCE", "Insurance"
+        VEHICLE = "VEHICLE", "Vehicle"
         TRANSPORTATION = "TRANSPORTATION", "Transportation"
+        GROCERIES = "GROCERIES", "Groceries"
         SUBSCRIPTIONS = "SUBSCRIPTIONS", "Subscriptions"
         DEBT = "DEBT", "Debt"
         CHILDCARE = "CHILDCARE", "Childcare"
@@ -164,6 +169,41 @@ class FinanceTransaction(models.Model):
         ordering = ["-date", "-id"]
         indexes = [models.Index(fields=["user", "-date"]), models.Index(fields=["user", "category_primary"])]
         constraints = [models.UniqueConstraint(fields=["user", "provider_transaction_id"], condition=~models.Q(provider_transaction_id=""), name="uniq_user_finance_provider_transaction")]
+
+
+class FinanceIncomeSource(models.Model):
+    class Kind(models.TextChoices):
+        PAYCHECK = "PAYCHECK", "Paycheck"
+        BUSINESS = "BUSINESS", "Business"
+        RENTAL = "RENTAL", "Rental income"
+        BENEFIT = "BENEFIT", "Benefit"
+        INVESTMENT = "INVESTMENT", "Investment"
+        OTHER = "OTHER", "Other"
+
+    class Cadence(models.TextChoices):
+        WEEKLY = "WEEKLY", "Weekly"
+        BIWEEKLY = "BIWEEKLY", "Every two weeks"
+        SEMIMONTHLY = "SEMIMONTHLY", "Twice monthly"
+        MONTHLY = "MONTHLY", "Monthly"
+        QUARTERLY = "QUARTERLY", "Quarterly"
+        ANNUAL = "ANNUAL", "Annual"
+        OTHER = "OTHER", "Other"
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="finance_income_sources")
+    name = models.CharField(max_length=180)
+    kind = models.CharField(max_length=32, choices=Kind.choices, default=Kind.PAYCHECK)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    cadence = models.CharField(max_length=32, choices=Cadence.choices, default=Cadence.MONTHLY)
+    next_income_date = models.DateField(null=True, blank=True)
+    active = models.BooleanField(default=True)
+    is_manual = models.BooleanField(default=True)
+    notes = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["next_income_date", "name"]
 
 
 class FinanceGoal(models.Model):
