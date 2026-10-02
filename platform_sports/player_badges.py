@@ -33,7 +33,7 @@ HITS = ("1B", "2B", "3B", "HR")
 def blank():
     return {
         "games": set(), "historical_games": 0, "pa": 0, "ab": 0,
-        "h": 0, "double": 0, "triple": 0, "hr": 0, "bb": 0, "sf": 0,
+        "h": 0, "double": 0, "triple": 0, "hr": 0, "bb": 0, "sf": 0, "gidp": 0,
         "rbi": 0, "runs": 0, "tb": 0,
     }
 
@@ -70,6 +70,7 @@ def sum_history(row, entry):
     row["hr"] += entry.home_runs
     row["bb"] += entry.walks
     row["sf"] += entry.sac_flies
+    row["gidp"] += entry.double_plays
     row["rbi"] += entry.rbi
     row["runs"] += entry.runs
     row["tb"] += (entry.hits - entry.doubles - entry.triples - entry.home_runs) + (
@@ -88,7 +89,7 @@ def summary(row, *, label="", scope="", year=None, month=None, historical=False)
     return {
         "label": label, "scope": scope, "year": year, "month": month,
         "historical": historical, "g": len(row["games"]) + row["historical_games"],
-        **{k: row[k] for k in ("pa", "ab", "h", "double", "triple", "hr", "bb", "sf", "rbi", "runs", "tb")},
+        **{k: row[k] for k in ("pa", "ab", "h", "double", "triple", "hr", "bb", "sf", "gidp", "rbi", "runs", "tb")},
         "avg": avg, "obp": obp, "slg": slg, "ops": round(obp + slg, 3),
         "power_points": row["double"] + 2 * row["triple"] + 3 * row["hr"],
     }
@@ -175,7 +176,11 @@ def card_progress(player):
     # Legacy manager-entered history has a season, but generally no game date.
     # Never manufacture a monthly breakout for it.
     historical = list(player.stat_ledger_entries.filter(
-        scope__in=(SoftballStatLedgerEntry.Scope.LEAGUE, SoftballStatLedgerEntry.Scope.TOURNAMENT),
+        scope__in=(
+            SoftballStatLedgerEntry.Scope.LEAGUE,
+            SoftballStatLedgerEntry.Scope.TOURNAMENT,
+            SoftballStatLedgerEntry.Scope.COMBINED,
+        ),
     ).order_by("id"))
     for entry in historical:
         entry_season = (entry.season_name or "").strip()
@@ -183,11 +188,13 @@ def card_progress(player):
         hist_year = int(match.group()) if match else None
         if hist_year is None and (not entry_season or entry_season == (player.team.season_name or "").strip()):
             hist_year = season_year
-        for row in (all_time, by_competition[entry.scope]):
-            sum_history(row, entry)
+        sum_history(all_time, entry)
+        if entry.scope != SoftballStatLedgerEntry.Scope.COMBINED:
+            sum_history(by_competition[entry.scope], entry)
         if hist_year:
             sum_history(yearly[hist_year], entry)
-            sum_history(by_season[(hist_year, entry.scope)], entry)
+            if entry.scope != SoftballStatLedgerEntry.Scope.COMBINED:
+                sum_history(by_season[(hist_year, entry.scope)], entry)
         if hist_year == season_year and (
             not player.team.season_name
             or not entry_season
