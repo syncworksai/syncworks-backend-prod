@@ -103,6 +103,7 @@ def current_totals(PlateAppearance, Ledger, team_id, player_id, target_scope):
 def apply_targets(apps, schema_editor):
     SportsTeam = apps.get_model("platform_sports", "SportsTeam")
     SportsPlayer = apps.get_model("platform_sports", "SportsPlayer")
+    SportsGame = apps.get_model("platform_sports", "SportsGame")
     PlateAppearance = apps.get_model("platform_sports", "SoftballPlateAppearance")
     Ledger = apps.get_model("platform_sports", "SoftballStatLedgerEntry")
 
