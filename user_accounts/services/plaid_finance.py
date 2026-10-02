@@ -43,6 +43,10 @@ def plaid_base_url() -> str:
     return "https://sandbox.plaid.com"
 
 
+def plaid_is_configured() -> bool:
+    return bool((os.getenv("PLAID_CLIENT_ID") or "").strip() and (os.getenv("PLAID_SECRET") or "").strip())
+
+
 def _credentials() -> dict:
     client_id = os.getenv("PLAID_CLIENT_ID", "")
     secret = os.getenv("PLAID_SECRET", "")
