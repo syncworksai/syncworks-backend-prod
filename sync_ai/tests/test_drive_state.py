@@ -66,6 +66,7 @@ class DriveStateProjectionTests(SimpleTestCase):
             },
             "needs_attention": [
                 {"category": "calendar", "priority": "high", "title": "Leave soon", "detail": "Leave by 5:30"},
+                {"category": "inbox", "priority": "high", "title": "99 unread messages", "detail": "98 are from connected email"},
                 {"category": "money", "priority": "high", "title": "Card due", "detail": "$200"},
                 {"category": "health", "priority": "normal", "title": "Workout", "detail": "Chest day"},
             ],
