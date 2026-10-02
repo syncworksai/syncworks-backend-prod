@@ -239,6 +239,51 @@ class TeamFansPasswordMergeV8Tests(APITestCase):
             f"/api/v1/sports/players/{duplicate.id}/delete-empty/", {}, format="json",
         ).status_code, 409)
 
+    def test_merge_preserves_member_account_and_player_center_access(self):
+        GroupMembership.objects.create(
+            group=self.group,
+            user=self.player,
+            role=GroupMembership.Role.MEMBER,
+            status=GroupMembership.Status.ACTIVE,
+            invited_by=self.owner,
+        )
+        primary = SportsPlayer.objects.create(
+            team=self.team,
+            display_name="Jeff Davis",
+            jersey_number="13",
+            created_by=self.owner,
+        )
+        duplicate = SportsPlayer.objects.create(
+            team=self.team,
+            user=self.player,
+            display_name="Jeff Davis duplicate",
+            created_by=self.owner,
+        )
+
+        merged = self.client.post(
+            f"/api/v1/sports/players/{duplicate.id}/merge/",
+            {"target_player": primary.id},
+            format="json",
+        )
+        self.assertEqual(merged.status_code, 200, merged.data)
+
+        primary.refresh_from_db()
+        duplicate.refresh_from_db()
+        self.assertEqual(primary.user_id, self.player.id)
+        self.assertIsNone(duplicate.user_id)
+        self.assertFalse(duplicate.is_active)
+        self.assertTrue(GroupMembership.objects.filter(
+            group=self.group,
+            user=self.player,
+            status=GroupMembership.Status.ACTIVE,
+        ).exists())
+
+        self.client.force_authenticate(self.player)
+        center = self.client.get(f"/api/v1/sports/teams/{self.team.id}/player-center/")
+        self.assertEqual(center.status_code, 200, center.data)
+        self.assertEqual(center.data["player"]["id"], primary.id)
+        self.assertEqual(center.data["player"]["display_name"], "Jeff Davis")
+
     def test_delete_empty_card_only(self):
         unused = SportsPlayer.objects.create(
             team=self.team, display_name="Mistake", created_by=self.owner,
