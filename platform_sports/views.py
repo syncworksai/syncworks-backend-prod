@@ -707,8 +707,11 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
         if not user_can_access_team(request.user, team):
             return Response({"detail": "You cannot access this team."}, status=status.HTTP_403_FORBIDDEN)
 
-        base = team_dashboard(team)
-        player = team.players.filter(user=request.user, is_active=True).select_related("user").first()
+        player = team.players.filter(
+            user=request.user,
+            is_active=True,
+            merged_into__isnull=True,
+        ).select_related("user").first()
         profile = None
         stats = {"all": None, "league": None, "tournament": None}
         dues = []
@@ -717,6 +720,49 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
         all_rows = softball_stats_summary(team, "ALL") if team.sport == SportsTeam.Sport.SOFTBALL else []
         league_rows = softball_stats_summary(team, "LEAGUE") if team.sport == SportsTeam.Sport.SOFTBALL else []
         tournament_rows = softball_stats_summary(team, "TOURNAMENT") if team.sport == SportsTeam.Sport.SOFTBALL else []
+
+        # Player Center used to call the full team_dashboard() here. That endpoint
+        # serializes every historical game, lineup and inning before this method
+        # then computes player stats again. On mobile/in-app browsers that work
+        # could exceed the frontend's 20s request timeout. Build only the compact
+        # team/record/stat summary Player Center actually needs.
+        final_scores = list(
+            team.games.filter(status=SportsGame.Status.FINAL)
+            .values("runs_for", "runs_against")
+        )
+        wins = sum(int(row["runs_for"] or 0) > int(row["runs_against"] or 0) for row in final_scores)
+        losses = sum(int(row["runs_for"] or 0) < int(row["runs_against"] or 0) for row in final_scores)
+        ties = len(final_scores) - wins - losses
+
+        team_ab = sum(int(row.get("ab") or 0) for row in all_rows)
+        team_hits = sum(int(row.get("h") or 0) for row in all_rows)
+        team_pa = sum(int(row.get("pa") or 0) for row in all_rows)
+        team_hr = sum(int(row.get("hr") or 0) for row in all_rows)
+        team_rbi = sum(int(row.get("rbi") or 0) for row in all_rows)
+        team_doubles = sum(int(row.get("double") or 0) for row in all_rows)
+        team_triples = sum(int(row.get("triple") or 0) for row in all_rows)
+        team_walks = sum(int(row.get("bb") or 0) for row in all_rows)
+        team_sf = sum(int(row.get("sf") or 0) for row in all_rows)
+        team_tb = sum(int(row.get("tb") or 0) for row in all_rows)
+        team_obp = _ratio(team_hits + team_walks, team_ab + team_walks + team_sf)
+        team_slg = _ratio(team_tb, team_ab)
+        compact_record = {"wins": wins, "losses": losses, "ties": ties, "games": len(final_scores)}
+        compact_team_stats = {
+            "avg": _ratio(team_hits, team_ab),
+            "hits": team_hits,
+            "at_bats": team_ab,
+            "plate_appearances": team_pa,
+            "home_runs": team_hr,
+            "doubles": team_doubles,
+            "triples": team_triples,
+            "walks": team_walks,
+            "rbi": team_rbi,
+            "obp": team_obp,
+            "slg": team_slg,
+            "ops": round(team_obp + team_slg, 3),
+            "runs_for": sum(int(row["runs_for"] or 0) for row in final_scores),
+            "runs_against": sum(int(row["runs_against"] or 0) for row in final_scores),
+        }
 
         if player:
             profile_obj = SportsPlayerProfile.objects.filter(player=player).first()
@@ -831,9 +877,9 @@ class SportsTeamViewSet(viewsets.ModelViewSet):
         return Response({
             "weekly_availability": weekly_availability,
             "awards": awards,
-            "team": base["team"],
-            "record": base["record"],
-            "team_stats": base["team_stats"],
+            "team": SportsTeamSerializer(team).data,
+            "record": compact_record,
+            "team_stats": compact_team_stats,
             "team_player_stats": all_rows,
             "player": SportsPlayerSerializer(player).data if player else None,
             "profile": profile,
