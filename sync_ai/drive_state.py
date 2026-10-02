@@ -71,6 +71,13 @@ def build_drive_state(user):
     inbox = state.get("inbox") or {}
     syncworks_inbox = inbox.get("syncworks") or {}
     personal_requests = state.get("personal_requests") or {}
+    conversations = list(syncworks_inbox.get("conversations") or [])
+
+    driver_messages = [
+        _conversation(row)
+        for row in conversations
+        if row.get("unread") or row.get("needs_attention")
+    ][:6]
 
     attention = [
         _attention(row)
@@ -83,12 +90,8 @@ def build_drive_state(user):
         "generated_at": state.get("generated_at"),
         "events": [_event(row) for row in (calendar.get("events") or [])[:6]],
         "next_event": _event(calendar.get("next_event")) if calendar.get("next_event") else None,
-        "messages": [
-            _conversation(row)
-            for row in (syncworks_inbox.get("conversations") or [])
-            if row.get("unread") or row.get("needs_attention")
-        ][:6],
-        "unread_count": int(inbox.get("total_unread") or 0),
+        "messages": driver_messages,
+        "unread_count": sum(1 for row in conversations if row.get("unread")),
         "requests": [_request(row) for row in (personal_requests.get("items") or [])[:6]],
         "attention": attention,
     }
