@@ -8,6 +8,7 @@ from user_accounts.models import User
 from user_accounts.models.personal_finance import (
     FinanceAccount,
     FinanceBudget,
+    FinanceConnection,
     FinanceLiability,
     FinanceObligation,
     FinanceTransaction,
@@ -167,6 +168,108 @@ class PersonalFinanceFoundationTests(APITestCase):
         liability.refresh_from_db()
         self.assertEqual(liability.outstanding_balance, Decimal("11000.00"))
         self.assertEqual(liability.minimum_payment, Decimal("80.00"))
+
+    def test_link_connected_account_merges_into_existing_manual_record(self):
+        manual = FinanceAccount.objects.create(
+            user=self.user,
+            name="Discover",
+            kind=FinanceAccount.Kind.CREDIT_CARD,
+            current_balance=Decimal("1000.00"),
+            credit_limit=Decimal("1500.00"),
+            is_manual=True,
+        )
+        manual_liability = FinanceLiability.objects.create(
+            user=self.user,
+            account=manual,
+            name="Discover",
+            kind=FinanceLiability.Kind.CREDIT_CARD,
+            outstanding_balance=Decimal("1000.00"),
+            minimum_payment=Decimal("40.00"),
+            apr=Decimal("24.99"),
+            is_manual=True,
+            metadata={"promo_apr_end_date": "2027-01-01"},
+        )
+        connection = FinanceConnection.objects.create(
+            user=self.user,
+            provider=FinanceConnection.Provider.PLAID,
+            provider_item_id="item-test",
+            institution_name="Discover",
+        )
+        connected = FinanceAccount.objects.create(
+            user=self.user,
+            connection=connection,
+            provider_account_id="provider-discover",
+            name="Discover it",
+            official_name="Discover it Card",
+            kind=FinanceAccount.Kind.CREDIT_CARD,
+            mask="1234",
+            current_balance=Decimal("900.00"),
+            credit_limit=Decimal("2000.00"),
+            is_manual=False,
+        )
+        FinanceLiability.objects.create(
+            user=self.user,
+            account=connected,
+            name="Discover it",
+            kind=FinanceLiability.Kind.CREDIT_CARD,
+            outstanding_balance=Decimal("900.00"),
+            minimum_payment=Decimal("32.00"),
+            apr=Decimal("26.49"),
+            is_manual=False,
+            metadata={"provider": "plaid"},
+        )
+        FinanceTransaction.objects.create(
+            user=self.user,
+            account=connected,
+            provider_transaction_id="tx-link-test",
+            merchant_name="Store",
+            amount=Decimal("10.00"),
+            date=timezone.localdate(),
+        )
+
+        response = self.client.post(
+            "/api/v1/personal-finance/automation/link-connected-account/",
+            {"manual_account_id": manual.id, "connected_account_id": connected.id},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        manual.refresh_from_db()
+        manual_liability.refresh_from_db()
+        self.assertFalse(manual.is_manual)
+        self.assertEqual(manual.provider_account_id, "provider-discover")
+        self.assertEqual(manual.current_balance, Decimal("900.00"))
+        self.assertEqual(manual.credit_limit, Decimal("2000.00"))
+        self.assertEqual(manual_liability.outstanding_balance, Decimal("900.00"))
+        self.assertEqual(manual_liability.minimum_payment, Decimal("32.00"))
+        self.assertEqual(manual_liability.apr, Decimal("26.49"))
+        self.assertEqual(manual_liability.metadata["promo_apr_end_date"], "2027-01-01")
+        self.assertFalse(FinanceAccount.objects.filter(id=connected.id).exists())
+        self.assertEqual(FinanceTransaction.objects.get(provider_transaction_id="tx-link-test").account_id, manual.id)
+
+    def test_account_match_candidates_are_user_scoped(self):
+        FinanceAccount.objects.create(
+            user=self.user,
+            name="Manual Card",
+            kind=FinanceAccount.Kind.CREDIT_CARD,
+            is_manual=True,
+        )
+        connection = FinanceConnection.objects.create(
+            user=self.user,
+            provider=FinanceConnection.Provider.PLAID,
+            provider_item_id="match-item",
+        )
+        FinanceAccount.objects.create(
+            user=self.user,
+            connection=connection,
+            provider_account_id="connected-card",
+            name="Connected Card",
+            kind=FinanceAccount.Kind.CREDIT_CARD,
+            is_manual=False,
+        )
+        response = self.client.get("/api/v1/personal-finance/automation/account-match-candidates/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["manual"]), 1)
+        self.assertEqual(len(response.data["connected"]), 1)
 
     def test_budget_api_is_user_scoped(self):
         FinanceBudget.objects.create(user=self.user, name="Dining", category="FOOD_AND_DRINK", monthly_limit=Decimal("500.00"))

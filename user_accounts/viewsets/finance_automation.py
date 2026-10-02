@@ -7,7 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from user_accounts.models.personal_finance import FinanceAccount, FinanceConnection, FinanceLiability
+from user_accounts.models.personal_finance import FinanceAccount, FinanceConnection, FinanceLiability, FinanceObligation, FinanceTransaction
 from user_accounts.serializers.personal_finance import FinanceAccountSerializer, FinanceLiabilitySerializer
 from user_accounts.services.finance_intelligence import build_finance_briefing, infer_recurring_obligations
 from user_accounts.services.plaid_finance import sync_connection
@@ -73,6 +73,124 @@ class FinanceAutomationViewSet(viewsets.ViewSet):
             "briefing": build_finance_briefing(request.user, extra_monthly=_extra_monthly(request)),
         }
         return Response(payload, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="account-match-candidates")
+    def account_match_candidates(self, request):
+        manual = list(
+            FinanceAccount.objects.filter(
+                user=request.user,
+                is_manual=True,
+                provider_account_id="",
+                is_hidden=False,
+            ).values("id", "name", "official_name", "kind", "current_balance", "credit_limit")
+        )
+        connected = list(
+            FinanceAccount.objects.filter(
+                user=request.user,
+                is_manual=False,
+                is_hidden=False,
+            ).exclude(provider_account_id="").values("id", "name", "official_name", "kind", "mask", "current_balance", "credit_limit", "connection_id")
+        )
+        return Response({"manual": manual, "connected": connected})
+
+    @action(detail=False, methods=["post"], url_path="link-connected-account")
+    @transaction.atomic
+    def link_connected_account(self, request):
+        try:
+            manual_id = int(request.data.get("manual_account_id"))
+            connected_id = int(request.data.get("connected_account_id"))
+        except (TypeError, ValueError):
+            return Response({"detail": "Choose a manual account and a connected account."}, status=status.HTTP_400_BAD_REQUEST)
+
+        manual = FinanceAccount.objects.select_for_update().filter(
+            id=manual_id,
+            user=request.user,
+            is_manual=True,
+        ).first()
+        connected = FinanceAccount.objects.select_for_update().filter(
+            id=connected_id,
+            user=request.user,
+            is_manual=False,
+        ).first()
+        if not manual or not connected:
+            return Response({"detail": "The selected accounts are not available to link."}, status=status.HTTP_404_NOT_FOUND)
+        if manual.id == connected.id:
+            return Response({"detail": "Choose two different accounts."}, status=status.HTTP_400_BAD_REQUEST)
+        if manual.kind != connected.kind and manual.kind != FinanceAccount.Kind.OTHER:
+            return Response({"detail": "Account types must match before linking."}, status=status.HTTP_400_BAD_REQUEST)
+
+        manual_liability = FinanceLiability.objects.select_for_update().filter(user=request.user, account=manual).first()
+        connected_liability = FinanceLiability.objects.select_for_update().filter(user=request.user, account=connected).first()
+
+        # Move provider-backed child records before deleting the temporary connected account.
+        FinanceTransaction.objects.filter(user=request.user, account=connected).update(account=manual)
+        FinanceObligation.objects.filter(user=request.user, linked_account=connected).update(linked_account=manual)
+
+        # Release the provider account ID from the temporary connected row before
+        # assigning it to the manual row; the database enforces one provider account ID
+        # per user.
+        provider_account_id = connected.provider_account_id
+        connected.provider_account_id = ""
+        connected.save(update_fields=["provider_account_id", "updated_at"])
+
+        # Convert the existing manual account into the provider-backed account so the user's
+        # manually entered history/labels survive future syncs.
+        manual.connection = connected.connection
+        manual.provider_account_id = provider_account_id
+        manual.official_name = connected.official_name or manual.official_name
+        manual.kind = connected.kind or manual.kind
+        manual.mask = connected.mask or manual.mask
+        manual.currency = connected.currency or manual.currency
+        if connected.current_balance is not None:
+            manual.current_balance = connected.current_balance
+        if connected.available_balance is not None:
+            manual.available_balance = connected.available_balance
+        if connected.credit_limit is not None:
+            manual.credit_limit = connected.credit_limit
+        manual.is_manual = False
+        manual.metadata = {
+            **(manual.metadata or {}),
+            **(connected.metadata or {}),
+            "linked_from_manual": True,
+            "linked_connected_account_id": connected.id,
+        }
+        manual.save()
+
+        if connected_liability and manual_liability:
+            for field in [
+                "name", "kind", "lender", "outstanding_balance", "original_principal",
+                "minimum_payment", "next_payment_amount", "next_payment_date", "apr",
+                "interest_rate", "origination_date", "maturity_date", "last_payment_amount",
+                "last_payment_date", "property_address", "escrow_balance",
+            ]:
+                value = getattr(connected_liability, field)
+                if value not in (None, ""):
+                    setattr(manual_liability, field, value)
+            manual_liability.is_manual = False
+            manual_liability.metadata = {
+                **(manual_liability.metadata or {}),
+                **(connected_liability.metadata or {}),
+                "linked_from_manual": True,
+            }
+            manual_liability.save()
+            connected_liability.delete()
+        elif connected_liability:
+            connected_liability.account = manual
+            connected_liability.is_manual = False
+            connected_liability.metadata = {
+                **(connected_liability.metadata or {}),
+                "linked_from_manual": True,
+            }
+            connected_liability.save()
+
+        connected.delete()
+        manual.refresh_from_db()
+        linked_liability = FinanceLiability.objects.filter(user=request.user, account=manual).first()
+        return Response({
+            "account": FinanceAccountSerializer(manual).data,
+            "liability": FinanceLiabilitySerializer(linked_liability).data if linked_liability else None,
+            "detail": "Connected account linked to the existing Finance record.",
+        })
 
     @action(detail=False, methods=["post"], url_path="manual-card")
     @transaction.atomic
