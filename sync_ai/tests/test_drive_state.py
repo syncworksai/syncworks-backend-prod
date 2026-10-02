@@ -36,7 +36,7 @@ class DriveStateProjectionTests(SimpleTestCase):
                 },
             },
             "inbox": {
-                "total_unread": 1,
+                "total_unread": 99,
                 "syncworks": {
                     "conversations": [{
                         "id": 9,
@@ -50,7 +50,7 @@ class DriveStateProjectionTests(SimpleTestCase):
                         "url": "/customer/inbox?ticket=9",
                     }]
                 },
-                "external_email": {"messages": [{"subject": "private"}]},
+                "external_email": {"messages": [{"subject": "private"}], "unread_count": 98},
             },
             "personal_requests": {
                 "items": [{
