@@ -172,7 +172,9 @@ def softball_player_stats(team):
             "hr": 0,
             "bb": 0,
             "sf": 0,
+            "gidp": 0,
             "rbi": 0,
+            "runs": 0,
             "tb": 0,
         }
         for player in players
@@ -190,13 +192,14 @@ def softball_player_stats(team):
             row = {
                 "player": SportsPlayerSerializer(pa.player).data,
                 "games": set(), "manual_games": 0, "pa": 0, "ab": 0, "h": 0, "single": 0,
-                "double": 0, "triple": 0, "hr": 0, "bb": 0, "sf": 0,
-                "rbi": 0, "tb": 0,
+                "double": 0, "triple": 0, "hr": 0, "bb": 0, "sf": 0, "gidp": 0,
+                "rbi": 0, "runs": 0, "tb": 0,
             }
             stats[pa.player_id] = row
         row["games"].add(pa.game_id)
         row["pa"] += 1
         row["rbi"] += pa.rbi
+        row["runs"] += pa.runs_scored
         if pa.result not in AB_EXCLUDED_RESULTS:
             row["ab"] += 1
         if pa.result in HIT_RESULTS:
@@ -218,15 +221,15 @@ def softball_player_stats(team):
         elif pa.result == SoftballPlateAppearance.Result.SAC_FLY:
             row["sf"] += 1
 
-    ledger = team.stat_ledger_entries.filter(scope__in=("LEAGUE", "TOURNAMENT")).select_related("player")
+    ledger = team.stat_ledger_entries.filter(scope__in=("LEAGUE", "TOURNAMENT", "COMBINED")).select_related("player")
     for entry in ledger:
         row = stats.get(entry.player_id)
         if row is None:
             row = {
                 "player": SportsPlayerSerializer(entry.player).data,
                 "games": set(), "manual_games": 0, "pa": 0, "ab": 0, "h": 0, "single": 0,
-                "double": 0, "triple": 0, "hr": 0, "bb": 0, "sf": 0,
-                "rbi": 0, "tb": 0,
+                "double": 0, "triple": 0, "hr": 0, "bb": 0, "sf": 0, "gidp": 0,
+                "rbi": 0, "runs": 0, "tb": 0,
             }
             stats[entry.player_id] = row
         singles = entry.hits - entry.doubles - entry.triples - entry.home_runs
@@ -240,7 +243,9 @@ def softball_player_stats(team):
         row["hr"] += entry.home_runs
         row["bb"] += entry.walks
         row["sf"] += entry.sac_flies
+        row["gidp"] += entry.double_plays
         row["rbi"] += entry.rbi
+        row["runs"] += entry.runs
         row["tb"] += singles + (2 * entry.doubles) + (3 * entry.triples) + (4 * entry.home_runs)
 
     output = []
@@ -275,6 +280,7 @@ def team_dashboard(team):
     team_triples = sum(row["triple"] for row in stats)
     team_walks = sum(row["bb"] for row in stats)
     team_sf = sum(row["sf"] for row in stats)
+    team_gidp = sum(row.get("gidp", 0) for row in stats)
     team_tb = sum(row["tb"] for row in stats)
     team_obp = _ratio(team_hits + team_walks, team_ab + team_walks + team_sf)
     team_slg = _ratio(team_tb, team_ab)
@@ -291,6 +297,7 @@ def team_dashboard(team):
             "triples": team_triples,
             "walks": team_walks,
             "rbi": team_rbi,
+            "double_plays": team_gidp,
             "obp": team_obp,
             "slg": team_slg,
             "ops": round(team_obp + team_slg, 3),
