@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from datetime import timedelta
-import os
 from decimal import Decimal
+import os
 
 from django.db.models import Sum
 from django.utils import timezone
@@ -16,6 +16,7 @@ from user_accounts.models.personal_finance import (
     FinanceBudget,
     FinanceConnection,
     FinanceGoal,
+    FinanceIncomeSource,
     FinanceLiability,
     FinanceObligation,
     FinanceTransaction,
@@ -25,11 +26,31 @@ from user_accounts.serializers.personal_finance import (
     FinanceBudgetSerializer,
     FinanceConnectionSerializer,
     FinanceGoalSerializer,
+    FinanceIncomeSourceSerializer,
     FinanceLiabilitySerializer,
     FinanceObligationSerializer,
     FinanceTransactionSerializer,
 )
 from user_accounts.services.plaid_finance import create_link_token, exchange_public_token, plaid_is_configured, sync_connection
+
+
+ZERO = Decimal("0")
+
+
+def _monthly_equivalent(amount, cadence: str) -> Decimal:
+    amount = amount or ZERO
+    cadence = (cadence or "MONTHLY").upper()
+    factors = {
+        "WEEKLY": Decimal("4.3333"),
+        "BIWEEKLY": Decimal("2.1667"),
+        "SEMIMONTHLY": Decimal("2"),
+        "MONTHLY": Decimal("1"),
+        "BIMONTHLY": Decimal("0.5"),
+        "QUARTERLY": Decimal("0.3333"),
+        "ANNUAL": Decimal("0.08333"),
+        "YEARLY": Decimal("0.08333"),
+    }
+    return (amount * factors.get(cadence, Decimal("1"))).quantize(Decimal("0.01"))
 
 
 class UserScopedModelViewSet(viewsets.ModelViewSet):
@@ -73,6 +94,11 @@ class FinanceTransactionViewSet(UserScopedModelViewSet):
         if category:
             qs = qs.filter(category_primary=category)
         return qs
+
+
+class FinanceIncomeSourceViewSet(UserScopedModelViewSet):
+    queryset = FinanceIncomeSource.objects.all()
+    serializer_class = FinanceIncomeSourceSerializer
 
 
 class FinanceGoalViewSet(UserScopedModelViewSet):
@@ -141,20 +167,39 @@ class FinanceDashboardViewSet(viewsets.ViewSet):
         accounts = FinanceAccount.objects.filter(user=user, is_hidden=False)
         liabilities = FinanceLiability.objects.filter(user=user)
         obligations = FinanceObligation.objects.filter(user=user, active=True)
+        income_sources = FinanceIncomeSource.objects.filter(user=user, active=True)
         tx = FinanceTransaction.objects.filter(user=user, date__gte=month_start, date__lte=today)
 
-        cash = accounts.filter(kind__in=[FinanceAccount.Kind.CHECKING, FinanceAccount.Kind.SAVINGS]).aggregate(v=Sum("current_balance"))["v"] or Decimal("0")
-        debt = liabilities.aggregate(v=Sum("outstanding_balance"))["v"] or Decimal("0")
-        credit_limit = accounts.filter(kind=FinanceAccount.Kind.CREDIT_CARD).aggregate(v=Sum("credit_limit"))["v"] or Decimal("0")
-        credit_balance = accounts.filter(kind=FinanceAccount.Kind.CREDIT_CARD).aggregate(v=Sum("current_balance"))["v"] or Decimal("0")
+        cash = accounts.filter(kind__in=[FinanceAccount.Kind.CHECKING, FinanceAccount.Kind.SAVINGS]).aggregate(v=Sum("current_balance"))["v"] or ZERO
+        debt = liabilities.aggregate(v=Sum("outstanding_balance"))["v"] or ZERO
+
+        # Credit utilization should represent active revolving lines only. Closed manual
+        # cards with historical balances or no limit were inflating household utilization.
+        credit_accounts = list(accounts.filter(kind=FinanceAccount.Kind.CREDIT_CARD))
+        active_credit_accounts = [
+            item for item in credit_accounts
+            if str((item.metadata or {}).get("account_status", "OPEN")).upper() != "CLOSED"
+            and item.credit_limit is not None
+            and item.credit_limit > 0
+        ]
+        credit_limit = sum((item.credit_limit or ZERO for item in active_credit_accounts), ZERO)
+        credit_balance = sum((max(item.current_balance or ZERO, ZERO) for item in active_credit_accounts), ZERO)
         utilization = float((credit_balance / credit_limit) * 100) if credit_limit else None
-        spend = tx.filter(amount__gt=0, is_transfer=False).aggregate(v=Sum("amount"))["v"] or Decimal("0")
-        income_raw = tx.filter(amount__lt=0, is_transfer=False).aggregate(v=Sum("amount"))["v"] or Decimal("0")
+
+        spend = tx.filter(amount__gt=0, is_transfer=False).aggregate(v=Sum("amount"))["v"] or ZERO
+        income_raw = tx.filter(amount__lt=0, is_transfer=False).aggregate(v=Sum("amount"))["v"] or ZERO
         income = abs(income_raw)
+
+        expected_income = sum((_monthly_equivalent(item.amount, item.cadence) for item in income_sources), ZERO)
+        expected_bills = sum((_monthly_equivalent(item.expected_amount or item.minimum_amount or ZERO, item.cadence) for item in obligations), ZERO)
+        known_debt_minimums = sum(((item.minimum_payment if item.minimum_payment is not None else item.next_payment_amount) or ZERO for item in liabilities), ZERO)
+        planned_outflow = expected_bills + known_debt_minimums
+        planned_cash_flow = expected_income - planned_outflow
+
         due = obligations.filter(next_due_date__gte=today, next_due_date__lte=next_30)
-        due_total = due.aggregate(v=Sum("expected_amount"))["v"] or Decimal("0")
+        due_total = due.aggregate(v=Sum("expected_amount"))["v"] or ZERO
         liability_due = liabilities.filter(next_payment_date__gte=today, next_payment_date__lte=next_30)
-        liability_due_total = liability_due.aggregate(v=Sum("next_payment_amount"))["v"] or Decimal("0")
+        liability_due_total = liability_due.aggregate(v=Sum("next_payment_amount"))["v"] or ZERO
         category_rows = tx.filter(amount__gt=0, is_transfer=False).values("category_primary").annotate(total=Sum("amount")).order_by("-total")[:8]
         connections = FinanceConnection.objects.filter(user=user)
         last_synced = connections.exclude(last_synced_at=None).order_by("-last_synced_at").values_list("last_synced_at", flat=True).first()
@@ -164,8 +209,20 @@ class FinanceDashboardViewSet(viewsets.ViewSet):
             "last_synced_at": last_synced,
             "connections": FinanceConnectionSerializer(connections, many=True).data,
             "net_position": {"cash": cash, "debt": debt, "estimated_net_cash_less_debt": cash - debt},
-            "credit": {"balance": credit_balance, "limit": credit_limit, "utilization_percent": round(utilization, 1) if utilization is not None else None},
+            "credit": {
+                "balance": credit_balance,
+                "limit": credit_limit,
+                "utilization_percent": round(utilization, 1) if utilization is not None else None,
+                "active_revolving_accounts": len(active_credit_accounts),
+            },
             "this_month": {"income": income, "spending": spend, "cash_flow": income - spend},
+            "planned_month": {
+                "expected_income": expected_income,
+                "expected_bills": expected_bills,
+                "known_debt_minimums": known_debt_minimums,
+                "expected_outflow": planned_outflow,
+                "expected_cash_flow": planned_cash_flow,
+            },
             "next_30_days": {
                 "bills_due": due_total,
                 "debt_payments_due": liability_due_total,
@@ -176,6 +233,8 @@ class FinanceDashboardViewSet(viewsets.ViewSet):
             "spending_by_category": list(category_rows),
             "accounts": FinanceAccountSerializer(accounts, many=True).data,
             "liabilities": FinanceLiabilitySerializer(liabilities, many=True).data,
+            "obligations": FinanceObligationSerializer(obligations, many=True).data,
+            "income_sources": FinanceIncomeSourceSerializer(income_sources, many=True).data,
             "goals": FinanceGoalSerializer(FinanceGoal.objects.filter(user=user, active=True), many=True).data,
             "budgets": FinanceBudgetSerializer(FinanceBudget.objects.filter(user=user, active=True), many=True).data,
         })
