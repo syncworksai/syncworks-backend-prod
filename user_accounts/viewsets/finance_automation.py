@@ -126,10 +126,17 @@ class FinanceAutomationViewSet(viewsets.ViewSet):
         FinanceTransaction.objects.filter(user=request.user, account=connected).update(account=manual)
         FinanceObligation.objects.filter(user=request.user, linked_account=connected).update(linked_account=manual)
 
+        # Release the provider account ID from the temporary connected row before
+        # assigning it to the manual row; the database enforces one provider account ID
+        # per user.
+        provider_account_id = connected.provider_account_id
+        connected.provider_account_id = ""
+        connected.save(update_fields=["provider_account_id", "updated_at"])
+
         # Convert the existing manual account into the provider-backed account so the user's
         # manually entered history/labels survive future syncs.
         manual.connection = connected.connection
-        manual.provider_account_id = connected.provider_account_id
+        manual.provider_account_id = provider_account_id
         manual.official_name = connected.official_name or manual.official_name
         manual.kind = connected.kind or manual.kind
         manual.mask = connected.mask or manual.mask
