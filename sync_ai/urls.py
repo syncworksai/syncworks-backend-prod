@@ -12,6 +12,7 @@ from .assistant_daily_state_views import SyncAssistantDailyStateView, SyncAssist
 from .billing_runtime_views import BillingRuntimeAPIView
 from .briefing_views import SyncGodModeBriefingView, SyncRoleAwareBriefingView
 from .dispatch_views import BusinessDispatchBoardView, BusinessDispatchDelayView
+from .drive_state_views import SyncAssistantDriveStateView
 from .health_views import LivenessView, ReadinessView
 from .invoice_customer_views import CustomerInvoiceCenterView, CustomerInvoiceDetailView
 from .live_operations_views import BusinessLiveOperationsView, EmployeeJobClockView, EmployeeLiveDayView
@@ -67,6 +68,7 @@ urlpatterns = [
     path("assistant/check-in/", UserJarvisCheckInView.as_view(), name="sync-assistant-check-in"),
     path("assistant/check-out/", UserJarvisCheckOutView.as_view(), name="sync-assistant-check-out"),
     path("assistant/daily-state/", SyncAssistantDailyStateView.as_view(), name="sync-assistant-daily-state"),
+    path("assistant/drive-state/", SyncAssistantDriveStateView.as_view(), name="sync-assistant-drive-state"),
     path("assistant/location/geocode/", SyncAssistantGeocodeView.as_view(), name="sync-assistant-geocode"),
     path("assistant/inbox-state/", SyncAssistantInboxStateView.as_view(), name="sync-assistant-inbox-state"),
     path("assistant/notifications/", SyncNotificationSettingsView.as_view(), name="sync-assistant-notifications"),
