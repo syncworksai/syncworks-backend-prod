@@ -57,10 +57,12 @@ def find_player(players, key):
     return None
 
 
-def current_combined(PlateAppearance, Ledger, team_id, player_id):
+def current_totals(PlateAppearance, Ledger, team_id, player_id, target_scope):
+    game_scopes = (target_scope,) if target_scope in ("LEAGUE", "TOURNAMENT") else ("LEAGUE", "TOURNAMENT")
+    ledger_scopes = (target_scope,) if target_scope in ("LEAGUE", "TOURNAMENT") else ("LEAGUE", "TOURNAMENT", "COMBINED")
     appearances = PlateAppearance.objects.filter(
         game__team_id=team_id,
-        game__game_type__in=("LEAGUE", "TOURNAMENT"),
+        game__game_type__in=game_scopes,
         player_id=player_id,
     ).exclude(game__status="CANCELLED")
 
@@ -82,7 +84,7 @@ def current_combined(PlateAppearance, Ledger, team_id, player_id):
     for row in Ledger.objects.filter(
         team_id=team_id,
         player_id=player_id,
-        scope__in=("LEAGUE", "TOURNAMENT", "COMBINED"),
+        scope__in=ledger_scopes,
     ):
         current["games"] += int(row.games or 0)
         current["pa"] += int(row.pa or 0)
@@ -119,6 +121,19 @@ def apply_targets(apps, schema_editor):
         .order_by("id")
     )
 
+    # If all known games in this verified sheet are the same competition type,
+    # place the correction in that scope so League/Tournament leaderboards are
+    # exact too. If the sheet spans multiple competition types, keep the
+    # aggregate correction COMBINED instead of inventing a split.
+    matching_games = SportsGame.objects.filter(team_id=team.id).exclude(status="CANCELLED").filter(
+        opponent_name__iregex=r"(landmark|hope[ ]+hull|vaughn.*forest|fraser|freedom)"
+    )
+    competition_types = set(
+        matching_games.filter(game_type__in=("LEAGUE", "TOURNAMENT"))
+        .values_list("game_type", flat=True)
+    )
+    target_scope = next(iter(competition_types)) if len(competition_types) == 1 else "COMBINED"
+
     created = 0
     for key, source in TARGETS.items():
         player = find_player(players, key)
@@ -139,7 +154,7 @@ def apply_targets(apps, schema_editor):
             "double_plays": source["gidp"],
             "runs": source["runs"],
         }
-        current = current_combined(PlateAppearance, Ledger, team.id, player.id)
+        current = current_totals(PlateAppearance, Ledger, team.id, player.id, target_scope)
         delta = {field: int(target[field]) - int(current[field]) for field in target}
         if not any(delta.values()):
             continue
@@ -148,7 +163,7 @@ def apply_targets(apps, schema_editor):
             team_id=team.id,
             player_id=player.id,
             season_name=(team.season_name or "2026")[:120],
-            scope="COMBINED",
+            scope=target_scope,
             games=delta["games"],
             pa=delta["pa"],
             ab=delta["ab"],
@@ -167,12 +182,12 @@ def apply_targets(apps, schema_editor):
         )
         created += 1
 
-    print(f"Bed Springs v27 combined batting targets applied to {created} player rows.")
+    print(f"Bed Springs v27 batting targets applied to {created} player rows in {target_scope} scope.")
 
 
 def reverse_targets(apps, schema_editor):
     Ledger = apps.get_model("platform_sports", "SoftballStatLedgerEntry")
-    Ledger.objects.filter(note=NOTE, source="CORRECTION", scope="COMBINED").delete()
+    Ledger.objects.filter(note=NOTE, source="CORRECTION").delete()
 
 
 class Migration(migrations.Migration):
