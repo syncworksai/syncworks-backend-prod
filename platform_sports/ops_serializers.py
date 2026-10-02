@@ -175,7 +175,7 @@ class SoftballStatLedgerEntrySerializer(serializers.ModelSerializer):
         fields = (
             "id", "team", "player", "player_detail", "season_name", "scope", "games",
             "pa", "ab", "hits", "doubles", "triples", "home_runs", "walks", "sac_flies",
-            "rbi", "runs", "source", "note", "created_by", "created_at", "updated_at",
+            "double_plays", "rbi", "runs", "source", "note", "created_by", "created_at", "updated_at",
         )
         read_only_fields = ("id", "created_by", "created_at", "updated_at")
 
@@ -185,7 +185,7 @@ class SoftballStatLedgerEntrySerializer(serializers.ModelSerializer):
         if team and player and player.team_id != team.id:
             raise serializers.ValidationError({"player": "Player must belong to this team."})
         source = attrs.get("source", getattr(self.instance, "source", SoftballStatLedgerEntry.Source.MANUAL))
-        fields = ("games", "pa", "ab", "hits", "doubles", "triples", "home_runs", "walks", "sac_flies", "rbi", "runs")
+        fields = ("games", "pa", "ab", "hits", "doubles", "triples", "home_runs", "walks", "sac_flies", "double_plays", "rbi", "runs")
         values = {field: int(attrs.get(field, getattr(self.instance, field, 0)) or 0) for field in fields}
         if source != SoftballStatLedgerEntry.Source.CORRECTION:
             if any(value < 0 for value in values.values()):
