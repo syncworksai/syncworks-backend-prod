@@ -36,4 +36,15 @@ _REQUIRED_WEB_ORIGINS = {
 CORS_ALLOWED_ORIGINS = list(dict.fromkeys([*CORS_ALLOWED_ORIGINS, *_REQUIRED_WEB_ORIGINS]))
 CSRF_TRUSTED_ORIGINS = list(dict.fromkeys([*CSRF_TRUSTED_ORIGINS, *_REQUIRED_WEB_ORIGINS]))
 
+# SyncWorks Health ships with Gemma as the default ElevenLabs trainer voice.
+# Render can still override these values without a code change.
+ELEVENLABS_HEALTH_VOICE_ID = (
+    env("ELEVENLABS_HEALTH_VOICE_ID", "jQQiXyFE3PBHLF8znAIb")
+    or "jQQiXyFE3PBHLF8znAIb"
+).strip()
+ELEVENLABS_HEALTH_VOICE_NAME = (
+    env("ELEVENLABS_HEALTH_VOICE_NAME", "Gemma - SYNC Fitness Coach")
+    or "Gemma - SYNC Fitness Coach"
+).strip()
+
 FRONTEND_BASE_URL = FRONTEND_URL
