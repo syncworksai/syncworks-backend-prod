@@ -14,6 +14,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .models import CustomerHealthProfile
+from .views import _health_ai_access
+
 logger = logging.getLogger(__name__)
 
 ELEVENLABS_TTS_URL = (
@@ -124,6 +127,13 @@ def _provider_ready() -> bool:
     )
 
 
+def _trainer_access(user) -> dict[str, Any]:
+    profile, _created = CustomerHealthProfile.objects.get_or_create(
+        user=user
+    )
+    return _health_ai_access(profile)
+
+
 def _allow_request(user_id: Any) -> bool:
     limit = int(
         getattr(
@@ -172,6 +182,38 @@ class HealthVoiceSpeakView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if event_type not in ALLOWED_EVENT_TYPES:
+            return Response(
+                {
+                    "detail": "Unsupported Health coaching event.",
+                    "code": "voice_event_not_allowed",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # A short voice preview remains available so a user can hear the
+        # premium trainer before subscribing. All real workout coaching is a
+        # Fitness + Nutrition AI entitlement and is enforced server-side.
+        if event_type != "voice_preview":
+            access = _trainer_access(request.user)
+            if not access.get("has_ai_access"):
+                return Response(
+                    {
+                        "detail": (
+                            "SYNC Personal Trainer voice is part of "
+                            "Fitness + Nutrition AI. Gym Log remains free."
+                        ),
+                        "code": "health_trainer_subscription_required",
+                        "plan_name": access.get(
+                            "plan_name",
+                            "Fitness + Nutrition AI",
+                        ),
+                        "monthly_price": access.get("monthly_price", "9.99"),
+                        "manual_logging_free": True,
+                    },
+                    status=status.HTTP_402_PAYMENT_REQUIRED,
+                )
+
         max_characters = int(
             getattr(
                 settings,
@@ -189,15 +231,6 @@ class HealthVoiceSpeakView(APIView):
                         f"{max_characters} characters or fewer."
                     ),
                     "code": "voice_text_too_long",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if event_type not in ALLOWED_EVENT_TYPES:
-            return Response(
-                {
-                    "detail": "Unsupported Health coaching event.",
-                    "code": "voice_event_not_allowed",
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -276,8 +309,7 @@ class HealthVoiceSpeakView(APIView):
             return Response(
                 {
                     "detail": (
-                        "The coach voice took too long to respond. "
-                        "Use browser voice fallback."
+                        "The Personal Trainer voice took too long to respond."
                     ),
                     "code": "elevenlabs_timeout",
                 },
@@ -290,8 +322,7 @@ class HealthVoiceSpeakView(APIView):
             return Response(
                 {
                     "detail": (
-                        "The coach voice is temporarily unavailable. "
-                        "Use browser voice fallback."
+                        "The Personal Trainer voice is temporarily unavailable."
                     ),
                     "code": "elevenlabs_unavailable",
                 },
@@ -335,8 +366,7 @@ class HealthVoiceSpeakView(APIView):
             return Response(
                 {
                     "detail": (
-                        "The coach voice could not be generated. "
-                        "Use browser voice fallback."
+                        "The Personal Trainer voice could not be generated."
                     ),
                     "code": "elevenlabs_generation_failed",
                 },
@@ -376,6 +406,7 @@ class HealthVoiceOptionsView(APIView):
             }
             for key, voice in _voice_registry().items()
         ]
+        access = _trainer_access(request.user)
 
         return Response(
             {
@@ -394,6 +425,13 @@ class HealthVoiceOptionsView(APIView):
                 "model_id": _model_id(),
                 "provider": "elevenlabs",
                 "provider_ready": _provider_ready(),
-                "browser_fallback": True,
+                "browser_fallback": False,
+                "trainer_access": bool(access.get("has_ai_access")),
+                "plan_name": access.get(
+                    "plan_name",
+                    "Fitness + Nutrition AI",
+                ),
+                "monthly_price": access.get("monthly_price", "9.99"),
+                "manual_logging_free": True,
             }
         )
