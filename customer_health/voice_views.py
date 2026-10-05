@@ -20,6 +20,9 @@ ELEVENLABS_TTS_URL = (
     "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 )
 
+DEFAULT_HEALTH_VOICE_ID = "jQQiXyFE3PBHLF8znAIb"
+DEFAULT_HEALTH_VOICE_NAME = "Gemma - SYNC Fitness Coach"
+
 ALLOWED_EVENT_TYPES = {
     "voice_preview",
     "daily_plan_summary",
@@ -91,11 +94,11 @@ def _voice_registry() -> dict[str, dict[str, str]]:
         "sync_fitness_coach": {
             "id": _setting(
                 "ELEVENLABS_HEALTH_VOICE_ID",
-                "4RkE9xiCb4LF4Wd7R4Sp",
+                DEFAULT_HEALTH_VOICE_ID,
             ),
             "name": _setting(
                 "ELEVENLABS_HEALTH_VOICE_NAME",
-                "SYNC Fitness Coach",
+                DEFAULT_HEALTH_VOICE_NAME,
             ),
         },
     }
@@ -112,6 +115,13 @@ def _model_id() -> str:
     ):
         return "eleven_multilingual_v2"
     return configured
+
+
+def _provider_ready() -> bool:
+    return bool(
+        _setting("ELEVENLABS_API_KEY")
+        and _voice_registry()["sync_fitness_coach"].get("id")
+    )
 
 
 def _allow_request(user_id: Any) -> bool:
@@ -345,6 +355,7 @@ class HealthVoiceSpeakView(APIView):
         response["X-SyncWorks-Voice-Key"] = voice_key
         response["X-SyncWorks-Voice-Name"] = voice["name"]
         response["X-SyncWorks-Voice-Energy"] = energy
+        response["X-SyncWorks-Voice-Provider"] = "elevenlabs"
 
         request_id = upstream.headers.get("request-id")
         if request_id:
@@ -369,6 +380,9 @@ class HealthVoiceOptionsView(APIView):
         return Response(
             {
                 "default_voice_key": "sync_fitness_coach",
+                "default_voice_name": _voice_registry()[
+                    "sync_fitness_coach"
+                ]["name"],
                 "default_energy": "high_energy",
                 "voices": voices,
                 "energy_options": [
@@ -379,5 +393,7 @@ class HealthVoiceOptionsView(APIView):
                 ],
                 "model_id": _model_id(),
                 "provider": "elevenlabs",
+                "provider_ready": _provider_ready(),
+                "browser_fallback": True,
             }
         )
