@@ -57,6 +57,7 @@ from .inventory import InventoryItem, InventoryLocation, InventoryStock, Purchas
 from .calendar_sync import CalendarAccount, TicketCalendarEvent
 from .finance_ops import FinanceSnapshot, FinancePlan
 from .personal_finance import FinanceAccount, FinanceBudget, FinanceConnection, FinanceGoal, FinanceLiability, FinanceObligation, FinanceTransaction
+from .finance_payments import FinanceDebtPayment
 from .favorites import FavoriteBusiness
 from .stripe_connect import StripeConnectProfile
 from .support_requests import SupportRequest
@@ -125,7 +126,7 @@ __all__ = [
     "OperationalAlert", "AutomationRule", "AutomationExecution", "Vendor", "StockMovement", "PurchaseReceipt",
     "PurchaseOrderLine", "PurchaseOrder", "InventoryStock", "InventoryLocation", "InventoryItem", "CalendarAccount",
     "TicketCalendarEvent", "FinanceSnapshot", "FinancePlan", "FinanceConnection", "FinanceAccount", "FinanceLiability",
-    "FinanceObligation", "FinanceTransaction", "FinanceGoal", "FinanceBudget", "FavoriteBusiness", "StripeConnectProfile",
+    "FinanceObligation", "FinanceTransaction", "FinanceGoal", "FinanceBudget", "FinanceDebtPayment", "FavoriteBusiness", "StripeConnectProfile",
     "SupportRequest", "BusinessAccessControl", "PlatformBuildBacklogItem", "PMProperty", "PMUnit", "PMTenant", "PMInvite", "PMDocument",
     "PMSection8Case", "PMBillingSettings", "PMRentCharge", "PMRentPayment", "PMRentPaymentAllocation", "PMEmployee",
     "PMEmployeeInvite", "PMInvestor", "PMPropertyInvestor", "PMInboxThread", "PMInboxMessage", "PMNotification",

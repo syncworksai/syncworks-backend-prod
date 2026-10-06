@@ -11,6 +11,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from user_accounts.models.finance_payments import FinanceDebtPayment
 from user_accounts.models.personal_finance import (
     FinanceAccount,
     FinanceBudget,
@@ -169,12 +170,17 @@ class FinanceDashboardViewSet(viewsets.ViewSet):
         obligations = FinanceObligation.objects.filter(user=user, active=True)
         income_sources = FinanceIncomeSource.objects.filter(user=user, active=True)
         tx = FinanceTransaction.objects.filter(user=user, date__gte=month_start, date__lte=today)
+        manual_payments = FinanceDebtPayment.objects.filter(
+            user=user,
+            source=FinanceDebtPayment.Source.MANUAL,
+            status=FinanceDebtPayment.Status.POSTED,
+            payment_date__gte=month_start,
+            payment_date__lte=today,
+        )
 
         cash = accounts.filter(kind__in=[FinanceAccount.Kind.CHECKING, FinanceAccount.Kind.SAVINGS]).aggregate(v=Sum("current_balance"))["v"] or ZERO
         debt = liabilities.aggregate(v=Sum("outstanding_balance"))["v"] or ZERO
 
-        # Credit utilization should represent active revolving lines only. Closed manual
-        # cards with historical balances or no limit were inflating household utilization.
         credit_accounts = list(accounts.filter(kind=FinanceAccount.Kind.CREDIT_CARD))
         active_credit_accounts = [
             item for item in credit_accounts
@@ -189,6 +195,20 @@ class FinanceDashboardViewSet(viewsets.ViewSet):
         spend = tx.filter(amount__gt=0, is_transfer=False).aggregate(v=Sum("amount"))["v"] or ZERO
         income_raw = tx.filter(amount__lt=0, is_transfer=False).aggregate(v=Sum("amount"))["v"] or ZERO
         income = abs(income_raw)
+        manual_debt_paid = manual_payments.aggregate(v=Sum("amount"))["v"] or ZERO
+        estimated_interest_saved = manual_payments.aggregate(v=Sum("estimated_interest_saved_next_30_days"))["v"] or ZERO
+
+        payment_by_liability = {
+            row["liability_id"]: row["total"] or ZERO
+            for row in manual_payments.values("liability_id").annotate(total=Sum("amount"))
+        }
+        remaining_minimums_this_month = ZERO
+        for liability in liabilities:
+            minimum = (liability.minimum_payment if liability.minimum_payment is not None else liability.next_payment_amount) or ZERO
+            paid = payment_by_liability.get(liability.id, ZERO)
+            if liability.last_payment_date and liability.last_payment_date >= month_start and liability.last_payment_amount:
+                paid = max(paid, liability.last_payment_amount)
+            remaining_minimums_this_month += max(ZERO, minimum - paid)
 
         expected_income = sum((_monthly_equivalent(item.amount, item.cadence) for item in income_sources), ZERO)
         expected_bills = sum((_monthly_equivalent(item.expected_amount or item.minimum_amount or ZERO, item.cadence) for item in obligations), ZERO)
@@ -215,7 +235,14 @@ class FinanceDashboardViewSet(viewsets.ViewSet):
                 "utilization_percent": round(utilization, 1) if utilization is not None else None,
                 "active_revolving_accounts": len(active_credit_accounts),
             },
-            "this_month": {"income": income, "spending": spend, "cash_flow": income - spend},
+            "this_month": {
+                "income": income,
+                "spending": spend,
+                "cash_flow": income - spend,
+                "manual_debt_payments": manual_debt_paid,
+                "estimated_interest_saved_next_30_days": estimated_interest_saved,
+                "remaining_debt_minimums": remaining_minimums_this_month,
+            },
             "planned_month": {
                 "expected_income": expected_income,
                 "expected_bills": expected_bills,
