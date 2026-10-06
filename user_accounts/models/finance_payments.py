@@ -22,6 +22,7 @@ class FinanceDebtPayment(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="finance_debt_payments")
     liability = models.ForeignKey(FinanceLiability, on_delete=models.CASCADE, related_name="payments")
     account = models.ForeignKey(FinanceAccount, null=True, blank=True, on_delete=models.SET_NULL, related_name="debt_payments")
+    funding_account = models.ForeignKey(FinanceAccount, null=True, blank=True, on_delete=models.SET_NULL, related_name="funded_debt_payments")
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     payment_date = models.DateField()
     source = models.CharField(max_length=24, choices=Source.choices, default=Source.MANUAL)
