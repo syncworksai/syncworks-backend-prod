@@ -42,8 +42,8 @@ class FinanceDebtPayment(models.Model):
     class Meta:
         ordering = ["-payment_date", "-id"]
         indexes = [
-            models.Index(fields=["user", "-payment_date"]),
-            models.Index(fields=["liability", "-payment_date"]),
+            models.Index(fields=["user", "-payment_date"], name="user_accoun_user_id_74ceca_idx"),
+            models.Index(fields=["liability", "-payment_date"], name="user_accoun_liabili_755b2b_idx"),
         ]
         constraints = [
             models.UniqueConstraint(
