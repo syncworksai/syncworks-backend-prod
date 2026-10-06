@@ -7,7 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from user_accounts.models.finance_payments import FinanceDebtPayment
-from user_accounts.models.personal_finance import FinanceLiability
+from user_accounts.models.personal_finance import FinanceAccount, FinanceLiability
 
 ZERO = Decimal("0")
 CENT = Decimal("0.01")
@@ -30,7 +30,15 @@ def estimated_interest_saved_next_30_days(amount: Decimal, apr) -> Decimal:
 
 
 @transaction.atomic
-def record_manual_debt_payment(*, user, liability_id: int, amount, payment_date=None, notes: str = "") -> FinanceDebtPayment:
+def record_manual_debt_payment(
+    *,
+    user,
+    liability_id: int,
+    amount,
+    payment_date=None,
+    notes: str = "",
+    funding_account_id: int | None = None,
+) -> FinanceDebtPayment:
     liability = (
         FinanceLiability.objects.select_for_update()
         .select_related("account")
@@ -54,6 +62,18 @@ def record_manual_debt_payment(*, user, liability_id: int, amount, payment_date=
         except (TypeError, ValueError) as exc:
             raise ValueError("Enter a valid payment date.") from exc
 
+    funding_account = None
+    if funding_account_id:
+        funding_account = (
+            FinanceAccount.objects.select_for_update()
+            .filter(id=funding_account_id, user=user, is_hidden=False)
+            .first()
+        )
+        if funding_account is None:
+            raise ValueError("Funding account not found.")
+        if funding_account.kind not in {FinanceAccount.Kind.CHECKING, FinanceAccount.Kind.SAVINGS}:
+            raise ValueError("Choose a checking or savings account as the payment source.")
+
     balance_before = max(_decimal(liability.outstanding_balance), ZERO)
     principal_applied = min(payment_amount, balance_before)
     balance_after = max(ZERO, balance_before - principal_applied).quantize(CENT)
@@ -63,6 +83,7 @@ def record_manual_debt_payment(*, user, liability_id: int, amount, payment_date=
         user=user,
         liability=liability,
         account=liability.account,
+        funding_account=funding_account,
         amount=payment_amount.quantize(CENT),
         payment_date=paid_on,
         source=FinanceDebtPayment.Source.MANUAL,
@@ -72,7 +93,7 @@ def record_manual_debt_payment(*, user, liability_id: int, amount, payment_date=
         principal_amount=principal_applied.quantize(CENT),
         estimated_interest_saved_next_30_days=interest_saved,
         notes=(notes or "").strip(),
-        metadata={"balance_adjustment_applied": True},
+        metadata={"balance_adjustment_applied": True, "funding_balance_adjustment_applied": bool(funding_account)},
     )
 
     liability.outstanding_balance = balance_after
@@ -100,6 +121,13 @@ def record_manual_debt_payment(*, user, liability_id: int, amount, payment_date=
         liability.account.metadata = account_metadata
         liability.account.save(update_fields=["current_balance", "metadata", "updated_at"])
 
+    if funding_account is not None and funding_account.current_balance is not None:
+        funding_account.current_balance = (_decimal(funding_account.current_balance) - payment_amount).quantize(CENT)
+        funding_meta = dict(funding_account.metadata or {})
+        funding_meta["last_manual_debt_payment_id"] = payment.id
+        funding_account.metadata = funding_meta
+        funding_account.save(update_fields=["current_balance", "metadata", "updated_at"])
+
     return payment
 
 
@@ -116,7 +144,6 @@ def record_provider_payment_snapshot(*, liability: FinanceLiability, amount, pay
     if existing:
         return existing
 
-    # If the user logged the same payment manually, keep one ledger row and mark it verified.
     manual_match = (
         FinanceDebtPayment.objects.filter(
             user=liability.user,
