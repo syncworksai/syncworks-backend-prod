@@ -30,6 +30,7 @@ class Migration(migrations.Migration):
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("updated_at", models.DateTimeField(auto_now=True)),
                 ("account", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="debt_payments", to="user_accounts.financeaccount")),
+                ("funding_account", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="funded_debt_payments", to="user_accounts.financeaccount")),
                 ("liability", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="payments", to="user_accounts.financeliability")),
                 ("user", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="finance_debt_payments", to=settings.AUTH_USER_MODEL)),
             ],
