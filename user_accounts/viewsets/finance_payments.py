@@ -13,7 +13,7 @@ class FinanceDebtPaymentViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = FinanceDebtPaymentSerializer
 
     def get_queryset(self):
-        qs = FinanceDebtPayment.objects.filter(user=self.request.user).select_related("liability", "account")
+        qs = FinanceDebtPayment.objects.filter(user=self.request.user).select_related("liability", "account", "funding_account")
         liability_id = self.request.query_params.get("liability")
         if liability_id:
             qs = qs.filter(liability_id=liability_id)
@@ -25,6 +25,15 @@ class FinanceDebtPaymentViewSet(viewsets.ReadOnlyModelViewSet):
         except (TypeError, ValueError):
             return Response({"detail": "Choose a debt account."}, status=status.HTTP_400_BAD_REQUEST)
 
+        funding_account_id = request.data.get("funding_account")
+        if funding_account_id in (None, ""):
+            funding_account_id = None
+        else:
+            try:
+                funding_account_id = int(funding_account_id)
+            except (TypeError, ValueError):
+                return Response({"detail": "Choose a valid funding account."}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             payment = record_manual_debt_payment(
                 user=request.user,
@@ -32,6 +41,7 @@ class FinanceDebtPaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 amount=request.data.get("amount"),
                 payment_date=request.data.get("payment_date"),
                 notes=request.data.get("notes") or "",
+                funding_account_id=funding_account_id,
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
