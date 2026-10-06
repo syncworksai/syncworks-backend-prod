@@ -1,4 +1,4 @@
-from rest_framework import status, viewsets
+from rest_framework import mixins, status, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -8,7 +8,12 @@ from user_accounts.serializers.personal_finance import FinanceLiabilitySerialize
 from user_accounts.services.finance_payments import record_manual_debt_payment
 
 
-class FinanceDebtPaymentViewSet(viewsets.ReadOnlyModelViewSet):
+class FinanceDebtPaymentViewSet(
+    mixins.CreateModelMixin,
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    viewsets.GenericViewSet,
+):
     permission_classes = [IsAuthenticated]
     serializer_class = FinanceDebtPaymentSerializer
 
