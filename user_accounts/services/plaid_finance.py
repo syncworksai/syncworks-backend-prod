@@ -18,6 +18,7 @@ from user_accounts.models.personal_finance import (
     FinanceLiability,
     FinanceTransaction,
 )
+from user_accounts.services.finance_payments import record_provider_payment_snapshot
 
 
 def _fernet() -> Fernet:
@@ -213,7 +214,7 @@ def sync_liabilities(connection: FinanceConnection) -> None:
         account = accounts.get(card.get("account_id"))
         if not account:
             continue
-        FinanceLiability.objects.update_or_create(
+        liability, _ = FinanceLiability.objects.update_or_create(
             user=connection.user,
             account=account,
             defaults={
@@ -230,12 +231,18 @@ def sync_liabilities(connection: FinanceConnection) -> None:
                 "metadata": card,
             },
         )
+        record_provider_payment_snapshot(
+            liability=liability,
+            amount=card.get("last_payment_amount"),
+            payment_date=_date(card.get("last_payment_date")),
+            provider_reference=f"PLAID-CREDIT:{card.get('account_id','')}:{card.get('last_payment_date','')}:{card.get('last_payment_amount','')}",
+        )
 
     for mortgage in liabilities.get("mortgage") or []:
         account = accounts.get(mortgage.get("account_id"))
         if not account:
             continue
-        FinanceLiability.objects.update_or_create(
+        liability, _ = FinanceLiability.objects.update_or_create(
             user=connection.user,
             account=account,
             defaults={
@@ -262,12 +269,18 @@ def sync_liabilities(connection: FinanceConnection) -> None:
                 "metadata": mortgage,
             },
         )
+        record_provider_payment_snapshot(
+            liability=liability,
+            amount=mortgage.get("last_payment_amount"),
+            payment_date=_date(mortgage.get("last_payment_date")),
+            provider_reference=f"PLAID-MORTGAGE:{mortgage.get('account_id','')}:{mortgage.get('last_payment_date','')}:{mortgage.get('last_payment_amount','')}",
+        )
 
     for student in liabilities.get("student") or []:
         account = accounts.get(student.get("account_id"))
         if not account:
             continue
-        FinanceLiability.objects.update_or_create(
+        liability, _ = FinanceLiability.objects.update_or_create(
             user=connection.user,
             account=account,
             defaults={
@@ -286,6 +299,12 @@ def sync_liabilities(connection: FinanceConnection) -> None:
                 "is_manual": False,
                 "metadata": student,
             },
+        )
+        record_provider_payment_snapshot(
+            liability=liability,
+            amount=student.get("last_payment_amount"),
+            payment_date=_date(student.get("last_payment_date")),
+            provider_reference=f"PLAID-STUDENT:{student.get('account_id','')}:{student.get('last_payment_date','')}:{student.get('last_payment_amount','')}",
         )
 
 
