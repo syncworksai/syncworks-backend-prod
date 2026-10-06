@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from user_accounts.viewsets.finance_automation import FinanceAutomationViewSet
+from user_accounts.viewsets.finance_payments import FinanceDebtPaymentViewSet
 from user_accounts.viewsets.personal_finance import (
     FinanceAccountViewSet,
     FinanceBudgetViewSet,
@@ -18,6 +19,7 @@ router = DefaultRouter()
 router.register(r"connections", FinanceConnectionViewSet, basename="finance-connections")
 router.register(r"accounts", FinanceAccountViewSet, basename="finance-accounts")
 router.register(r"liabilities", FinanceLiabilityViewSet, basename="finance-liabilities")
+router.register(r"debt-payments", FinanceDebtPaymentViewSet, basename="finance-debt-payments")
 router.register(r"obligations", FinanceObligationViewSet, basename="finance-obligations")
 router.register(r"transactions", FinanceTransactionViewSet, basename="finance-transactions")
 router.register(r"income-sources", FinanceIncomeSourceViewSet, basename="finance-income-sources")
