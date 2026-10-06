@@ -4,15 +4,20 @@ on:
   pull_request:
     paths:
       - "user_accounts/models/personal_finance.py"
+      - "user_accounts/models/finance_payments.py"
       - "user_accounts/serializers/personal_finance.py"
+      - "user_accounts/serializers/finance_payments.py"
       - "user_accounts/services/plaid_finance.py"
+      - "user_accounts/services/finance_payments.py"
       - "user_accounts/services/finance_intelligence.py"
       - "user_accounts/viewsets/personal_finance.py"
+      - "user_accounts/viewsets/finance_payments.py"
       - "user_accounts/viewsets/finance_automation.py"
       - "user_accounts/personal_finance_urls.py"
       - "user_accounts/management/commands/run_finance_runtime.py"
       - "user_accounts/tests/test_personal_finance.py"
       - "user_accounts/tests/test_finance_cashflow.py"
+      - "user_accounts/tests/test_finance_debt_payments.py"
       - "user_accounts/migrations/**"
       - "sync_ai/context.py"
       - "sync_ai/snapshot.py"
@@ -47,7 +52,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          python manage.py test user_accounts.tests.test_personal_finance user_accounts.tests.test_finance_cashflow sync_ai.tests -v 2 > /tmp/finance-test.log 2>&1
+          python manage.py test user_accounts.tests.test_personal_finance user_accounts.tests.test_finance_cashflow user_accounts.tests.test_finance_debt_payments sync_ai.tests -v 2 > /tmp/finance-test.log 2>&1
           code=$?
           cat /tmp/finance-test.log
           if [ "$code" -ne 0 ]; then
