@@ -1,13 +1,12 @@
-"""Bed Springs' auditable Way We Play offensive analytics.
+"""Bed Springs' auditable Way We Play execution analytics.
 
-The score intentionally separates team-value execution from traditional slash-line
-results. Every scored input comes from a completed official Game Book plate appearance.
-Small samples are shrunk toward the team average so a 2-for-2 night does not outrank a
-player who sustains the same quality over a meaningful number of trips.
+The score is intentionally NOT a batting-average leaderboard. Its primary question is:
+"Did this player's decisions and execution leave the team in a better position?"
+Every scored input comes from a completed official Game Book plate appearance. Small
+samples are stabilized toward the team rate so a tiny hot streak does not become the
+team standard.
 """
 from __future__ import annotations
-
-from collections import defaultdict
 
 from .models import SoftballPlateAppearance, SportsGame
 
@@ -19,10 +18,6 @@ HITS = {
     SoftballPlateAppearance.Result.HOME_RUN,
 }
 ON_BASE_RESULTS = HITS | {SoftballPlateAppearance.Result.WALK}
-
-# Eight team-average plate appearances act as a prior. At 8 PA the player's observed
-# rate receives 50% of the weight; at 24 PA it receives 75%. This keeps early-season
-# leaderboards useful without pretending tiny samples are certain.
 PRIOR_PA = 8.0
 
 
@@ -35,56 +30,44 @@ def _cap(value: float, low: float = 0.0, high: float = 1.0) -> float:
 
 
 def _quality_at_bat(pa: SoftballPlateAppearance) -> bool:
-    """Team-value QAB, not merely a hit.
-
-    A hit/walk/sac fly is quality. So is a recorded situational success or a productive
-    runner advance with no more than one out created. Strikeouts and multi-out damage are
-    never rescued by incidental advancement.
-    """
-    if pa.result == SoftballPlateAppearance.Result.STRIKEOUT or int(pa.outs_recorded or 0) >= 2:
+    """Did the PA create team value, independent of batting average?"""
+    outs = int(pa.outs_recorded or 0)
+    if pa.result == SoftballPlateAppearance.Result.STRIKEOUT or outs >= 2:
         return False
-    if pa.result in ON_BASE_RESULTS or pa.result == SoftballPlateAppearance.Result.SAC_FLY:
-        return True
     if pa.situation_success is True:
         return True
-    if int(pa.runners_advanced or 0) > 0 and int(pa.outs_recorded or 0) <= 1:
+    if int(pa.runners_advanced or 0) > 0 or int(pa.rbi or 0) > 0:
+        return True
+    if pa.result in ON_BASE_RESULTS or pa.result == SoftballPlateAppearance.Result.SAC_FLY:
         return True
     return False
 
 
 def _approach_value(pa: SoftballPlateAppearance) -> float:
-    """V1 observable plate-approach proxy on a 0..1 scale.
-
-    We do not claim pitch-decision data that the current Game Book does not record.
-    Instead this rewards controllable, observable execution: walk, successful objective,
-    quality contact/result, productive advancement, and avoiding strikeout/multi-out harm.
-    A later pitch/decision grade can replace or augment this term without changing the
-    public Player Score contract.
-    """
+    """Observable process/approach proxy, not a slash-line reward."""
     outs = int(pa.outs_recorded or 0)
     if pa.result == SoftballPlateAppearance.Result.STRIKEOUT:
         return 0.0
     if outs >= 2:
         return 0.05
-
-    candidates = [0.25]  # ordinary ball in play / neutral outcome
-    if pa.result == SoftballPlateAppearance.Result.WALK:
-        candidates.append(1.0)
+    candidates = [0.30]
     if pa.situation_success is True:
-        candidates.append(0.95)
-    if pa.result in HITS:
+        candidates.append(1.0)
+    if int(pa.runners_advanced or 0) > 0:
         candidates.append(0.90)
     if pa.result == SoftballPlateAppearance.Result.SAC_FLY:
+        candidates.append(0.92)
+    if pa.result == SoftballPlateAppearance.Result.WALK:
         candidates.append(0.88)
-    if int(pa.runners_advanced or 0) > 0:
+    if pa.result in HITS:
         candidates.append(0.82)
     if pa.result == SoftballPlateAppearance.Result.REACHED_ON_ERROR:
-        candidates.append(0.55)
+        candidates.append(0.58)
     return max(candidates)
 
 
 def _execution_value(pa: SoftballPlateAppearance) -> tuple[float, bool]:
-    """Return situational execution value and whether the PA had a scorable objective."""
+    """Score whether the hitter executed what the TEAM needed in a scorable spot."""
     has_context = bool(pa.situation_objective) or pa.situation_success is not None
     if has_context:
         if pa.situation_success is True:
@@ -92,17 +75,19 @@ def _execution_value(pa: SoftballPlateAppearance) -> tuple[float, bool]:
         if pa.situation_success is False:
             return 0.0, True
 
-    # When explicit situation tagging was not used, only count objectively observable
-    # productive execution. Do not manufacture failure from missing context.
+    # If no coach-tagged objective exists, use only obvious team-value evidence.
+    # We never manufacture a failure from missing context.
+    if int(pa.outs_recorded or 0) >= 2:
+        return 0.0, True
     if int(pa.runners_advanced or 0) > 0 or int(pa.rbi or 0) > 0:
-        if int(pa.outs_recorded or 0) >= 2:
-            return 0.0, True
+        return 1.0, True
+    if pa.result == SoftballPlateAppearance.Result.SAC_FLY:
         return 1.0, True
     return 0.0, False
 
 
 def _impact_value(pa: SoftballPlateAppearance) -> float:
-    """Normalized offensive impact per PA, capped so one HR cannot own the composite."""
+    """Small supporting production term; raw power cannot dominate the score."""
     bases = {
         SoftballPlateAppearance.Result.SINGLE: 1,
         SoftballPlateAppearance.Result.DOUBLE: 2,
@@ -110,15 +95,8 @@ def _impact_value(pa: SoftballPlateAppearance) -> float:
         SoftballPlateAppearance.Result.HOME_RUN: 4,
     }.get(pa.result, 0)
     on_base = 1 if pa.result == SoftballPlateAppearance.Result.WALK else 0
-    positive = (
-        bases
-        + on_base
-        + int(pa.rbi or 0)
-        + 0.5 * int(pa.runs_scored or 0)
-        + 0.5 * int(pa.runners_advanced or 0)
-    )
-    damage = 1.5 if int(pa.outs_recorded or 0) >= 2 else 0.0
-    # 3 impact units is an intentionally high but reachable excellent PA.
+    positive = bases + on_base + int(pa.rbi or 0) + 0.5 * int(pa.runs_scored or 0) + 0.5 * int(pa.runners_advanced or 0)
+    damage = 1.75 if int(pa.outs_recorded or 0) >= 2 else 0.0
     return _cap((positive - damage) / 3.0)
 
 
@@ -138,6 +116,7 @@ def _blank(player) -> dict:
         "impact_total": 0.0,
         "strikeouts": 0,
         "multi_outs": 0,
+        "productive_advances": 0,
     }
 
 
@@ -156,17 +135,11 @@ def _shrink(observed: float, team_rate: float, sample: int, prior: float = PRIOR
 
 
 def team_way_score(team) -> dict:
-    players = list(
-        team.players.filter(is_active=True, merged_into__isnull=True)
-        .order_by("sort_order", "display_name", "id")
-    )
+    players = list(team.players.filter(is_active=True, merged_into__isnull=True).order_by("sort_order", "display_name", "id"))
     rows = {player.id: _blank(player) for player in players}
 
     appearances = list(
-        SoftballPlateAppearance.objects.filter(
-            game__team=team,
-            game__status=SportsGame.Status.FINAL,
-        )
+        SoftballPlateAppearance.objects.filter(game__team=team, game__status=SportsGame.Status.FINAL)
         .select_related("player", "game")
         .order_by("game__start_at", "sequence", "id")
     )
@@ -185,6 +158,7 @@ def team_way_score(team) -> dict:
             row["execution_total"] += execution
             row["execution_opportunities"] += 1
         row["impact_total"] += _impact_value(pa)
+        row["productive_advances"] += int(pa.runners_advanced or 0)
         if pa.result == SoftballPlateAppearance.Result.STRIKEOUT:
             row["strikeouts"] += 1
         if int(pa.outs_recorded or 0) >= 2:
@@ -192,17 +166,11 @@ def team_way_score(team) -> dict:
 
     active_rows = [row for row in rows.values() if row["pa"] > 0]
     team_pa = sum(row["pa"] for row in active_rows)
-    team_qab = sum(row["quality_at_bats"] for row in active_rows)
-    team_approach = sum(row["approach_total"] for row in active_rows)
-    team_exec_total = sum(row["execution_total"] for row in active_rows)
-    team_exec_opp = sum(row["execution_opportunities"] for row in active_rows)
-    team_impact = sum(row["impact_total"] for row in active_rows)
-
     team_rates = {
-        "qab_rate": _safe_ratio(team_qab, team_pa),
-        "approach_rate": _safe_ratio(team_approach, team_pa),
-        "execution_rate": _safe_ratio(team_exec_total, team_exec_opp),
-        "impact_rate": _safe_ratio(team_impact, team_pa),
+        "qab_rate": _safe_ratio(sum(row["quality_at_bats"] for row in active_rows), team_pa),
+        "approach_rate": _safe_ratio(sum(row["approach_total"] for row in active_rows), team_pa),
+        "execution_rate": _safe_ratio(sum(row["execution_total"] for row in active_rows), sum(row["execution_opportunities"] for row in active_rows)),
+        "impact_rate": _safe_ratio(sum(row["impact_total"] for row in active_rows), team_pa),
     }
 
     output = []
@@ -216,11 +184,13 @@ def team_way_score(team) -> dict:
             "execution_rate": _shrink(raw["execution_rate"], team_rates["execution_rate"], exec_sample),
             "impact_rate": _shrink(raw["impact_rate"], team_rates["impact_rate"], pa),
         }
+
+        # WAY-1.1: execution and team improvement dominate; raw output is intentionally minor.
         player_score = 100.0 * (
-            0.35 * adjusted["qab_rate"]
-            + 0.25 * adjusted["execution_rate"]
-            + 0.25 * adjusted["approach_rate"]
-            + 0.15 * adjusted["impact_rate"]
+            0.45 * adjusted["execution_rate"]
+            + 0.30 * adjusted["qab_rate"]
+            + 0.15 * adjusted["approach_rate"]
+            + 0.10 * adjusted["impact_rate"]
         )
         confidence = _cap(pa / 24.0)
         output.append({
@@ -232,13 +202,15 @@ def team_way_score(team) -> dict:
             "situation_execution": round(adjusted["execution_rate"] * 100, 1),
             "execution_opportunities": exec_sample,
             "impact": round(adjusted["impact_rate"] * 100, 1),
+            "execution_score": round(player_score, 1),
             "player_score": round(player_score, 1),
             "confidence": round(confidence * 100, 1),
             "strikeouts": row["strikeouts"],
             "multi_outs": row["multi_outs"],
+            "productive_advances": row["productive_advances"],
         })
 
-    output.sort(key=lambda item: (-item["player_score"], -item["pa"], item["player"]["display_name"].lower()))
+    output.sort(key=lambda item: (-item["execution_score"], -item["pa"], item["player"]["display_name"].lower()))
     for index, item in enumerate(output, start=1):
         item["rank"] = index
 
@@ -250,7 +222,8 @@ def team_way_score(team) -> dict:
         return {"player": best["player"], "value": best[metric], "pa": best["pa"]}
 
     leaders = {
-        "player_score": leader("player_score"),
+        "player_score": leader("execution_score"),
+        "execution_score": leader("execution_score"),
         "quality_at_bats": leader("qab_pct"),
         "plate_approach": leader("plate_approach"),
         "situation_execution": leader("situation_execution"),
@@ -258,22 +231,26 @@ def team_way_score(team) -> dict:
 
     return {
         "team": {"id": team.id, "group": team.group_id, "name": team.group.name},
-        "formula_version": "WAY-1.0",
+        "formula_version": "WAY-1.1",
+        "score_name": "Execution Score",
+        "score_question": "Is the team better because of what I did?",
         "minimum_display_pa": 1,
         "prior_pa": int(PRIOR_PA),
         "weights": {
-            "quality_at_bats": 35,
-            "situation_execution": 25,
-            "plate_approach": 25,
-            "offensive_impact": 15,
+            "situation_execution": 45,
+            "quality_at_bats": 30,
+            "plate_approach": 15,
+            "offensive_impact": 10,
         },
         "team_rates": {key: round(value * 100, 1) for key, value in team_rates.items()},
         "leaders": leaders,
         "players": output,
         "methodology": {
-            "quality_at_bat": "Hit, walk, sacrifice fly, recorded situational success, or productive runner advance without strikeout/multi-out damage.",
-            "plate_approach": "V1 observable execution proxy from official Game Book outcomes and situational tags; it does not pretend pitch-decision data exists yet.",
-            "sample_size": "Player rates are shrunk toward the team rate with an 8-PA prior; confidence reaches 100% at 24 PA for display purposes.",
-            "source": "Final official Game Books only. Historical summary totals are excluded because they do not contain per-PA situational context.",
+            "execution": "The largest term. Did the player accomplish the situational objective or create objectively productive team value?",
+            "quality_at_bat": "Did the plate appearance improve the team's position, even when it did not become a hit?",
+            "plate_approach": "Observable decision/process quality from the Game Book; raw batting average is not part of the formula.",
+            "impact": "Runs, bases and production matter, but this term is intentionally small so power cannot overpower execution.",
+            "sample_size": "Rates are stabilized toward the team rate with an 8-PA prior; confidence reaches 100% at 24 PA for display purposes.",
+            "source": "Final official Game Books only. Historical summary totals remain useful for context but are excluded from Execution Score when they lack situational detail.",
         },
     }
