@@ -90,3 +90,47 @@ class SportsTeamWeekMetric(models.Model):
             )
         ]
         indexes = [models.Index(fields=("team", "week_of"), name="sports_way_team_week")]
+
+
+class SportsPlayerExecutionTotal(models.Model):
+    """Coach-recorded execution points, kept like hits and converted to EXE% by PA."""
+
+    team = models.ForeignKey(
+        "platform_sports.SportsTeam",
+        on_delete=models.CASCADE,
+        related_name="way_execution_totals",
+    )
+    player = models.ForeignKey(
+        "platform_sports.SportsPlayer",
+        on_delete=models.CASCADE,
+        related_name="way_execution_totals",
+    )
+    season_name = models.CharField(max_length=80, blank=True)
+    points = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    note = models.CharField(max_length=240, blank=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="sports_execution_totals_updated",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("player__display_name", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("team", "player", "season_name"),
+                name="sports_unique_execution_total_season",
+            )
+        ]
+        indexes = [
+            models.Index(fields=("team", "season_name"), name="sports_exec_total_season"),
+        ]
+
+    def clean(self):
+        if self.player_id and self.team_id and self.player.team_id != self.team_id:
+            from django.core.exceptions import ValidationError
+            raise ValidationError({"player": "Player must belong to this team."})
