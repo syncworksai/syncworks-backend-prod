@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from platform_social.models import GroupMembership
 
 from .models import SportsPlayer, SportsTeam
-from .way_models import SportsPlayerMetricRating, SportsTeamWeekMetric
+from .way_models import SportsPlayerExecutionTotal, SportsPlayerMetricRating, SportsTeamWeekMetric
 from .way_score import team_way_score
 from .way_trends import team_weekly_trend
 
@@ -22,6 +22,80 @@ MANAGER_ROLES = (
     GroupMembership.Role.DIRECTOR,
     GroupMembership.Role.MANAGER,
 )
+
+
+def _execution_totals_payload(team):
+    # Use the exact same all-games calculation as the existing Stats page so EXE%
+    # and BA always compare against the PA/AB the team already sees.
+    from .views import softball_player_stats
+
+    stat_rows = softball_player_stats(team)
+    stats = {int(row["player"]["id"]): row for row in stat_rows}
+    season_name = team.season_name or ""
+    totals = {
+        row.player_id: row
+        for row in SportsPlayerExecutionTotal.objects.filter(
+            team=team,
+            season_name=season_name,
+        ).select_related("player")
+    }
+
+    players = list(
+        team.players.filter(is_active=True, merged_into__isnull=True)
+        .order_by("sort_order", "display_name", "id")
+    )
+    rows = []
+    scored_points = Decimal("0")
+    scored_pa = 0
+    scored_hits = 0
+    scored_ab = 0
+
+    for player in players:
+        stat = stats.get(player.id, {})
+        total = totals.get(player.id)
+        pa = int(stat.get("pa") or 0)
+        ab = int(stat.get("ab") or 0)
+        hits = int(stat.get("h") or 0)
+        points = total.points if total else None
+        exe = None
+        if points is not None and pa > 0:
+            exe = round(float(points) / float(pa), 3)
+            scored_points += points
+            scored_pa += pa
+            scored_hits += hits
+            scored_ab += ab
+        rows.append({
+            "player": {
+                "id": player.id,
+                "display_name": player.display_name,
+                "jersey_number": player.jersey_number,
+                "primary_position": player.primary_position,
+            },
+            "season_name": season_name,
+            "execution_points": float(points) if points is not None else None,
+            "execution_average": exe,
+            "pa": pa,
+            "ab": ab,
+            "hits": hits,
+            "ba": round(float(hits) / float(ab), 3) if ab else 0.0,
+            "note": total.note if total else "",
+            "updated_at": total.updated_at if total else None,
+        })
+
+    return {
+        "season_name": season_name,
+        "rows": rows,
+        "team": {
+            "execution_points": float(scored_points),
+            "pa": scored_pa,
+            "execution_average": round(float(scored_points) / float(scored_pa), 3) if scored_pa else None,
+            "hits": scored_hits,
+            "ab": scored_ab,
+            "ba": round(float(scored_hits) / float(scored_ab), 3) if scored_ab else 0.0,
+            "players_scored": sum(1 for row in rows if row["execution_points"] is not None),
+        },
+        "definition": "EXE% = coach-recorded execution points divided by all-games plate appearances. BA stays separate as hitting context.",
+    }
 
 
 class WayAnalyticsViewSet(viewsets.ViewSet):
@@ -51,9 +125,60 @@ class WayAnalyticsViewSet(viewsets.ViewSet):
         if error:
             return error
         payload = team_way_score(team)
+        manual = _execution_totals_payload(team)
+        manual_by_player = {int(row["player"]["id"]): row for row in manual["rows"]}
+        for row in payload.get("players", []):
+            manual_row = manual_by_player.get(int(row["player"]["id"]))
+            if not manual_row:
+                continue
+            row["execution_points"] = manual_row["execution_points"]
+            row["execution_average"] = manual_row["execution_average"]
+            row["batting_average"] = manual_row["ba"]
+            row["all_games_pa"] = manual_row["pa"]
+            row["all_games_ab"] = manual_row["ab"]
+            row["all_games_hits"] = manual_row["hits"]
+        payload["manual_execution"] = manual
         payload["membership_role"] = membership.role
         payload["can_award"] = self._can_manage(membership)
         return Response(payload)
+
+    @action(detail=True, methods=["get", "post"], url_path="execution-totals")
+    def execution_totals(self, request, pk=None):
+        team, membership, error = self._team_and_membership(request, pk)
+        if error:
+            return error
+        if request.method == "GET":
+            payload = _execution_totals_payload(team)
+            payload["can_manage"] = self._can_manage(membership)
+            return Response(payload)
+
+        if not self._can_manage(membership):
+            return Response({"detail": "Manager access required."}, status=status.HTTP_403_FORBIDDEN)
+        player = get_object_or_404(
+            SportsPlayer,
+            pk=request.data.get("player"),
+            team=team,
+            is_active=True,
+            merged_into__isnull=True,
+        )
+        try:
+            points = Decimal(str(request.data.get("points")))
+        except (InvalidOperation, TypeError, ValueError):
+            return Response({"detail": "Execution points must be a number."}, status=status.HTTP_400_BAD_REQUEST)
+        if points < 0 or points > Decimal("99999"):
+            return Response({"detail": "Execution points are outside the supported range."}, status=status.HTTP_400_BAD_REQUEST)
+        points = points.quantize(Decimal("0.01"))
+        season_name = str(request.data.get("season_name") or team.season_name or "").strip()[:80]
+        note = str(request.data.get("note") or "Coach-adjusted all-games execution total").strip()[:240]
+        row, _ = SportsPlayerExecutionTotal.objects.update_or_create(
+            team=team,
+            player=player,
+            season_name=season_name,
+            defaults={"points": points, "note": note, "updated_by": request.user},
+        )
+        payload = _execution_totals_payload(team)
+        saved = next((item for item in payload["rows"] if int(item["player"]["id"]) == player.id), None)
+        return Response({"saved": saved, "team": payload["team"]})
 
     @action(detail=True, methods=["get"], url_path="trend")
     def trend(self, request, pk=None):
