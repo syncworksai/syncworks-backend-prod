@@ -29,6 +29,7 @@ from .views import (
     SportsPlayerViewSet,
     SportsTeamViewSet,
 )
+from .way_qab_views import WayQABViewSet
 from .way_score_views import WayAnalyticsViewSet
 
 router = DefaultRouter()
@@ -46,6 +47,7 @@ router.register("team-fees", TeamFeeViewSet, basename="sports-team-fees")
 router.register("fee-assignments", TeamFeeAssignmentViewSet, basename="sports-fee-assignments")
 router.register("stat-ledger", SoftballStatLedgerEntryViewSet, basename="sports-stat-ledger")
 router.register("way-analytics", WayAnalyticsViewSet, basename="sports-way-analytics")
+router.register("way-qab", WayQABViewSet, basename="sports-way-qab")
 
 router.register("organizations", SportsOrganizationViewSet, basename="sports-organizations")
 router.register("organization-memberships", SportsOrganizationMembershipViewSet, basename="sports-organization-memberships")
