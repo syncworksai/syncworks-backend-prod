@@ -7,7 +7,8 @@ class PlatformSportsConfig(AppConfig):
     verbose_name = "SyncWorks Sports"
 
     def ready(self):
-        # League and team-operations models live in separate modules so the
+        # League, team-operations and Way analytics models live in separate modules so the
         # core game/scorekeeping domain can keep evolving without rewrites.
         from . import league_models  # noqa: F401
         from . import ops_models  # noqa: F401
+        from . import way_models  # noqa: F401
