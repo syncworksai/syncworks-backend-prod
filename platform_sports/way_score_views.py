@@ -108,27 +108,39 @@ class WayAnalyticsViewSet(viewsets.ViewSet):
         if value < 1 or value > 10:
             return Response({"detail": "Rating must be from 1 to 10."}, status=status.HTTP_400_BAD_REQUEST)
 
-        today = date.today()
-        week_of = today - timedelta(days=today.weekday())
-        row, _ = SportsPlayerMetricRating.objects.update_or_create(
+        raw_week = request.data.get("week_of")
+        if raw_week:
+            try:
+                week_of = date.fromisoformat(str(raw_week))
+            except (TypeError, ValueError):
+                return Response({"detail": "Enter a valid week date."}, status=status.HTTP_400_BAD_REQUEST)
+            week_of = week_of - timedelta(days=week_of.weekday())
+        else:
+            today = date.today()
+            week_of = today - timedelta(days=today.weekday())
+
+        note = str(request.data.get("note") or "").strip()[:240]
+        current, _ = SportsPlayerMetricRating.objects.update_or_create(
             team=team,
             player=player,
             metric_key=metric_key,
             period_key="CURRENT",
-            defaults={
-                "value": value,
-                "week_of": week_of,
-                "note": str(request.data.get("note") or "").strip()[:240],
-                "rated_by": request.user,
-            },
+            defaults={"value": value, "week_of": week_of, "note": note, "rated_by": request.user},
+        )
+        SportsPlayerMetricRating.objects.update_or_create(
+            team=team,
+            player=player,
+            metric_key=metric_key,
+            period_key=f"WEEK:{week_of.isoformat()}",
+            defaults={"value": value, "week_of": week_of, "note": note, "rated_by": request.user},
         )
         return Response({
-            "id": row.id,
-            "player": row.player_id,
-            "metric_key": row.metric_key,
-            "value": row.value,
-            "week_of": row.week_of,
-            "note": row.note,
+            "id": current.id,
+            "player": current.player_id,
+            "metric_key": current.metric_key,
+            "value": current.value,
+            "week_of": current.week_of,
+            "note": current.note,
         })
 
     @action(detail=True, methods=["post"], url_path="week-target")
