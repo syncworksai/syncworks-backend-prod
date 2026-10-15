@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from statistics import mean
-
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -21,6 +19,11 @@ MANAGER_ROLES = (
     GroupMembership.Role.MANAGER,
 )
 PRIOR_OPPORTUNITIES = 5
+SIT_PLUS_WEIGHTS = {
+    "bases_empty": 0.35,
+    "two_out": 0.15,
+    "runners_on": 0.50,
+}
 
 
 def _rate(hits, at_bats):
@@ -71,6 +74,23 @@ def _batting_metric(hits, at_bats, games, team_rate):
     }
 
 
+def _situational_index(metrics, team_totals):
+    weighted_total = 0.0
+    available_weight = 0.0
+    for key, metric in metrics.items():
+        baseline = team_totals[key]["rate"]
+        adjusted = metric.get("adjusted_rate")
+        if adjusted is None or not baseline:
+            continue
+        weight = SIT_PLUS_WEIGHTS[key]
+        weighted_total += ((float(adjusted) / float(baseline)) * 100.0) * weight
+        available_weight += weight
+    if not available_weight:
+        return None
+    # Re-normalize the available contexts so missing data does not become a penalty.
+    return round(weighted_total / available_weight, 1)
+
+
 def situational_payload(team):
     season_name = team.season_name or ""
     split_rows = list(
@@ -117,16 +137,14 @@ def situational_payload(team):
             two_out = _metric(split.two_out_hits, split.two_out_ab, team_totals["two_out"]["rate"])
             runners_on = _metric(split.runners_on_hits, split.runners_on_ab, team_totals["runners_on"]["rate"])
             batting = _batting_metric(split.batting_hits, split.batting_ab, split.batting_sample_games, team_batting_rate)
-            index_parts = []
-            for metric, key in (
-                (bases_empty, "bases_empty"),
-                (two_out, "two_out"),
-                (runners_on, "runners_on"),
-            ):
-                baseline = team_totals[key]["rate"]
-                if metric["adjusted_rate"] is not None and baseline:
-                    index_parts.append((metric["adjusted_rate"] / baseline) * 100.0)
-            situational_index = round(mean(index_parts), 1) if index_parts else None
+            situational_index = _situational_index(
+                {
+                    "bases_empty": bases_empty,
+                    "two_out": two_out,
+                    "runners_on": runners_on,
+                },
+                team_totals,
+            )
         else:
             bases_empty = _metric(0, 0, team_totals["bases_empty"]["rate"])
             two_out = _metric(0, 0, team_totals["two_out"]["rate"])
@@ -161,6 +179,7 @@ def situational_payload(team):
         "sample_games": max((row.sample_games for row in split_rows), default=0),
         "batting_sample_games": batting_games,
         "prior_opportunities": PRIOR_OPPORTUNITIES,
+        "sit_plus_weights": {key: int(round(value * 100)) for key, value in SIT_PLUS_WEIGHTS.items()},
         "team": {
             **team_totals,
             "season_batting": {
@@ -177,10 +196,10 @@ def situational_payload(team):
         "rows": rows,
         "definitions": {
             "season_batting": "Season H/AB snapshot. The current sample covers eight team games where available and is stored separately so incomplete extra-base-hit data from the newest games does not corrupt SLG or OPS.",
-            "bases_empty": "Any tracked at-bat with nobody on base. This is not limited to inning leadoff hitters.",
-            "two_out": "Tracked at-bats that began with two outs.",
-            "runners_on": "Tracked at-bats that began with at least one runner on base.",
-            "situational_index": "SIT+ compares each player's sample-size-stabilized situational rates with the team baseline. 100 is team average. The three contexts are averaged as separate dimensions so overlapping two-out/runners-on at-bats are not double-counted into one H/AB total.",
+            "bases_empty": "Any tracked at-bat with nobody on base. This is not limited to inning leadoff hitters. It represents rally-starting/table-setting value.",
+            "two_out": "Tracked at-bats that began with two outs. Two-out hitting matters, but SIT+ intentionally weights it below rally-starting and runners-on production.",
+            "runners_on": "Tracked at-bats that began with at least one runner on base. This receives the largest SIT+ weight because converting traffic most directly supports run production.",
+            "situational_index": "SIT+ compares each player's sample-size-stabilized situational rates with the team baseline. 100 is team average. Weighting is 50% runners on, 35% bases empty/rally starting, and 15% two outs. If a player lacks a sample in one context, the available weights are re-normalized rather than treating missing data as failure. Contexts remain separate so overlapping two-out/runners-on at-bats are not double-counted into one H/AB total.",
             "adjustment": f"Adjusted rates use a {PRIOR_OPPORTUNITIES}-opportunity team-average prior to reduce six-game small-sample outliers. Raw H/AB and raw rates remain visible.",
         },
     }
