@@ -138,3 +138,36 @@ class SportsPlayerSituationalSplit(models.Model):
         ):
             if getattr(self, hits_field, 0) > getattr(self, ab_field, 0):
                 raise ValidationError({hits_field: f"{label} hits cannot exceed at-bats."})
+
+
+class SportsPlayerCoachSnapshot(models.Model):
+    """Weekly coach-only development snapshot with lineup fit and modeled run upside."""
+
+    team = models.ForeignKey("platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="coach_snapshots")
+    player = models.ForeignKey("platform_sports.SportsPlayer", on_delete=models.CASCADE, related_name="coach_snapshots")
+    week_of = models.DateField()
+    recommended_role = models.CharField(max_length=96, blank=True)
+    recommended_slots = models.CharField(max_length=24, blank=True)
+    role_reason = models.CharField(max_length=320, blank=True)
+    focus_key = models.CharField(max_length=32, blank=True)
+    coaching_action = models.CharField(max_length=640, blank=True)
+    projected_runs_per_game_low = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    projected_runs_per_game_high = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    metrics = models.JSONField(default=dict, blank=True)
+    role_override = models.CharField(max_length=96, blank=True)
+    slots_override = models.CharField(max_length=24, blank=True)
+    focus_override = models.CharField(max_length=32, blank=True)
+    coach_note = models.CharField(max_length=640, blank=True)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="sports_coach_snapshots_updated")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-week_of", "player__display_name", "id")
+        constraints = [models.UniqueConstraint(fields=("team", "player", "week_of"), name="sports_unique_coach_snapshot_week")]
+        indexes = [models.Index(fields=("team", "week_of"), name="sports_coach_snapshot_week"), models.Index(fields=("player", "week_of"), name="sports_coach_snapshot_player")]
+
+    def clean(self):
+        if self.player_id and self.team_id and self.player.team_id != self.team_id:
+            from django.core.exceptions import ValidationError
+            raise ValidationError({"player": "Player must belong to this team."})
