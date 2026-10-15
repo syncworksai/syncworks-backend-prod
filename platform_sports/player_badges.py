@@ -154,8 +154,6 @@ def card_progress(player):
     monthly = defaultdict(blank)
     by_competition = defaultdict(blank)
     by_season = defaultdict(blank)
-    # A card earns achievements only from completed games. A reopened/undone
-    # Game Book automatically removes stats until it is final again.
     official = list(SoftballPlateAppearance.objects.filter(
         player=player, game__status=SportsGame.Status.FINAL,
     ).select_related("game").order_by("game__start_at", "sequence"))
@@ -173,8 +171,6 @@ def card_progress(player):
         if game_date.year == season_year:
             sum_play(season_totals, pa)
 
-    # Legacy manager-entered history has a season, but generally no game date.
-    # Never manufacture a monthly breakout for it.
     historical = list(player.stat_ledger_entries.filter(
         scope__in=(
             SoftballStatLedgerEntry.Scope.LEAGUE,
@@ -215,6 +211,21 @@ def card_progress(player):
             clutch += 1
 
     season_row = summary(season_totals, label=season, year=season_year)
+    try:
+        batting_snapshot = player.way_situational_splits.filter(season_name=season).first()
+    except Exception:
+        batting_snapshot = None
+    if batting_snapshot and batting_snapshot.batting_ab:
+        season_row["detailed_g"] = season_row["g"]
+        season_row["detailed_ab"] = season_row["ab"]
+        season_row["detailed_h"] = season_row["h"]
+        season_row["detailed_avg"] = season_row["avg"]
+        season_row["g"] = int(batting_snapshot.batting_sample_games or season_row["g"])
+        season_row["ab"] = int(batting_snapshot.batting_ab)
+        season_row["h"] = int(batting_snapshot.batting_hits)
+        season_row["avg"] = round(season_row["h"] / season_row["ab"], 3)
+        season_row["avg_sample"] = "BATTING_SNAPSHOT"
+
     rules = get_team_badge_rules(player.team)
     badges = [
         badge("POWER", points=season_row["power_points"], rules=rules),
@@ -234,7 +245,6 @@ def card_progress(player):
     if birth_date:
         for year, row in sorted(yearly.items()):
             age = year - birth_date.year
-            # Use season-year age as contextual grouping; never infer causation.
             age_performance.append({**summary(row, label=str(year), year=year), "age": max(0, age)})
 
     milestone_rows = []
@@ -284,5 +294,5 @@ def card_progress(player):
                 "date": local_game_date(m.game).isoformat(),
             } for m in sorted(moments, key=lambda m: m.game.start_at, reverse=True)[:30]
         ],
-        "badge_policy": "Power and Contact use completed official Game Books plus manager-entered dated season history. Speed and Clutch require verified, staff-recorded game moments.",
+        "badge_policy": "Power uses completed detailed Game Books/history. Contact may use the coach-entered season H/AB snapshot when the newest games only have batting-average data. Speed and Clutch require verified, staff-recorded game moments.",
     }

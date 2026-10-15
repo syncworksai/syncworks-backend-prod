@@ -53,12 +53,13 @@ class SportsTeamWeekMetric(models.Model):
 
 
 class SportsPlayerExecutionTotal(models.Model):
-    """Coach-recorded execution points, kept like hits and converted to EXE% by PA."""
+    """Coach-recorded execution points, kept like hits and converted to EXE% by graded PA."""
 
     team = models.ForeignKey("platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="way_execution_totals")
     player = models.ForeignKey("platform_sports.SportsPlayer", on_delete=models.CASCADE, related_name="way_execution_totals")
     season_name = models.CharField(max_length=80, blank=True)
     points = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    opportunities = models.PositiveIntegerField(default=0)
     note = models.CharField(max_length=240, blank=True)
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="sports_execution_totals_updated")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -76,7 +77,7 @@ class SportsPlayerExecutionTotal(models.Model):
 
 
 class SportsPlayerQABTotal(models.Model):
-    """Aggregate 1-3 Quality At-Bat points divided by all-games PA."""
+    """Aggregate 1-3 Quality At-Bat points divided by graded QAB opportunities."""
 
     team = models.ForeignKey("platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="way_qab_totals")
     player = models.ForeignKey("platform_sports.SportsPlayer", on_delete=models.CASCADE, related_name="way_qab_totals")
@@ -99,7 +100,7 @@ class SportsPlayerQABTotal(models.Model):
 
 
 class SportsPlayerSituationalSplit(models.Model):
-    """Coach-entered six-game situational H/AB splits kept separate from official batting totals."""
+    """Situational six-game splits plus an independent season H/AB snapshot."""
 
     team = models.ForeignKey("platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="way_situational_splits")
     player = models.ForeignKey("platform_sports.SportsPlayer", on_delete=models.CASCADE, related_name="way_situational_splits")
@@ -111,6 +112,9 @@ class SportsPlayerSituationalSplit(models.Model):
     two_out_ab = models.PositiveIntegerField(default=0)
     runners_on_hits = models.PositiveIntegerField(default=0)
     runners_on_ab = models.PositiveIntegerField(default=0)
+    batting_sample_games = models.PositiveSmallIntegerField(default=0)
+    batting_hits = models.PositiveIntegerField(default=0)
+    batting_ab = models.PositiveIntegerField(default=0)
     note = models.CharField(max_length=240, blank=True)
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="sports_situational_splits_updated")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -130,6 +134,7 @@ class SportsPlayerSituationalSplit(models.Model):
             ("bases_empty_hits", "bases_empty_ab", "Bases empty"),
             ("two_out_hits", "two_out_ab", "Two outs"),
             ("runners_on_hits", "runners_on_ab", "Runners on"),
+            ("batting_hits", "batting_ab", "Season batting"),
         ):
             if getattr(self, hits_field, 0) > getattr(self, ab_field, 0):
                 raise ValidationError({hits_field: f"{label} hits cannot exceed at-bats."})

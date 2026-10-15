@@ -51,6 +51,9 @@ class WaySituationalApiTests(APITestCase):
             two_out_ab=4,
             runners_on_hits=6,
             runners_on_ab=8,
+            batting_sample_games=8,
+            batting_hits=10,
+            batting_ab=16,
         )
         SportsPlayerSituationalSplit.objects.create(
             team=self.team,
@@ -63,19 +66,26 @@ class WaySituationalApiTests(APITestCase):
             two_out_ab=4,
             runners_on_hits=2,
             runners_on_ab=8,
+            batting_sample_games=8,
+            batting_hits=6,
+            batting_ab=14,
         )
 
-    def test_member_can_read_team_rates_and_sit_plus(self):
+    def test_member_can_read_team_rates_batting_snapshot_and_sit_plus(self):
         self.client.force_authenticate(user=self.member)
         response = self.client.get(reverse("sports-way-situational-detail", args=[self.team.id]))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertFalse(response.data["can_manage"])
         self.assertEqual(response.data["sample_games"], 6)
+        self.assertEqual(response.data["batting_sample_games"], 8)
         self.assertEqual(response.data["team"]["bases_empty"]["h"], 6)
         self.assertEqual(response.data["team"]["bases_empty"]["ab"], 10)
         self.assertEqual(response.data["team"]["bases_empty"]["rate"], 0.6)
         self.assertEqual(response.data["team"]["two_out"]["rate"], 0.5)
         self.assertEqual(response.data["team"]["runners_on"]["rate"], 0.5)
+        self.assertEqual(response.data["team"]["season_batting"]["h"], 16)
+        self.assertEqual(response.data["team"]["season_batting"]["ab"], 30)
+        self.assertEqual(response.data["team"]["season_batting"]["avg"], 0.533)
         one = next(row for row in response.data["rows"] if row["player"]["id"] == self.one.id)
         two = next(row for row in response.data["rows"] if row["player"]["id"] == self.two.id)
         self.assertGreater(one["situational_index"], 100)
@@ -83,8 +93,13 @@ class WaySituationalApiTests(APITestCase):
         self.assertEqual(one["bases_empty"]["rate"], 0.8)
         self.assertEqual(one["bases_empty"]["h"], 4)
         self.assertEqual(one["bases_empty"]["ab"], 5)
+        self.assertEqual(one["season_batting"]["games"], 8)
+        self.assertEqual(one["season_batting"]["h"], 10)
+        self.assertEqual(one["season_batting"]["ab"], 16)
+        self.assertEqual(one["season_batting"]["avg"], 0.625)
+        self.assertEqual(one["ba"], 0.625)
 
-    def test_member_cannot_edit_but_owner_can(self):
+    def test_member_cannot_edit_but_owner_can_edit_both_samples(self):
         url = reverse("sports-way-situational-save-player", args=[self.team.id])
         payload = {
             "player": self.one.id,
@@ -95,6 +110,9 @@ class WaySituationalApiTests(APITestCase):
             "two_out_ab": 5,
             "runners_on_hits": 7,
             "runners_on_ab": 9,
+            "batting_sample_games": 8,
+            "batting_hits": 11,
+            "batting_ab": 17,
         }
         self.client.force_authenticate(user=self.member)
         response = self.client.post(url, payload, format="json")
@@ -107,3 +125,6 @@ class WaySituationalApiTests(APITestCase):
         row = SportsPlayerSituationalSplit.objects.get(team=self.team, player=self.one, season_name="Fall 2026")
         self.assertEqual(row.bases_empty_hits, 5)
         self.assertEqual(row.runners_on_ab, 9)
+        self.assertEqual(row.batting_sample_games, 8)
+        self.assertEqual(row.batting_hits, 11)
+        self.assertEqual(row.batting_ab, 17)

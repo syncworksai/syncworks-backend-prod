@@ -25,8 +25,9 @@ MANAGER_ROLES = (
 
 
 def _execution_totals_payload(team):
-    # Use the exact same all-games calculation as the existing Stats page so EXE%
-    # and BA always compare against the PA/AB the team already sees.
+    # Stats keep their own full-season denominator. EXE uses only the opportunities
+    # that were actually graded by the coach, so adding an ungraded game cannot
+    # make a player's execution average fall by itself.
     from .views import softball_player_stats
 
     stat_rows = softball_player_stats(team)
@@ -53,15 +54,17 @@ def _execution_totals_payload(team):
     for player in players:
         stat = stats.get(player.id, {})
         total = totals.get(player.id)
-        pa = int(stat.get("pa") or 0)
+        current_pa = int(stat.get("pa") or 0)
         ab = int(stat.get("ab") or 0)
         hits = int(stat.get("h") or 0)
         points = total.points if total else None
+        stored_opportunities = int(total.opportunities or 0) if total else 0
+        graded_pa = stored_opportunities if stored_opportunities > 0 else current_pa
         exe = None
-        if points is not None and pa > 0:
-            exe = round(float(points) / float(pa), 3)
+        if points is not None and graded_pa > 0:
+            exe = round(float(points) / float(graded_pa), 3)
             scored_points += points
-            scored_pa += pa
+            scored_pa += graded_pa
             scored_hits += hits
             scored_ab += ab
         rows.append({
@@ -74,7 +77,9 @@ def _execution_totals_payload(team):
             "season_name": season_name,
             "execution_points": float(points) if points is not None else None,
             "execution_average": exe,
-            "pa": pa,
+            "pa": graded_pa,
+            "graded_pa": graded_pa,
+            "current_all_games_pa": current_pa,
             "ab": ab,
             "hits": hits,
             "ba": round(float(hits) / float(ab), 3) if ab else 0.0,
@@ -88,13 +93,14 @@ def _execution_totals_payload(team):
         "team": {
             "execution_points": float(scored_points),
             "pa": scored_pa,
+            "graded_pa": scored_pa,
             "execution_average": round(float(scored_points) / float(scored_pa), 3) if scored_pa else None,
             "hits": scored_hits,
             "ab": scored_ab,
             "ba": round(float(scored_hits) / float(scored_ab), 3) if scored_ab else 0.0,
             "players_scored": sum(1 for row in rows if row["execution_points"] is not None),
         },
-        "definition": "EXE% = coach-recorded execution points divided by all-games plate appearances. BA stays separate as hitting context.",
+        "definition": "EXE% = coach-recorded execution points divided only by graded execution opportunities. Traditional batting stats stay separate and can include newer games that have not yet been execution-graded.",
     }
 
 
@@ -134,7 +140,8 @@ class WayAnalyticsViewSet(viewsets.ViewSet):
             row["execution_points"] = manual_row["execution_points"]
             row["execution_average"] = manual_row["execution_average"]
             row["batting_average"] = manual_row["ba"]
-            row["all_games_pa"] = manual_row["pa"]
+            row["graded_execution_pa"] = manual_row["graded_pa"]
+            row["all_games_pa"] = manual_row["current_all_games_pa"]
             row["all_games_ab"] = manual_row["ab"]
             row["all_games_hits"] = manual_row["hits"]
         payload["manual_execution"] = manual
@@ -170,11 +177,29 @@ class WayAnalyticsViewSet(viewsets.ViewSet):
         points = points.quantize(Decimal("0.01"))
         season_name = str(request.data.get("season_name") or team.season_name or "").strip()[:80]
         note = str(request.data.get("note") or "Coach-adjusted all-games execution total").strip()[:240]
-        row, _ = SportsPlayerExecutionTotal.objects.update_or_create(
+        existing = SportsPlayerExecutionTotal.objects.filter(team=team, player=player, season_name=season_name).first()
+        defaults = {"points": points, "note": note, "updated_by": request.user}
+        raw_opportunities = request.data.get("opportunities")
+        if raw_opportunities not in (None, ""):
+            try:
+                opportunities = int(raw_opportunities)
+            except (TypeError, ValueError):
+                return Response({"detail": "Execution opportunities must be a whole number."}, status=status.HTTP_400_BAD_REQUEST)
+            if opportunities < 0 or opportunities > 9999:
+                return Response({"detail": "Execution opportunities are outside the supported range."}, status=status.HTTP_400_BAD_REQUEST)
+            defaults["opportunities"] = opportunities
+        elif existing is None:
+            # Backward-compatible default for a newly entered score: lock the current
+            # all-games PA count at the moment the coach first records the score.
+            from .views import softball_player_stats
+            current = next((item for item in softball_player_stats(team) if int(item["player"]["id"]) == player.id), None)
+            defaults["opportunities"] = int(current.get("pa") or 0) if current else 0
+
+        SportsPlayerExecutionTotal.objects.update_or_create(
             team=team,
             player=player,
             season_name=season_name,
-            defaults={"points": points, "note": note, "updated_by": request.user},
+            defaults=defaults,
         )
         payload = _execution_totals_payload(team)
         saved = next((item for item in payload["rows"] if int(item["player"]["id"]) == player.id), None)
