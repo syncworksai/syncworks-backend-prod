@@ -59,6 +59,18 @@ def _metric(hits, at_bats, team_rate):
     }
 
 
+def _batting_metric(hits, at_bats, games, team_rate):
+    rate = _rate(hits, at_bats)
+    return {
+        "games": int(games or 0),
+        "h": int(hits or 0),
+        "ab": int(at_bats or 0),
+        "avg": rate,
+        "delta": round(rate - team_rate, 3) if rate is not None and team_rate is not None else None,
+        "band": _band(rate, team_rate),
+    }
+
+
 def situational_payload(team):
     season_name = team.season_name or ""
     split_rows = list(
@@ -84,6 +96,11 @@ def situational_payload(team):
     for value in team_totals.values():
         value["rate"] = _rate(value["h"], value["ab"])
 
+    batting_h = sum(row.batting_hits for row in split_rows)
+    batting_ab = sum(row.batting_ab for row in split_rows)
+    batting_games = max((row.batting_sample_games for row in split_rows), default=0)
+    team_batting_rate = _rate(batting_h, batting_ab)
+
     execution = _execution_totals_payload(team)
     execution_by_player = {int(row["player"]["id"]): row for row in execution.get("rows", [])}
 
@@ -99,6 +116,7 @@ def situational_payload(team):
             bases_empty = _metric(split.bases_empty_hits, split.bases_empty_ab, team_totals["bases_empty"]["rate"])
             two_out = _metric(split.two_out_hits, split.two_out_ab, team_totals["two_out"]["rate"])
             runners_on = _metric(split.runners_on_hits, split.runners_on_ab, team_totals["runners_on"]["rate"])
+            batting = _batting_metric(split.batting_hits, split.batting_ab, split.batting_sample_games, team_batting_rate)
             index_parts = []
             for metric, key in (
                 (bases_empty, "bases_empty"),
@@ -113,6 +131,7 @@ def situational_payload(team):
             bases_empty = _metric(0, 0, team_totals["bases_empty"]["rate"])
             two_out = _metric(0, 0, team_totals["two_out"]["rate"])
             runners_on = _metric(0, 0, team_totals["runners_on"]["rate"])
+            batting = _batting_metric(0, 0, 0, team_batting_rate)
             situational_index = None
 
         rows.append({
@@ -124,13 +143,15 @@ def situational_payload(team):
             },
             "season_name": season_name,
             "sample_games": int(split.sample_games) if split else 0,
+            "season_batting": batting,
             "bases_empty": bases_empty,
             "two_out": two_out,
             "runners_on": runners_on,
             "situational_index": situational_index,
             "execution_average": exec_row.get("execution_average"),
             "execution_points": exec_row.get("execution_points"),
-            "ba": exec_row.get("ba"),
+            "ba": batting.get("avg"),
+            "detailed_ba": exec_row.get("ba"),
             "note": split.note if split else "",
             "updated_at": split.updated_at if split else None,
         })
@@ -138,15 +159,24 @@ def situational_payload(team):
     return {
         "season_name": season_name,
         "sample_games": max((row.sample_games for row in split_rows), default=0),
+        "batting_sample_games": batting_games,
         "prior_opportunities": PRIOR_OPPORTUNITIES,
         "team": {
             **team_totals,
+            "season_batting": {
+                "games": batting_games,
+                "h": batting_h,
+                "ab": batting_ab,
+                "avg": team_batting_rate,
+            },
             "situational_index": 100.0,
             "execution_average": execution.get("team", {}).get("execution_average"),
-            "ba": execution.get("team", {}).get("ba"),
+            "ba": team_batting_rate,
+            "detailed_ba": execution.get("team", {}).get("ba"),
         },
         "rows": rows,
         "definitions": {
+            "season_batting": "Season H/AB snapshot. The current sample covers eight team games where available and is stored separately so incomplete extra-base-hit data from the newest games does not corrupt SLG or OPS.",
             "bases_empty": "Any tracked at-bat with nobody on base. This is not limited to inning leadoff hitters.",
             "two_out": "Tracked at-bats that began with two outs.",
             "runners_on": "Tracked at-bats that began with at least one runner on base.",
@@ -157,7 +187,7 @@ def situational_payload(team):
 
 
 class WaySituationalViewSet(viewsets.ViewSet):
-    """Team-visible, manager-editable situational H/AB execution splits."""
+    """Team-visible, manager-editable batting snapshot and situational execution splits."""
 
     permission_classes = [IsAuthenticated]
 
@@ -207,6 +237,7 @@ class WaySituationalViewSet(viewsets.ViewSet):
             "bases_empty_hits", "bases_empty_ab",
             "two_out_hits", "two_out_ab",
             "runners_on_hits", "runners_on_ab",
+            "batting_sample_games", "batting_hits", "batting_ab",
         )
         values = {}
         for field in fields:
@@ -223,12 +254,13 @@ class WaySituationalViewSet(viewsets.ViewSet):
             ("bases_empty_hits", "bases_empty_ab", "Bases empty"),
             ("two_out_hits", "two_out_ab", "Two outs"),
             ("runners_on_hits", "runners_on_ab", "Runners on"),
+            ("batting_hits", "batting_ab", "Season batting"),
         ):
             if values[hits_field] > values[ab_field]:
                 return Response({"detail": f"{label} hits cannot exceed at-bats."}, status=status.HTTP_400_BAD_REQUEST)
 
         season_name = str(request.data.get("season_name") or team.season_name or "").strip()[:80]
-        note = str(request.data.get("note") or "Coach-adjusted situational split").strip()[:240]
+        note = str(request.data.get("note") or "Coach-adjusted situational/batting sample").strip()[:240]
         SportsPlayerSituationalSplit.objects.update_or_create(
             team=team,
             player=player,
@@ -238,4 +270,4 @@ class WaySituationalViewSet(viewsets.ViewSet):
         payload = situational_payload(team)
         payload["can_manage"] = True
         saved = next((row for row in payload["rows"] if int(row["player"]["id"]) == player.id), None)
-        return Response({"saved": saved, "team": payload["team"], "sample_games": payload["sample_games"]})
+        return Response({"saved": saved, "team": payload["team"], "sample_games": payload["sample_games"], "batting_sample_games": payload["batting_sample_games"]})
