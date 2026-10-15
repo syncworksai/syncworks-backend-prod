@@ -96,3 +96,40 @@ class SportsPlayerQABTotal(models.Model):
         if self.player_id and self.team_id and self.player.team_id != self.team_id:
             from django.core.exceptions import ValidationError
             raise ValidationError({"player": "Player must belong to this team."})
+
+
+class SportsPlayerSituationalSplit(models.Model):
+    """Coach-entered six-game situational H/AB splits kept separate from official batting totals."""
+
+    team = models.ForeignKey("platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="way_situational_splits")
+    player = models.ForeignKey("platform_sports.SportsPlayer", on_delete=models.CASCADE, related_name="way_situational_splits")
+    season_name = models.CharField(max_length=80, blank=True)
+    sample_games = models.PositiveSmallIntegerField(default=0)
+    bases_empty_hits = models.PositiveIntegerField(default=0)
+    bases_empty_ab = models.PositiveIntegerField(default=0)
+    two_out_hits = models.PositiveIntegerField(default=0)
+    two_out_ab = models.PositiveIntegerField(default=0)
+    runners_on_hits = models.PositiveIntegerField(default=0)
+    runners_on_ab = models.PositiveIntegerField(default=0)
+    note = models.CharField(max_length=240, blank=True)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="sports_situational_splits_updated")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("player__display_name", "id")
+        constraints = [models.UniqueConstraint(fields=("team", "player", "season_name"), name="sports_unique_situational_split_season")]
+        indexes = [models.Index(fields=("team", "season_name"), name="sports_situational_season")]
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        if self.player_id and self.team_id and self.player.team_id != self.team_id:
+            raise ValidationError({"player": "Player must belong to this team."})
+        for hits_field, ab_field, label in (
+            ("bases_empty_hits", "bases_empty_ab", "Bases empty"),
+            ("two_out_hits", "two_out_ab", "Two outs"),
+            ("runners_on_hits", "runners_on_ab", "Runners on"),
+        ):
+            if getattr(self, hits_field, 0) > getattr(self, ab_field, 0):
+                raise ValidationError({hits_field: f"{label} hits cannot exceed at-bats."})
