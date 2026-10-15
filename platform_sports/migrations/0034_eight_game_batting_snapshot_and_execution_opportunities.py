@@ -37,13 +37,21 @@ EXECUTION_OPPORTUNITIES = {
 }
 
 
-def seed_snapshot(apps, schema_editor):
+def _target_team(apps):
+    SocialGroup = apps.get_model("platform_social", "SocialGroup")
     SportsTeam = apps.get_model("platform_sports", "SportsTeam")
+    group = SocialGroup.objects.filter(name__iexact="Bed Springs Baptist").first()
+    if not group:
+        return None
+    return SportsTeam.objects.filter(group_id=group.id).first()
+
+
+def seed_snapshot(apps, schema_editor):
     SportsPlayer = apps.get_model("platform_sports", "SportsPlayer")
     SportsPlayerSituationalSplit = apps.get_model("platform_sports", "SportsPlayerSituationalSplit")
     SportsPlayerExecutionTotal = apps.get_model("platform_sports", "SportsPlayerExecutionTotal")
 
-    team = SportsTeam.objects.filter(badge_rules__way_we_play_enabled=True).first()
+    team = _target_team(apps)
     if not team:
         return
     season_name = team.season_name or "Fall 2026"
@@ -85,10 +93,9 @@ def seed_snapshot(apps, schema_editor):
 
 
 def reverse_snapshot(apps, schema_editor):
-    SportsTeam = apps.get_model("platform_sports", "SportsTeam")
     SportsPlayerSituationalSplit = apps.get_model("platform_sports", "SportsPlayerSituationalSplit")
     SportsPlayerExecutionTotal = apps.get_model("platform_sports", "SportsPlayerExecutionTotal")
-    team = SportsTeam.objects.filter(badge_rules__way_we_play_enabled=True).first()
+    team = _target_team(apps)
     if not team:
         return
     SportsPlayerSituationalSplit.objects.filter(team_id=team.id).update(
