@@ -100,7 +100,7 @@ class SportsPlayerQABTotal(models.Model):
 
 
 class SportsPlayerSituationalSplit(models.Model):
-    """Situational six-game splits plus an independent season H/AB snapshot."""
+    """Situational six-game splits plus an independent season batting snapshot."""
 
     team = models.ForeignKey("platform_sports.SportsTeam", on_delete=models.CASCADE, related_name="way_situational_splits")
     player = models.ForeignKey("platform_sports.SportsPlayer", on_delete=models.CASCADE, related_name="way_situational_splits")
@@ -115,6 +115,11 @@ class SportsPlayerSituationalSplit(models.Model):
     batting_sample_games = models.PositiveSmallIntegerField(default=0)
     batting_hits = models.PositiveIntegerField(default=0)
     batting_ab = models.PositiveIntegerField(default=0)
+    batting_doubles = models.PositiveIntegerField(default=0)
+    batting_triples = models.PositiveIntegerField(default=0)
+    batting_home_runs = models.PositiveIntegerField(default=0)
+    batting_walks = models.PositiveIntegerField(default=0)
+    batting_sac_flies = models.PositiveIntegerField(default=0)
     note = models.CharField(max_length=240, blank=True)
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="sports_situational_splits_updated")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -138,3 +143,5 @@ class SportsPlayerSituationalSplit(models.Model):
         ):
             if getattr(self, hits_field, 0) > getattr(self, ab_field, 0):
                 raise ValidationError({hits_field: f"{label} hits cannot exceed at-bats."})
+        if self.batting_doubles + self.batting_triples + self.batting_home_runs > self.batting_hits:
+            raise ValidationError("Season extra-base hits cannot exceed season hits.")
