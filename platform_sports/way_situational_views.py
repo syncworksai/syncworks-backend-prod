@@ -244,6 +244,8 @@ class WaySituationalViewSet(viewsets.ViewSet):
             return Response({"detail": "Manager access required."}, status=status.HTTP_403_FORBIDDEN)
 
         player = get_object_or_404(SportsPlayer, pk=request.data.get("player"), team=team, is_active=True, merged_into__isnull=True)
+        season_name = str(request.data.get("season_name") or team.season_name or "").strip()[:80]
+        existing = SportsPlayerSituationalSplit.objects.filter(team=team, player=player, season_name=season_name).first()
         fields = (
             "sample_games",
             "bases_empty_hits", "bases_empty_ab",
@@ -254,7 +256,8 @@ class WaySituationalViewSet(viewsets.ViewSet):
         )
         values = {}
         for field in fields:
-            raw = request.data.get(field, 0)
+            fallback = getattr(existing, field, 0) if existing is not None else 0
+            raw = request.data.get(field, fallback)
             try:
                 value = int(raw or 0)
             except (TypeError, ValueError):
@@ -274,8 +277,7 @@ class WaySituationalViewSet(viewsets.ViewSet):
         if values["batting_doubles"] + values["batting_triples"] + values["batting_home_runs"] > values["batting_hits"]:
             return Response({"detail": "Season extra-base hits cannot exceed season hits."}, status=status.HTTP_400_BAD_REQUEST)
 
-        season_name = str(request.data.get("season_name") or team.season_name or "").strip()[:80]
-        note = str(request.data.get("note") or "Coach-adjusted situational/batting sample").strip()[:240]
+        note = str(request.data.get("note") or (existing.note if existing else "Coach-adjusted situational/batting sample")).strip()[:240]
         SportsPlayerSituationalSplit.objects.update_or_create(
             team=team,
             player=player,
