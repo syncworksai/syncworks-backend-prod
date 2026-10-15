@@ -29,6 +29,7 @@ from .views import (
     SportsPlayerViewSet,
     SportsTeamViewSet,
 )
+from .way_coach_views import WayCoachViewSet
 from .way_qab_views import WayQABViewSet
 from .way_score_views import WayAnalyticsViewSet
 from .way_situational_views import WaySituationalViewSet
@@ -48,6 +49,7 @@ router.register("team-fees", TeamFeeViewSet, basename="sports-team-fees")
 router.register("fee-assignments", TeamFeeAssignmentViewSet, basename="sports-fee-assignments")
 router.register("stat-ledger", SoftballStatLedgerEntryViewSet, basename="sports-stat-ledger")
 router.register("way-analytics", WayAnalyticsViewSet, basename="sports-way-analytics")
+router.register("way-coach", WayCoachViewSet, basename="sports-way-coach")
 router.register("way-qab", WayQABViewSet, basename="sports-way-qab")
 router.register("way-situational", WaySituationalViewSet, basename="sports-way-situational")
 
