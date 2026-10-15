@@ -222,7 +222,9 @@ def _strength_for(row, team):
         metric = row.get(metric_key) or {}
         baseline = (team.get(metric_key) or {}).get("rate")
         current = metric.get("adjusted_rate")
-        if current is not None and baseline is not None:
+        # Do not turn a 1-for-1 or 2-for-2 into a player identity. Three tracked
+        # opportunities is the minimum before a situational split can be named a strength.
+        if int(metric.get("ab") or 0) >= 3 and current is not None and baseline is not None:
             dimensions.append((float(current) - float(baseline), key, label, metric.get("rate"), current, baseline))
     avg = (row.get("season_batting") or {}).get("avg")
     team_avg = (team.get("season_batting") or {}).get("avg")
@@ -236,6 +238,15 @@ def _strength_for(row, team):
         return {"key": None, "label": "Need more data", "value": None, "adjusted_value": None, "baseline": None, "delta": None}
     dimensions.sort(key=lambda item: item[0], reverse=True)
     delta, key, label, value, adjusted, baseline = dimensions[0]
+    if delta <= 0:
+        return {
+            "key": None,
+            "label": "No above-team strength established yet",
+            "value": None,
+            "adjusted_value": None,
+            "baseline": None,
+            "delta": _round(delta),
+        }
     return {
         "key": key,
         "label": label,
