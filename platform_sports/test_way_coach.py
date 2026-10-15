@@ -78,20 +78,28 @@ class WayCoachApiTests(APITestCase):
             updated_by=self.owner,
         )
 
-    def test_manager_gets_roster_roles_and_run_upside(self):
+    def test_manager_gets_clear_lineup_bands_and_two_sided_impact(self):
         self.client.force_authenticate(user=self.owner)
         response = self.client.get(reverse("sports-way-coach-detail", args=[self.team.id]))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data["can_manage"])
         self.assertEqual(len(response.data["rows"]), 2)
         jordan = next(row for row in response.data["rows"] if row["player"]["id"] == self.jordan.id)
-        self.assertEqual(jordan["recommended_role"], "Middle-order run producer")
-        self.assertEqual(jordan["recommended_slots"], "3-5")
+        self.assertEqual(jordan["recommended_role"], "Run producer")
+        self.assertEqual(jordan["recommended_slots"], "4-7")
+        self.assertIn(jordan["lineup_band"]["key"], {"TOP", "MIDDLE", "LOWER"})
         self.assertIn("projected_runs_per_game_low", jordan["focus"])
+        self.assertIn("projected_events_per_10_games", jordan["focus"])
         self.assertGreaterEqual(jordan["focus"]["projected_runs_per_game_high"], jordan["focus"]["projected_runs_per_game_low"])
+        self.assertIsNotNone(jordan["downside"])
+        self.assertEqual(jordan["downside"]["drop"], 0.05)
+        self.assertIn("projected_runs_lost_per_game_high", jordan["downside"])
+        self.assertIn("SIT+ measures situational hitting", jordan["player_message"])
+        self.assertIn("sit_plus", response.data["metric_distinction"])
         self.assertEqual(len(response.data["suggested_order"]), 2)
+        self.assertEqual(response.data["suggested_order"][0]["lineup_band"]["key"], "TOP")
 
-    def test_member_sees_only_own_development_and_no_coach_note(self):
+    def test_member_sees_only_own_development_analysis_and_no_coach_note(self):
         self.client.force_authenticate(user=self.owner)
         self.client.post(reverse("sports-way-coach-snapshot", args=[self.team.id]), {}, format="json")
         self.client.post(
@@ -111,9 +119,12 @@ class WayCoachApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertFalse(response.data["can_manage"])
         self.assertEqual(len(response.data["rows"]), 1)
-        self.assertEqual(response.data["rows"][0]["player"]["id"], self.jordan.id)
-        self.assertEqual(response.data["rows"][0]["effective_role"], "Middle-order anchor")
-        self.assertEqual(response.data["rows"][0]["coach_note"], "")
+        row = response.data["rows"][0]
+        self.assertEqual(row["player"]["id"], self.jordan.id)
+        self.assertEqual(row["effective_role"], "Middle-order anchor")
+        self.assertEqual(row["coach_note"], "")
+        self.assertIn(row["lineup_band"]["key"], {"TOP", "MIDDLE", "LOWER"})
+        self.assertTrue(row["player_message"])
         self.assertEqual(response.data["suggested_order"], [])
 
     def test_manager_can_snapshot_and_override_weekly_plan(self):
@@ -141,3 +152,4 @@ class WayCoachApiTests(APITestCase):
         self.assertEqual(saved["coach_note"], "Protect the inning and pass the torch.")
         snapshot = SportsPlayerCoachSnapshot.objects.get(team=self.team, player=self.jordan)
         self.assertEqual(snapshot.focus_override, "TWO_OUT")
+        self.assertIn("lineup_band", snapshot.metrics)
