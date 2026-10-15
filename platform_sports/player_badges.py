@@ -216,15 +216,39 @@ def card_progress(player):
     except Exception:
         batting_snapshot = None
     if batting_snapshot and batting_snapshot.batting_ab:
-        season_row["detailed_g"] = season_row["g"]
-        season_row["detailed_ab"] = season_row["ab"]
-        season_row["detailed_h"] = season_row["h"]
-        season_row["detailed_avg"] = season_row["avg"]
-        season_row["g"] = int(batting_snapshot.batting_sample_games or season_row["g"])
-        season_row["ab"] = int(batting_snapshot.batting_ab)
-        season_row["h"] = int(batting_snapshot.batting_hits)
-        season_row["avg"] = round(season_row["h"] / season_row["ab"], 3)
-        season_row["avg_sample"] = "BATTING_SNAPSHOT"
+        for key in ("g", "pa", "ab", "h", "double", "triple", "hr", "bb", "sf", "tb", "avg", "obp", "slg", "ops", "power_points"):
+            season_row[f"detailed_{key}"] = season_row.get(key)
+        h = int(batting_snapshot.batting_hits)
+        ab = int(batting_snapshot.batting_ab)
+        doubles = int(batting_snapshot.batting_doubles)
+        triples = int(batting_snapshot.batting_triples)
+        home_runs = int(batting_snapshot.batting_home_runs)
+        walks = int(batting_snapshot.batting_walks)
+        sac_flies = int(batting_snapshot.batting_sac_flies)
+        total_bases = h + doubles + (2 * triples) + (3 * home_runs)
+        pa = ab + walks + sac_flies
+        avg = round(h / ab, 3) if ab else 0
+        obp = round((h + walks) / pa, 3) if pa else 0
+        slg = round(total_bases / ab, 3) if ab else 0
+        season_row.update({
+            "g": int(batting_snapshot.batting_sample_games or season_row["g"]),
+            "pa": pa,
+            "ab": ab,
+            "h": h,
+            "double": doubles,
+            "triple": triples,
+            "hr": home_runs,
+            "bb": walks,
+            "sf": sac_flies,
+            "tb": total_bases,
+            "avg": avg,
+            "obp": obp,
+            "slg": slg,
+            "ops": round(obp + slg, 3),
+            "power_points": doubles + (2 * triples) + (3 * home_runs),
+            "avg_sample": "BATTING_SNAPSHOT",
+            "rate_sample": "BATTING_SNAPSHOT",
+        })
 
     rules = get_team_badge_rules(player.team)
     badges = [
@@ -294,5 +318,5 @@ def card_progress(player):
                 "date": local_game_date(m.game).isoformat(),
             } for m in sorted(moments, key=lambda m: m.game.start_at, reverse=True)[:30]
         ],
-        "badge_policy": "Power uses completed detailed Game Books/history. Contact may use the coach-entered season H/AB snapshot when the newest games only have batting-average data. Speed and Clutch require verified, staff-recorded game moments.",
+        "badge_policy": "Power and Contact use the coach-authoritative season batting snapshot when present. Speed and Clutch require verified, staff-recorded game moments. Career milestones remain based on finalized Game Books/history until the full games are entered.",
     }
