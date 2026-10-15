@@ -23,8 +23,8 @@ MANAGER_ROLES = (
 PRIOR_OPPORTUNITIES = 5
 
 
-def _rate(hits, at_bats):
-    return round(float(hits) / float(at_bats), 3) if at_bats else None
+def _rate(numerator, denominator):
+    return round(float(numerator) / float(denominator), 3) if denominator else None
 
 
 def _adjusted_rate(hits, at_bats, team_rate):
@@ -59,15 +59,38 @@ def _metric(hits, at_bats, team_rate):
     }
 
 
-def _batting_metric(hits, at_bats, games, team_rate):
-    rate = _rate(hits, at_bats)
+def _batting_metric(*, hits, at_bats, games, doubles=0, triples=0, home_runs=0, walks=0, sac_flies=0, team_rate=None):
+    hits = int(hits or 0)
+    at_bats = int(at_bats or 0)
+    doubles = int(doubles or 0)
+    triples = int(triples or 0)
+    home_runs = int(home_runs or 0)
+    walks = int(walks or 0)
+    sac_flies = int(sac_flies or 0)
+    singles = max(0, hits - doubles - triples - home_runs)
+    total_bases = hits + doubles + (2 * triples) + (3 * home_runs)
+    avg = _rate(hits, at_bats)
+    obp = _rate(hits + walks, at_bats + walks + sac_flies)
+    slg = _rate(total_bases, at_bats)
+    ops = round(obp + slg, 3) if obp is not None and slg is not None else None
     return {
         "games": int(games or 0),
-        "h": int(hits or 0),
-        "ab": int(at_bats or 0),
-        "avg": rate,
-        "delta": round(rate - team_rate, 3) if rate is not None and team_rate is not None else None,
-        "band": _band(rate, team_rate),
+        "pa": at_bats + walks + sac_flies,
+        "h": hits,
+        "ab": at_bats,
+        "single": singles,
+        "double": doubles,
+        "triple": triples,
+        "hr": home_runs,
+        "bb": walks,
+        "sf": sac_flies,
+        "tb": total_bases,
+        "avg": avg,
+        "obp": obp,
+        "slg": slg,
+        "ops": ops,
+        "delta": round(avg - team_rate, 3) if avg is not None and team_rate is not None else None,
+        "band": _band(avg, team_rate),
     }
 
 
@@ -80,18 +103,9 @@ def situational_payload(team):
     by_player = {row.player_id: row for row in split_rows}
 
     team_totals = {
-        "bases_empty": {
-            "h": sum(row.bases_empty_hits for row in split_rows),
-            "ab": sum(row.bases_empty_ab for row in split_rows),
-        },
-        "two_out": {
-            "h": sum(row.two_out_hits for row in split_rows),
-            "ab": sum(row.two_out_ab for row in split_rows),
-        },
-        "runners_on": {
-            "h": sum(row.runners_on_hits for row in split_rows),
-            "ab": sum(row.runners_on_ab for row in split_rows),
-        },
+        "bases_empty": {"h": sum(row.bases_empty_hits for row in split_rows), "ab": sum(row.bases_empty_ab for row in split_rows)},
+        "two_out": {"h": sum(row.two_out_hits for row in split_rows), "ab": sum(row.two_out_ab for row in split_rows)},
+        "runners_on": {"h": sum(row.runners_on_hits for row in split_rows), "ab": sum(row.runners_on_ab for row in split_rows)},
     }
     for value in team_totals.values():
         value["rate"] = _rate(value["h"], value["ab"])
@@ -99,15 +113,28 @@ def situational_payload(team):
     batting_h = sum(row.batting_hits for row in split_rows)
     batting_ab = sum(row.batting_ab for row in split_rows)
     batting_games = max((row.batting_sample_games for row in split_rows), default=0)
+    batting_doubles = sum(row.batting_doubles for row in split_rows)
+    batting_triples = sum(row.batting_triples for row in split_rows)
+    batting_home_runs = sum(row.batting_home_runs for row in split_rows)
+    batting_walks = sum(row.batting_walks for row in split_rows)
+    batting_sac_flies = sum(row.batting_sac_flies for row in split_rows)
     team_batting_rate = _rate(batting_h, batting_ab)
+    team_batting = _batting_metric(
+        hits=batting_h,
+        at_bats=batting_ab,
+        games=batting_games,
+        doubles=batting_doubles,
+        triples=batting_triples,
+        home_runs=batting_home_runs,
+        walks=batting_walks,
+        sac_flies=batting_sac_flies,
+        team_rate=team_batting_rate,
+    )
 
     execution = _execution_totals_payload(team)
     execution_by_player = {int(row["player"]["id"]): row for row in execution.get("rows", [])}
 
-    players = list(
-        team.players.filter(is_active=True, merged_into__isnull=True)
-        .order_by("sort_order", "display_name", "id")
-    )
+    players = list(team.players.filter(is_active=True, merged_into__isnull=True).order_by("sort_order", "display_name", "id"))
     rows = []
     for player in players:
         split = by_player.get(player.id)
@@ -116,13 +143,19 @@ def situational_payload(team):
             bases_empty = _metric(split.bases_empty_hits, split.bases_empty_ab, team_totals["bases_empty"]["rate"])
             two_out = _metric(split.two_out_hits, split.two_out_ab, team_totals["two_out"]["rate"])
             runners_on = _metric(split.runners_on_hits, split.runners_on_ab, team_totals["runners_on"]["rate"])
-            batting = _batting_metric(split.batting_hits, split.batting_ab, split.batting_sample_games, team_batting_rate)
+            batting = _batting_metric(
+                hits=split.batting_hits,
+                at_bats=split.batting_ab,
+                games=split.batting_sample_games,
+                doubles=split.batting_doubles,
+                triples=split.batting_triples,
+                home_runs=split.batting_home_runs,
+                walks=split.batting_walks,
+                sac_flies=split.batting_sac_flies,
+                team_rate=team_batting_rate,
+            )
             index_parts = []
-            for metric, key in (
-                (bases_empty, "bases_empty"),
-                (two_out, "two_out"),
-                (runners_on, "runners_on"),
-            ):
+            for metric, key in ((bases_empty, "bases_empty"), (two_out, "two_out"), (runners_on, "runners_on")):
                 baseline = team_totals[key]["rate"]
                 if metric["adjusted_rate"] is not None and baseline:
                     index_parts.append((metric["adjusted_rate"] / baseline) * 100.0)
@@ -131,16 +164,11 @@ def situational_payload(team):
             bases_empty = _metric(0, 0, team_totals["bases_empty"]["rate"])
             two_out = _metric(0, 0, team_totals["two_out"]["rate"])
             runners_on = _metric(0, 0, team_totals["runners_on"]["rate"])
-            batting = _batting_metric(0, 0, 0, team_batting_rate)
+            batting = _batting_metric(hits=0, at_bats=0, games=0, team_rate=team_batting_rate)
             situational_index = None
 
         rows.append({
-            "player": {
-                "id": player.id,
-                "display_name": player.display_name,
-                "jersey_number": player.jersey_number,
-                "primary_position": player.primary_position,
-            },
+            "player": {"id": player.id, "display_name": player.display_name, "jersey_number": player.jersey_number, "primary_position": player.primary_position},
             "season_name": season_name,
             "sample_games": int(split.sample_games) if split else 0,
             "season_batting": batting,
@@ -163,12 +191,7 @@ def situational_payload(team):
         "prior_opportunities": PRIOR_OPPORTUNITIES,
         "team": {
             **team_totals,
-            "season_batting": {
-                "games": batting_games,
-                "h": batting_h,
-                "ab": batting_ab,
-                "avg": team_batting_rate,
-            },
+            "season_batting": team_batting,
             "situational_index": 100.0,
             "execution_average": execution.get("team", {}).get("execution_average"),
             "ba": team_batting_rate,
@@ -176,12 +199,12 @@ def situational_payload(team):
         },
         "rows": rows,
         "definitions": {
-            "season_batting": "Season H/AB snapshot. The current sample covers eight team games where available and is stored separately so incomplete extra-base-hit data from the newest games does not corrupt SLG or OPS.",
+            "season_batting": "Season batting snapshot. H/AB is coach-authoritative; 2B/3B/HR/BB/SF supply OBP, SLG and OPS. Singles are derived as H minus extra-base hits so an inconsistent singles column cannot corrupt total bases.",
             "bases_empty": "Any tracked at-bat with nobody on base. This is not limited to inning leadoff hitters.",
             "two_out": "Tracked at-bats that began with two outs.",
             "runners_on": "Tracked at-bats that began with at least one runner on base.",
             "situational_index": "SIT+ compares each player's sample-size-stabilized situational rates with the team baseline. 100 is team average. The three contexts are averaged as separate dimensions so overlapping two-out/runners-on at-bats are not double-counted into one H/AB total.",
-            "adjustment": f"Adjusted rates use a {PRIOR_OPPORTUNITIES}-opportunity team-average prior to reduce six-game small-sample outliers. Raw H/AB and raw rates remain visible.",
+            "adjustment": f"Adjusted situational rates use a {PRIOR_OPPORTUNITIES}-opportunity team-average prior to reduce six-game small-sample outliers. Raw H/AB remains visible.",
         },
     }
 
@@ -193,11 +216,7 @@ class WaySituationalViewSet(viewsets.ViewSet):
 
     def _team_and_membership(self, request, pk):
         team = get_object_or_404(SportsTeam.objects.select_related("group"), pk=pk)
-        membership = GroupMembership.objects.filter(
-            group_id=team.group_id,
-            user=request.user,
-            status=GroupMembership.Status.ACTIVE,
-        ).first()
+        membership = GroupMembership.objects.filter(group_id=team.group_id, user=request.user, status=GroupMembership.Status.ACTIVE).first()
         if not membership:
             return team, None, Response({"detail": "Active team membership required."}, status=status.HTTP_403_FORBIDDEN)
         if not bool((team.badge_rules or {}).get("way_we_play_enabled")):
@@ -224,20 +243,14 @@ class WaySituationalViewSet(viewsets.ViewSet):
         if not self._can_manage(membership):
             return Response({"detail": "Manager access required."}, status=status.HTTP_403_FORBIDDEN)
 
-        player = get_object_or_404(
-            SportsPlayer,
-            pk=request.data.get("player"),
-            team=team,
-            is_active=True,
-            merged_into__isnull=True,
-        )
-
+        player = get_object_or_404(SportsPlayer, pk=request.data.get("player"), team=team, is_active=True, merged_into__isnull=True)
         fields = (
             "sample_games",
             "bases_empty_hits", "bases_empty_ab",
             "two_out_hits", "two_out_ab",
             "runners_on_hits", "runners_on_ab",
             "batting_sample_games", "batting_hits", "batting_ab",
+            "batting_doubles", "batting_triples", "batting_home_runs", "batting_walks", "batting_sac_flies",
         )
         values = {}
         for field in fields:
@@ -258,6 +271,8 @@ class WaySituationalViewSet(viewsets.ViewSet):
         ):
             if values[hits_field] > values[ab_field]:
                 return Response({"detail": f"{label} hits cannot exceed at-bats."}, status=status.HTTP_400_BAD_REQUEST)
+        if values["batting_doubles"] + values["batting_triples"] + values["batting_home_runs"] > values["batting_hits"]:
+            return Response({"detail": "Season extra-base hits cannot exceed season hits."}, status=status.HTTP_400_BAD_REQUEST)
 
         season_name = str(request.data.get("season_name") or team.season_name or "").strip()[:80]
         note = str(request.data.get("note") or "Coach-adjusted situational/batting sample").strip()[:240]
