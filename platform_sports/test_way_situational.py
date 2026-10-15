@@ -78,6 +78,7 @@ class WaySituationalApiTests(APITestCase):
         self.assertFalse(response.data["can_manage"])
         self.assertEqual(response.data["sample_games"], 6)
         self.assertEqual(response.data["batting_sample_games"], 8)
+        self.assertEqual(response.data["sit_plus_weights"], {"bases_empty": 35, "two_out": 15, "runners_on": 50})
         self.assertEqual(response.data["team"]["bases_empty"]["h"], 6)
         self.assertEqual(response.data["team"]["bases_empty"]["ab"], 10)
         self.assertEqual(response.data["team"]["bases_empty"]["rate"], 0.6)
@@ -88,8 +89,8 @@ class WaySituationalApiTests(APITestCase):
         self.assertEqual(response.data["team"]["season_batting"]["avg"], 0.533)
         one = next(row for row in response.data["rows"] if row["player"]["id"] == self.one.id)
         two = next(row for row in response.data["rows"] if row["player"]["id"] == self.two.id)
-        self.assertGreater(one["situational_index"], 100)
-        self.assertLess(two["situational_index"], 100)
+        self.assertEqual(one["situational_index"], 124.6)
+        self.assertEqual(two["situational_index"], 75.4)
         self.assertEqual(one["bases_empty"]["rate"], 0.8)
         self.assertEqual(one["bases_empty"]["h"], 4)
         self.assertEqual(one["bases_empty"]["ab"], 5)
@@ -98,6 +99,32 @@ class WaySituationalApiTests(APITestCase):
         self.assertEqual(one["season_batting"]["ab"], 16)
         self.assertEqual(one["season_batting"]["avg"], 0.625)
         self.assertEqual(one["ba"], 0.625)
+
+    def test_missing_context_is_renormalized_not_penalized(self):
+        player = SportsPlayer.objects.create(team=self.team, display_name="No Empty Sample", created_by=self.owner)
+        SportsPlayerSituationalSplit.objects.create(
+            team=self.team,
+            player=player,
+            season_name="Fall 2026",
+            sample_games=6,
+            bases_empty_hits=0,
+            bases_empty_ab=0,
+            two_out_hits=2,
+            two_out_ab=3,
+            runners_on_hits=7,
+            runners_on_ab=9,
+            batting_sample_games=6,
+            batting_hits=9,
+            batting_ab=12,
+        )
+
+        self.client.force_authenticate(user=self.member)
+        response = self.client.get(reverse("sports-way-situational-detail", args=[self.team.id]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        row = next(item for item in response.data["rows"] if item["player"]["id"] == player.id)
+        self.assertIsNone(row["bases_empty"]["adjusted_rate"])
+        self.assertIsNotNone(row["situational_index"])
+        self.assertGreater(row["situational_index"], 100)
 
     def test_member_cannot_edit_but_owner_can_edit_both_samples(self):
         url = reverse("sports-way-situational-save-player", args=[self.team.id])
