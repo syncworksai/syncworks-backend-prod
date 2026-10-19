@@ -1,0 +1,38 @@
+name: SyncWorks Platform Prospects CI
+
+on:
+  pull_request:
+    paths:
+      - "user_accounts/models/platform_business_prospects.py"
+      - "user_accounts/models/__init__.py"
+      - "user_accounts/viewsets/platform_business_prospects.py"
+      - "user_accounts/migrations/0136_platform_business_prospects.py"
+      - "user_accounts/tests/test_platform_prospects.py"
+      - "user_accounts/urls.py"
+      - ".github/workflows/platform-prospects-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  prospects-checks:
+    runs-on: ubuntu-latest
+    env:
+      DJANGO_DEBUG: "true"
+      DB_ENGINE: sqlite
+      DJANGO_SECRET_KEY: ci-platform-prospects-secret
+      DJANGO_SETTINGS_MODULE: syncworksv7.settings_pm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Django system check
+        run: python manage.py check
+      - name: Verify migration state
+        run: python manage.py makemigrations user_accounts --check --dry-run
+      - name: Founder prospect API tests
+        run: python manage.py test user_accounts.tests.test_platform_prospects -v 2
