@@ -77,6 +77,11 @@ from user_accounts.viewsets.business import (
 )
 from user_accounts.viewsets.me_businesses import MeBusinessesViewSet
 from user_accounts.viewsets.business_customers import BusinessCustomerViewSet
+from user_accounts.viewsets.business_quick_intake import (
+    BusinessQuickIntakeView, BusinessTechBoardView,
+    FounderBusinessAssistCustomersView, FounderBusinessAssistQuickIntakeView,
+    FounderBusinessAssistTechBoardView,
+)
 from user_accounts.viewsets.data_imports import BusinessDataImportViewSet
 from user_accounts.viewsets.business_kpis import BusinessKpiViewSet
 from user_accounts.viewsets.business_exports import BusinessExportViewSet
@@ -349,6 +354,11 @@ salesos_pipeline_detail = SalesPipelineViewSet.as_view({"get": "retrieve", "patc
 
 
 urlpatterns = [
+    path("business/quick-intake/", BusinessQuickIntakeView.as_view(), name="business-quick-intake"),
+    path("business/tech-board/", BusinessTechBoardView.as_view(), name="business-tech-board"),
+    path("platform/businesses/<int:business_id>/assist/customers/", FounderBusinessAssistCustomersView.as_view(), name="founder-assist-customers"),
+    path("platform/businesses/<int:business_id>/assist/quick-intake/", FounderBusinessAssistQuickIntakeView.as_view(), name="founder-assist-quick-intake"),
+    path("platform/businesses/<int:business_id>/assist/tech-board/", FounderBusinessAssistTechBoardView.as_view(), name="founder-assist-tech-board"),
     path("automation/rules/", AutomationRuleListCreateAPIView.as_view(), name="automation-rules"),
     path("automation/rules/<int:rule_id>/", AutomationRuleDetailAPIView.as_view(), name="automation-rule-detail"),
     path("automation/rules/<int:rule_id>/execute/", AutomationExecuteAPIView.as_view(), name="automation-rule-execute"),
