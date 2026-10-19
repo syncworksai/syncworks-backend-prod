@@ -10,13 +10,18 @@ from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 
 from user_accounts.models import (
     Business, PlatformBusinessProspect, PlatformProspectActivity,
 )
-from user_accounts.permissions.god_mode import IsGodMode
+from user_accounts.services.god_mode import is_god_mode
+
+
+class IsFounderGodMode(BasePermission):
+    def has_permission(self, request, view):
+        return is_god_mode(getattr(request, "user", None))
 
 
 def _signup_url(prospect):
@@ -86,7 +91,7 @@ class PlatformBusinessProspectSerializer(serializers.ModelSerializer):
 
 class PlatformBusinessProspectViewSet(viewsets.ModelViewSet):
     serializer_class = PlatformBusinessProspectSerializer
-    permission_classes = [IsAuthenticated, IsGodMode]
+    permission_classes = [IsAuthenticated, IsFounderGodMode]
     http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_queryset(self):
