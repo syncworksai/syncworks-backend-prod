@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 from django.core.mail import send_mail
-from django.db.models import Count, Q
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
@@ -76,6 +76,15 @@ class PlatformBusinessProspectSerializer(serializers.ModelSerializer):
             "id", "last_invited_at", "linked_business", "signed_up",
             "signed_up_at", "signup_url", "activities", "created_at", "updated_at",
         ]
+
+    def validate(self, attrs):
+        desired = attrs.get("status")
+        if desired in (PlatformBusinessProspect.Status.REGISTERED, PlatformBusinessProspect.Status.WON):
+            if not (self.instance and self.instance.linked_business_id):
+                raise serializers.ValidationError({
+                    "status": "This status requires a verified linked Business. Refresh signup matching first."
+                })
+        return attrs
 
     def validate_interests(self, value):
         if not isinstance(value, list) or len(value) > 20 or any(not isinstance(v, str) or len(v) > 80 for v in value):
@@ -148,6 +157,7 @@ class PlatformBusinessProspectViewSet(viewsets.ModelViewSet):
                 PlatformBusinessProspect.Status.WON,
             ]) | Q(last_invited_at__isnull=False)
         ).count()
+        invited_registered = qs.filter(last_invited_at__isnull=False, linked_business__isnull=False).count()
         return Response({
             "total": total, "contacted": contacted, "invited": invited,
             "registered": registered, "won": won,
@@ -156,7 +166,7 @@ class PlatformBusinessProspectViewSet(viewsets.ModelViewSet):
                 .exclude(status__in=[PlatformBusinessProspect.Status.WON, PlatformBusinessProspect.Status.LOST]).count(),
             "prospect_to_signup_pct": round(registered * 100 / total, 1) if total else 0,
             "prospect_to_won_pct": round(won * 100 / total, 1) if total else 0,
-            "invited_to_signup_pct": round(registered * 100 / invited, 1) if invited else 0,
+            "invited_to_signup_pct": round(invited_registered * 100 / invited, 1) if invited else 0,
             "note": "Won is a manually confirmed sales stage. Signed up is verified by matching a registered owner's email; Stripe payment activation is not inferred.",
         })
 
