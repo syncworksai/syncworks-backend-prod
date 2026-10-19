@@ -208,13 +208,13 @@ class MonthlyPlatformBill(models.Model):
         """
         Production rule:
         - platform_fee_cents always applies (unless truly billing-exempt in viewset)
-        - seats always billable
-        - waive_subscriptions only zeros out base subscription line-items (SBO + PM)
+        - SWFF26 subscription waiver zeros out all recurring subscription and seat line-items
+        - 1% platform fee always remains billable (unless separately fully exempt)
         """
         platform_fee_cents = int((int(gross_paid_invoices_cents) * int(pricing.platform_fee_bps)) / 10000)
 
         extra = profile.extra_seats(pricing)
-        seats_cents = int(extra * int(pricing.seat_monthly_cents))
+        seats_cents = 0 if waive_subscriptions else int(extra * int(pricing.seat_monthly_cents))
 
         sbo_cents = 0 if waive_subscriptions else int(pricing.sbo_subscription_cents)
         pm_cents = 0 if waive_subscriptions else int(pricing.pm_subscription_cents)
