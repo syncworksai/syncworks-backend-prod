@@ -229,7 +229,7 @@ def _build_tech_board(business, raw_date):
     }
     active_jobs = list(
         Ticket.objects.filter(assigned_business=business, archived_at__isnull=True)
-        .exclude(status__in=[Ticket.Status.CLOSED, Ticket.Status.CANCELLED])
+        .exclude(status__in=[Ticket.Status.CLOSED, Ticket.Status.CANCELLED, Ticket.Status.COMPLETED, Ticket.Status.INVOICED, Ticket.Status.PAID])
         .select_related("assigned_member", "business_customer", "operations_profile")
         .order_by("-created_at")[:300]
     )
@@ -295,6 +295,33 @@ class FounderBusinessAssistCustomersView(APIView):
             "customers": [_customer_payload(c) for c in customers],
             "support_mode": True,
         })
+
+
+    def post(self, request, business_id):
+        business, _ = _business_for_actor(request, support_business_id=business_id)
+        fields = {
+            "name": str(request.data.get("name") or "").strip()[:200],
+            "email": str(request.data.get("email") or "").strip().lower()[:254],
+            "phone": str(request.data.get("phone") or "").strip()[:40],
+            "service_address": str(request.data.get("service_address") or "").strip()[:255],
+            "city": str(request.data.get("city") or "").strip()[:120],
+            "state": str(request.data.get("state") or "").strip()[:40],
+            "service_zip": str(request.data.get("service_zip") or "").strip()[:20],
+        }
+        if not any(fields.get(k) for k in ("name", "email", "phone")):
+            raise ValidationError({"customer": "Name, phone, or email is required."})
+        from rest_framework.serializers import EmailField
+        if fields["email"]:
+            try:
+                EmailField().run_validation(fields["email"])
+            except serializers.ValidationError:
+                raise ValidationError({"email": "Enter a valid customer email."})
+        with transaction.atomic():
+            customer, created = _resolve_customer(business, fields, request.user)
+            AuditLog.objects.create(actor=request.user, action="platform.business_assist_customer_saved",
+                                    metadata={"business_id": business.pk, "customer_id": customer.pk, "created": created})
+        return Response({"customer": _customer_payload(customer), "created": created, "support_mode": True},
+                        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
 class FounderBusinessAssistQuickIntakeView(APIView):
