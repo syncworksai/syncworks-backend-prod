@@ -1,0 +1,27 @@
+name: SyncWorks Business Intake CI
+on:
+  pull_request:
+    paths:
+      - "user_accounts/viewsets/business_quick_intake.py"
+      - "user_accounts/urls.py"
+      - "user_accounts/tests/test_business_quick_intake.py"
+      - ".github/workflows/business-intake-ci.yml"
+  workflow_dispatch:
+jobs:
+  intake-checks:
+    runs-on: ubuntu-latest
+    env:
+      DJANGO_DEBUG: "true"
+      DB_ENGINE: sqlite
+      DJANGO_SECRET_KEY: ci-business-intake-secret
+      DJANGO_SETTINGS_MODULE: syncworksv7.settings_pm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python manage.py check
+      - run: python manage.py makemigrations user_accounts --check --dry-run
+      - run: python manage.py test user_accounts.tests.test_business_quick_intake -v 2
