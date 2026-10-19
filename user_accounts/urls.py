@@ -40,6 +40,7 @@ from user_accounts.viewsets.platform_broadcasts import (
     PlatformNewsReelAdminViewSet,
 )
 
+from user_accounts.viewsets.platform_business_prospects import PlatformBusinessProspectViewSet
 from user_accounts.viewsets.platform_console import (
     PlatformBillingSummaryViewSet,
     PlatformBusinessesViewSet,
@@ -288,6 +289,7 @@ router.register(r"support/requests", SupportRequestViewSet, basename="support-re
 router.register(r"platform/news-reel", PlatformNewsReelAdminViewSet, basename="platform-news-reel")
 router.register(r"platform/users", PlatformUsersViewSet, basename="platform-users")
 router.register(r"platform/businesses", PlatformBusinessesViewSet, basename="platform-businesses")
+router.register(r"platform/prospects", PlatformBusinessProspectViewSet, basename="platform-prospects")
 router.register(r"platform/billing/summary", PlatformBillingSummaryViewSet, basename="platform-billing-summary")
 router.register(r"platform/kpis/timeseries", PlatformKpiTimeseriesViewSet, basename="platform-kpis-timeseries")
 router.register(r"platform/support/requests", PlatformSupportRequestViewSet, basename="platform-support-requests")
