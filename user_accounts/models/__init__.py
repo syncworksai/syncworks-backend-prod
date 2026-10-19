@@ -63,6 +63,7 @@ from .stripe_connect import StripeConnectProfile
 from .support_requests import SupportRequest
 from .business_access import BusinessAccessControl
 from .platform_build_backlog import PlatformBuildBacklogItem
+from .platform_business_prospects import PlatformBusinessProspect, PlatformProspectActivity
 from .pm_property import PMProperty
 from .pm_unit import PMUnit
 from .pm_tenant import PMTenant
@@ -127,7 +128,7 @@ __all__ = [
     "PurchaseOrderLine", "PurchaseOrder", "InventoryStock", "InventoryLocation", "InventoryItem", "CalendarAccount",
     "TicketCalendarEvent", "FinanceSnapshot", "FinancePlan", "FinanceConnection", "FinanceAccount", "FinanceLiability",
     "FinanceObligation", "FinanceTransaction", "FinanceGoal", "FinanceBudget", "FinanceDebtPayment", "FavoriteBusiness", "StripeConnectProfile",
-    "SupportRequest", "BusinessAccessControl", "PlatformBuildBacklogItem", "PMProperty", "PMUnit", "PMTenant", "PMInvite", "PMDocument",
+    "SupportRequest", "BusinessAccessControl", "PlatformBuildBacklogItem", "PlatformBusinessProspect", "PlatformProspectActivity", "PMProperty", "PMUnit", "PMTenant", "PMInvite", "PMDocument",
     "PMSection8Case", "PMBillingSettings", "PMRentCharge", "PMRentPayment", "PMRentPaymentAllocation", "PMEmployee",
     "PMEmployeeInvite", "PMInvestor", "PMPropertyInvestor", "PMInboxThread", "PMInboxMessage", "PMNotification",
     "PMWorkOrder", "SalesPipeline", "SalesPipelineMember", "ProspectStage", "Prospect", "ProspectAttachment",
