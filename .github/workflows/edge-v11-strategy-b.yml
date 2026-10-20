@@ -1,0 +1,33 @@
+name: EDGE v1.1 Strategy B Discovery
+
+on:
+  push:
+    branches:
+      - agent/edge-strategy-b-discovery
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - name: Run independent Strategy B discovery with final untouched holdout
+        env:
+          EDGE_DAYS: '120'
+        run: python scripts/edge_v11_strategy_b_discovery.py | tee edge_v11_console.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: edge-v11-strategy-b-results
+          path: |
+            edge_v11_strategy_b_results.json
+            edge_v11_strategy_b_holdout_replays.json
+            edge_v11_console.txt
+          retention-days: 14
