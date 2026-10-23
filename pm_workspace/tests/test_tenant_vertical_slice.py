@@ -281,3 +281,51 @@ class PMTenantVerticalSliceTests(APITestCase):
         self.assertEqual(response.data["excluded_from_charges"], "377.00")
         self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant, category="RENT_HOUSING").count(), 0)
         self.assertEqual(PMLedgerEntry.objects.get(tenant=self.tenant, category="RENT_TENANT").amount, Decimal("1108.00"))
+
+
+    def test_oldest_first_allocates_tenant_receipts_without_touching_hap_or_receipt_dates(self):
+        lease = self.create_active_lease()
+        lease.section8 = True
+        lease.save()
+        self.client.force_authenticate(self.owner)
+        for day, typ, category, method, amt in [
+            ("2026-03-01", "CHARGE", "RENT_TENANT", "", "1407.00"),
+            ("2026-03-01", "CHARGE", "RENT_HOUSING", "", "78.00"),
+            ("2026-04-01", "CHARGE", "RENT_TENANT", "", "1407.00"),
+            ("2026-03-15", "PAYMENT", "RENT_TENANT", "OTHER", "800.00"),
+            ("2026-04-10", "PAYMENT", "RENT_TENANT", "OTHER", "750.00"),
+        ]:
+            PMLedgerEntry.objects.create(
+                workspace=self.workspace, tenant=self.tenant, lease=lease, entry_date=day,
+                entry_type=typ, category=category, payment_method=method,
+                amount=Decimal(amt), created_by=self.owner,
+            )
+        before = list(PMLedgerEntry.objects.filter(tenant=self.tenant).values_list("id", "entry_date"))
+        res = self.client.get(f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/allocations/", **self.owner_headers())
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(res.data["payment_dates_unchanged"], True)
+        self.assertEqual(res.data["housing_unpaid"], "78.00")
+        self.assertEqual(res.data["tenant_unpaid"], "1264.00")
+        payment_applied = [row for row in res.data["allocations"] if row["source_type"] == "PAYMENT"]
+        self.assertEqual([v["amount"] for v in payment_applied], ["800.00", "607.00", "143.00"])
+        self.assertEqual([v["charge_month"] for v in payment_applied], ["2026-03", "2026-03", "2026-04"])
+        self.assertEqual(before, list(PMLedgerEntry.objects.filter(tenant=self.tenant).values_list("id", "entry_date")))
+
+    def test_external_hap_and_deposit_claims_never_create_ledger_payments(self):
+        self.client.force_authenticate(self.owner)
+        url = f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/external-evidence/"
+        for category, amount in (
+            ("HAP_PAID_TO_FORMER_MANAGER", "312.00"),
+            ("HAP_ON_HOLD", "455.00"),
+            ("DEPOSIT_APPLIED_CLAIM", "1500.00"),
+        ):
+            response = self.client.post(url, {
+                "category": category, "period": "2026-03", "amount": amount,
+                "evidence_status": "REPORTED", "note": "Written statement pending full reconciliation",
+            }, format="json", **self.owner_headers())
+            self.assertEqual(response.status_code, 201, response.data)
+            self.assertFalse(response.data["affects_ledger_balance"])
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(), 0)
+        records = self.client.get(url, **self.owner_headers())
+        self.assertEqual(records.status_code, 200, records.data)
+        self.assertEqual(len(records.data["records"]), 3)
