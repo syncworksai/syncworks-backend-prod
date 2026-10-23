@@ -783,11 +783,12 @@ class PMTenantVerticalSliceTests(APITestCase):
         self.assertEqual(line["adjust_housing"],"78.00")
         original_count=PMLedgerEntry.objects.filter(tenant=self.tenant).count()
         self.assertEqual(original_count,4)
-        applied=self.client.post(url,{"apply":True,"confirmed":True},
+        applied=self.client.post(url,{"apply":True,"confirmed":True,"preview_token":preview.data["preview_token"]},
             format="json",**self.owner_headers())
         self.assertEqual(applied.status_code,200,applied.data)
         self.assertEqual(len(applied.data["created_entry_ids"]),2)
-        second=self.client.post(url,{"apply":True,"confirmed":True},
+        fresh=self.client.post(url,{},format="json",**self.owner_headers())
+        second=self.client.post(url,{"apply":True,"confirmed":True,"preview_token":fresh.data["preview_token"]},
             format="json",**self.owner_headers())
         self.assertEqual(second.status_code,200,second.data)
         self.assertEqual(second.data["created_entry_ids"],[])
