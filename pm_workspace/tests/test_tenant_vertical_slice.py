@@ -626,3 +626,57 @@ class PMTenantVerticalSliceTests(APITestCase):
         self.assertEqual(len(shown.data["portfolios"][0]["statements"]),1)
         self.assertEqual(shown.data["portfolios"][0]["statements"][0]["status"],"SHARED")
         self.assertIsNone(shown.data["portfolios"][0]["statements"][0]["payout_date"])
+
+
+    def test_property_360_flags_name_only_matches_until_confirmed_and_preserves_ledger(self):
+        self.client.force_authenticate(self.owner)
+        charge=PMLedgerEntry.objects.create(
+            workspace=self.workspace,tenant=self.tenant,
+            entry_date=timezone.localdate(),entry_type="CHARGE",category="RENT_TENANT",
+            amount=Decimal("1250.00"),created_by=self.owner)
+        receipt=PMLedgerEntry.objects.create(
+            workspace=self.workspace,tenant=self.tenant,
+            entry_date=timezone.localdate(),entry_type="PAYMENT",category="RENT_TENANT",
+            amount=Decimal("500.00"),created_by=self.owner)
+        url=f"/api/v1/pm-hub/properties/{self.property.id}/360/"
+        before=self.client.get(url,**self.owner_headers())
+        self.assertEqual(before.status_code,200,before.data)
+        self.assertEqual(before.data["tenants"][0]["link_status"],"REVIEW_NAME_MATCH")
+        self.assertEqual(before.data["accounting"]["posted_tenant_unpaid"],"750.00")
+        link_url=f"/api/v1/pm-hub/properties/{self.property.id}/link-tenant/{self.tenant.id}/"
+        rejected=self.client.post(link_url,{},format="json",**self.owner_headers())
+        self.assertEqual(rejected.status_code,400,rejected.data)
+        linked=self.client.post(link_url,{"confirmed":True},format="json",**self.owner_headers())
+        self.assertEqual(linked.status_code,200,linked.data)
+        self.tenant.refresh_from_db()
+        self.assertEqual(self.tenant.property_id,self.property.id)
+        after=self.client.get(url,**self.owner_headers())
+        self.assertEqual(after.status_code,200,after.data)
+        self.assertEqual(after.data["tenants"][0]["link_status"],"VERIFIED_RELATION")
+        self.assertEqual(after.data["accounting"]["posted_tenant_unpaid"],"750.00")
+        self.assertEqual(PMLedgerEntry.objects.get(pk=charge.id).amount,Decimal("1250.00"))
+        self.assertEqual(PMLedgerEntry.objects.get(pk=receipt.id).amount,Decimal("500.00"))
+
+    def test_property_360_never_matches_name_when_duplicate_property_names_exist(self):
+        PMProperty.objects.create(workspace=self.workspace,name=self.property.name,
+            address="500 Different Avenue",city="Montgomery",state="AL",zip="36104",created_by=self.owner)
+        self.client.force_authenticate(self.owner)
+        result=self.client.get(f"/api/v1/pm-hub/properties/{self.property.id}/360/",**self.owner_headers())
+        self.assertEqual(result.status_code,200,result.data)
+        self.assertEqual(result.data["tenants"],[])
+        self.assertEqual(result.data["links"]["property_name_unique"],False)
+
+    def test_tenant_link_blocks_conflicting_existing_lease_and_other_portfolio(self):
+        lease=self.create_active_lease()
+        other=PMProperty.objects.create(workspace=self.workspace,name="Another Unit",
+            address="100 Other St",city="Montgomery",state="AL",zip="36104",created_by=self.owner)
+        self.client.force_authenticate(self.owner)
+        wrong=self.client.post(f"/api/v1/pm-hub/properties/{other.id}/link-tenant/{self.tenant.id}/",
+            {"confirmed":True},format="json",**self.owner_headers())
+        self.assertEqual(wrong.status_code,409,wrong.data)
+        self.tenant.refresh_from_db()
+        self.assertIsNone(self.tenant.property_id)
+        self.client.force_authenticate(self.tenant_user)
+        denied=self.client.get(f"/api/v1/pm-hub/properties/{self.property.id}/360/",
+             **self.owner_headers())
+        self.assertEqual(denied.status_code,403,denied.data)
