@@ -236,6 +236,102 @@ def generate_tenant_charges(request, tenant_id):
     return Response({"detail": f"Generated {len(created)} new ledger charge(s).", "created_entry_ids": created, "account": _tenant_account(tenant, through_date)})
 
 
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@transaction.atomic
+def reconcile_monthly_rent(request, tenant_id):
+    """Audit and correct one month's payer-specific charges, preserving payments and late fees.
+
+    Preview by default. Explicit confirmation creates only the missing charge or a
+    balancing credit, never rewrites/deletes historical ledger rows.
+    """
+    tenant = _tenant_for_workspace(_workspace(request), tenant_id)
+    if not tenant:
+        return Response({"detail": "Tenant not found."}, status=status.HTTP_404_NOT_FOUND)
+    lease = _active_lease(tenant)
+    if not lease or not lease.section8:
+        return Response({"detail": "An active Section 8 lease is required."}, status=status.HTTP_400_BAD_REQUEST)
+    raw_month = str(request.data.get("month") or "")
+    try:
+        month = date.fromisoformat(raw_month + "-01")
+        if month.strftime("%Y-%m") != raw_month:
+            raise ValueError
+    except ValueError:
+        return Response({"detail": "Month must be in YYYY-MM format."}, status=status.HTTP_400_BAD_REQUEST)
+    if month > timezone.localdate().replace(day=1):
+        return Response({"detail": "Future rent periods cannot be reconciled here."}, status=status.HTTP_400_BAD_REQUEST)
+
+    def amount(field):
+        try:
+            value = Decimal(str(request.data.get(field, ""))).quantize(Decimal("0.01"))
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+        return value if value.is_finite() and Decimal("0.00") <= value <= Decimal("999999999.99") else None
+
+    tenant_due, housing_due, rent = amount("tenant_portion"), amount("housing_portion"), amount("contract_rent")
+    if any(value is None for value in (tenant_due, housing_due, rent)) or rent <= 0:
+        return Response({"detail": "Provide valid nonnegative monthly rent and payer portions."}, status=status.HTTP_400_BAD_REQUEST)
+    if tenant_due + housing_due > rent:
+        return Response({"detail": "Tenant and housing portions cannot exceed contract rent."}, status=status.HTTP_400_BAD_REQUEST)
+    excluded = rent - tenant_due - housing_due
+    source = str(request.data.get("source_note") or "").strip()
+    if len(source) < 12:
+        return Response({"detail": "Add the source document or explanation (at least 12 characters)."}, status=status.HTTP_400_BAD_REQUEST)
+    if excluded and not str(request.data.get("exclusion_reason") or "").strip():
+        return Response({"detail": "Explain why a portion of contract rent is not being charged (for example, HAP abatement)."}, status=status.HTTP_400_BAD_REQUEST)
+
+    rows = list(tenant.ledger_entries.select_for_update().filter(
+        entry_date__year=month.year, entry_date__month=month.month
+    ).order_by("entry_date", "id"))
+    categories = {"TENANT": ("RENT", "RENT_TENANT"), "HOUSING": ("RENT_HOUSING",)}
+    recorded = {"TENANT": Decimal("0.00"), "HOUSING": Decimal("0.00")}
+    receipts = {"TENANT": Decimal("0.00"), "HOUSING": Decimal("0.00")}
+    late_fee_net = Decimal("0.00")
+    for row in rows:
+        bucket = "HOUSING" if row.category == "RENT_HOUSING" or row.payment_method == "HOUSING_AUTHORITY" else "TENANT"
+        if row.category in ("RENT", "RENT_TENANT", "RENT_HOUSING") and row.entry_type != PMLedgerEntry.EntryType.PAYMENT:
+            recorded[bucket] += _signed(row)
+        if row.entry_type == PMLedgerEntry.EntryType.PAYMENT:
+            receipts[bucket] += row.amount
+        if row.category == "LATE_FEE" and row.entry_type != PMLedgerEntry.EntryType.PAYMENT:
+            late_fee_net += _signed(row)
+    wanted = {"TENANT": tenant_due, "HOUSING": housing_due}
+    delta = {key: wanted[key] - recorded[key] for key in wanted}
+    apply = request.data.get("apply") is True
+    if apply and request.data.get("confirmed") is not True:
+        return Response({"detail": "Confirm the verified allocation before applying corrections."}, status=status.HTTP_400_BAD_REQUEST)
+    if apply:
+        for key in ("TENANT", "HOUSING"):
+            change = delta[key]
+            if not change:
+                continue
+            PMLedgerEntry.objects.create(
+                workspace=tenant.workspace, tenant=tenant, lease=lease, entry_date=month,
+                entry_type=PMLedgerEntry.EntryType.CHARGE if change > 0 else PMLedgerEntry.EntryType.CREDIT,
+                amount=abs(change),
+                category="RENT_HOUSING" if key == "HOUSING" else "RENT_TENANT",
+                reference=f"RECON-{tenant.id}-{raw_month}-{key}-{timezone.now():%Y%m%d%H%M%S%f}",
+                memo=f"Monthly rent reconciliation ({raw_month}): {source}. " +
+                    (f"Not billed: ${excluded} - {str(request.data.get('exclusion_reason') or '').strip()}." if excluded else ""),
+                created_by=request.user,
+            )
+    return Response({
+        "detail": "Monthly rent corrected. Existing payments and late fees are unchanged." if apply else "Preview only; ledger unchanged.",
+        "applied": apply, "month": raw_month, "contract_rent": str(rent),
+        "tenant_due": str(tenant_due), "housing_due": str(housing_due),
+        "excluded_from_charges": str(excluded),
+        "recorded_tenant_charges": str(recorded["TENANT"]),
+        "recorded_housing_charges": str(recorded["HOUSING"]),
+        "tenant_charge_adjustment": str(delta["TENANT"]),
+        "housing_charge_adjustment": str(delta["HOUSING"]),
+        "posted_tenant_payments_in_month": str(receipts["TENANT"]),
+        "posted_housing_payments_in_month": str(receipts["HOUSING"]),
+        "preserved_late_fees": str(late_fee_net),
+        "account": _tenant_account(tenant) if apply else None,
+    })
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def portfolio_billing_summary(request):
