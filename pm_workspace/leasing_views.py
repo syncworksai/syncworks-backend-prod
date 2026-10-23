@@ -140,6 +140,32 @@ class PMLeaseViewSet(viewsets.ModelViewSet):
         return qs.order_by("-start_date", "-id")
 
     @transaction.atomic
+    def perform_update(self, serializer):
+        workspace=requested_workspace(self.request)
+        existing=serializer.instance
+        tenant=serializer.validated_data.get("tenant",existing.tenant)
+        unit=serializer.validated_data.get("unit",existing.unit)
+        if tenant.workspace_id!=workspace.id or (unit and unit.workspace_id!=workspace.id):
+            raise ValidationError({"detail":"Lease tenant and unit must belong to the selected portfolio."})
+        old={"rent":str(existing.monthly_rent),"tenant_share":str(existing.tenant_portion),
+            "housing_share":str(existing.assistance_portion),"section8":existing.section8,
+            "start":str(existing.start_date),"end":str(existing.end_date)}
+        lease=serializer.save()
+        new={"rent":str(lease.monthly_rent),"tenant_share":str(lease.tenant_portion),
+            "housing_share":str(lease.assistance_portion),"section8":lease.section8,
+            "start":str(lease.start_date),"end":str(lease.end_date)}
+        if old!=new:
+            PMDocumentPacket.objects.create(workspace=workspace,tenant=tenant,lease=lease,
+                packet_type="LEASE_TERMS_AUDIT",template_name="Owner-edited lease terms",
+                field_data={"before":old,"after":new,"source_note":str(self.request.data.get("source_note") or ""),
+                    "by":self.request.user.pk,"changed_at":timezone.now().isoformat()})
+        if lease.status=="ACTIVE" and lease.tenant_id==tenant.id:
+            tenant.monthly_rent=lease.monthly_rent
+            tenant.lease_start=lease.start_date
+            tenant.lease_end=lease.end_date
+            tenant.save(update_fields=["monthly_rent","lease_start","lease_end","updated_at"])
+
+    @transaction.atomic
     def perform_create(self, serializer):
         workspace = requested_workspace(self.request)
         tenant = serializer.validated_data["tenant"]
