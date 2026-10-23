@@ -136,8 +136,8 @@ def property_rent_change_plans(request,property_id):
     workspace,prop=_scoped_property(request,property_id)
     if not prop:
         return Response({"detail":"Property not found."},status=404)
-    plans=[p for p in PMDocumentPacket.objects.filter(workspace=workspace,packet_type=KIND).select_related("tenant","lease")
-           if (p.field_data or {}).get("property_id")==prop.id]
+    plans=list(PMDocumentPacket.objects.filter(workspace=workspace,packet_type=KIND,
+            field_data__property_id=prop.id).select_related("tenant","lease"))
     if request.method=="GET":
         return Response({"plans":[{**_plan_json(p),"schedule":_evaluate(p.field_data,p.lease,bool(p.lease and p.lease.section8),timezone.localdate())} for p in plans]})
     tenant=PMTenant.objects.filter(workspace=workspace,pk=request.data.get("tenant_id")).first()
