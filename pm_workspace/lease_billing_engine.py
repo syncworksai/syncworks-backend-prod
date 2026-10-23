@@ -321,6 +321,8 @@ def lease_billing(request,tenant_id):
             "rent_paid_vs_owed":_json_allocation(_allocation(list(tenant.ledger_entries.all()))),
             "totals":dashboard_totals(tenant),
             "notice":"Payment dates, prior late fees and separate deposit records are not changed by rent billing."})
+    if any(item.get("blocked") for item in rows):
+        return Response({"detail":"At least one due month lacks a verified payer allocation. Resolve it before posting the batch."},status=409)
     if request.data.get("confirmed") is not True:
         return Response({"detail":"Confirm the monthly payer amounts and source documentation."},status=400)
     if request.data.get("preview_token")!=token:
