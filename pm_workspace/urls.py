@@ -12,6 +12,7 @@ from .document_views import PMPropertyDocumentViewSet, document_template_catalog
 from .lead_views import lead_convert_to_tenant, lead_detail, lead_note, lead_reply_email, leads
 from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeaseViewSet, PMProspectViewSet, PMUnitViewSet
 from .ledger_audit_views import oldest_first_allocation, external_payment_evidence, verified_monthly_late_fee
+from .lease_billing_engine import lease_billing, waive_late_fee
 from .handoff_views import property_handoff
 from .rent_change_views import property_rent_change_plans, update_rent_change_plan
 from .document_intake_views import property_document_intake
@@ -121,6 +122,8 @@ urlpatterns = [
     path("billing/tenants/<int:tenant_id>/allocations/", oldest_first_allocation),
     path("billing/tenants/<int:tenant_id>/external-evidence/", external_payment_evidence),
     path("billing/tenants/<int:tenant_id>/verified-late-fee/", verified_monthly_late_fee),
+    path("billing/tenants/<int:tenant_id>/lease-builder/", lease_billing),
+    path("billing/tenants/<int:tenant_id>/late-fees/<int:fee_id>/waive/", waive_late_fee),
     path("billing/tenants/<int:tenant_id>/generate-advanced-late-fees/", generate_advanced_late_fees),
     path("billing/tenants/<int:tenant_id>/collections-preview/", collections_statement_preview),
     path("billing/tenants/<int:tenant_id>/undo-generated/", undo_generated_charges),
