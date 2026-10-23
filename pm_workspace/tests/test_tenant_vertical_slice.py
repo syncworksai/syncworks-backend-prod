@@ -548,3 +548,81 @@ class PMTenantVerticalSliceTests(APITestCase):
         self.assertIn("provider_inspection",keys)
         self.assertFalse(PMDocumentPacket.objects.filter(workspace=self.workspace,packet_type="PROPERTY_HANDOFF").exists())
         self.assertEqual(len(mail.outbox),0)
+
+
+    def test_workspace_employee_permissions_are_property_scoped(self):
+        other = PMProperty.objects.create(
+            workspace=self.workspace,name="Other Property",address="400 Elsewhere",
+            city="Montgomery",state="AL",zip="36104",created_by=self.owner
+        )
+        employee = User.objects.create_user(
+            username="onboarding-employee",email="onboarding@example.com",password="safe-password-123"
+        )
+        self.client.force_authenticate(self.owner)
+        url="/api/v1/pm-hub/access/team/"
+        response=self.client.post(url,{"email":"onboarding@example.com","name":"Alex",
+                    "role":"LEASING","permissions":["onboarding"],"property_ids":[self.property.id]},
+                   format="json",**self.owner_headers())
+        self.assertEqual(response.status_code,201,response.data)
+        code=response.data["invitation_code"]
+        self.client.force_authenticate(employee)
+        blocked=self.client.get("/api/v1/pm-hub/dashboard/command-center/",**self.owner_headers())
+        self.assertEqual(blocked.status_code,403,blocked.data)
+        joined=self.client.post("/api/v1/pm-hub/access/team/accept/",{"code":code},format="json")
+        self.assertEqual(joined.status_code,200,joined.data)
+        self.client.force_authenticate(self.owner)
+        wrong=self.client.post("/api/v1/pm-hub/access/tasks/",{
+            "property_id":other.id,"assignee_id":response.data["member"]["id"],
+            "title":"Start onboarding","category":"ONBOARDING"
+        },format="json",**self.owner_headers())
+        self.assertEqual(wrong.status_code,403,wrong.data)
+        right=self.client.post("/api/v1/pm-hub/access/tasks/",{
+            "property_id":self.property.id,"assignee_id":response.data["member"]["id"],
+            "title":"Verify onboarding packet","category":"ONBOARDING"
+        },format="json",**self.owner_headers())
+        self.assertEqual(right.status_code,201,right.data)
+        self.client.force_authenticate(employee)
+        dashboard=self.client.get("/api/v1/pm-hub/access/team/dashboard/")
+        self.assertEqual(dashboard.status_code,200,dashboard.data)
+        self.assertEqual(len(dashboard.data["tasks"]),1)
+        self.assertEqual(dashboard.data["properties"][0]["id"],self.property.id)
+        self.assertFalse(dashboard.data["finance_access"])
+        self.assertEqual(self.client.get("/api/v1/pm-hub/access/investors/statements/").status_code,403)
+
+    def test_investor_cannot_see_draft_or_other_owner_statement(self):
+        from pm_workspace.owner_models import PMPropertyOwner
+        owner_record=PMPropertyOwner.objects.create(
+            workspace=self.workspace,name="Oak Investor",email="inv@example.com",created_by=self.owner
+        )
+        owner_record.properties.add(self.property)
+        investor=User.objects.create_user(username="test-investor",email="inv@example.com",password="safe-password-123")
+        self.client.force_authenticate(self.owner)
+        r=self.client.post("/api/v1/pm-hub/access/investors/",{"owner_id":owner_record.id},
+                           format="json",**self.owner_headers())
+        self.assertEqual(r.status_code,201,r.data)
+        code=r.data["invitation_code"]
+        payload={
+            "owner_id":owner_record.id,"property_id":self.property.id,"period":"2026-09",
+            "rent_received":"1000.00","management_fees":"100.00","expenses":"200.00",
+            "reserve_change":"0.00","owner_payout":"700.00","status":"DRAFT",
+        }
+        saved=self.client.post("/api/v1/pm-hub/access/investors/statements/",payload,
+                               format="json",**self.owner_headers())
+        self.assertEqual(saved.status_code,201,saved.data)
+        self.client.force_authenticate(investor)
+        self.assertEqual(self.client.post("/api/v1/pm-hub/access/investors/accept/",{"code":code},
+                                        format="json").status_code,200)
+        start=self.client.get("/api/v1/pm-hub/access/investors/portfolio/")
+        self.assertEqual(start.status_code,200,start.data)
+        self.assertEqual(len(start.data["portfolios"]),1)
+        self.assertEqual(start.data["portfolios"][0]["statements"],[])
+        self.client.force_authenticate(self.owner)
+        payload["status"]="SHARED"
+        published=self.client.post("/api/v1/pm-hub/access/investors/statements/",payload,
+                                   format="json",**self.owner_headers())
+        self.assertEqual(published.status_code,200,published.data)
+        self.client.force_authenticate(investor)
+        shown=self.client.get("/api/v1/pm-hub/access/investors/portfolio/")
+        self.assertEqual(len(shown.data["portfolios"][0]["statements"]),1)
+        self.assertEqual(shown.data["portfolios"][0]["statements"][0]["status"],"SHARED")
+        self.assertIsNone(shown.data["portfolios"][0]["statements"][0]["payout_date"])
