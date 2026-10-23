@@ -13,6 +13,8 @@ from .lead_views import lead_convert_to_tenant, lead_detail, lead_note, lead_rep
 from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeaseViewSet, PMProspectViewSet, PMUnitViewSet
 from .ledger_audit_views import oldest_first_allocation, external_payment_evidence, verified_monthly_late_fee
 from .handoff_views import property_handoff
+from .rent_change_views import property_rent_change_plans, update_rent_change_plan
+from .document_intake_views import property_document_intake
 from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
 from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_internally
 from .payer_billing_views import generate_installment_late_fees, payer_profile, rebuild_split_rent
@@ -48,6 +50,9 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/correct-profile/", correct_tenant_profile),
     path("properties/<int:property_id>/profile/", property_profile),
     path("properties/<int:property_id>/handoff/", property_handoff),
+    path("properties/<int:property_id>/rent-changes/", property_rent_change_plans),
+    path("properties/<int:property_id>/rent-changes/<int:plan_id>/", update_rent_change_plan),
+    path("properties/<int:property_id>/documents/<int:document_id>/intake/", property_document_intake),
     path("properties/<int:property_id>/inventory/", property_inventory),
     path("properties/<int:property_id>/inventory/<int:item_id>/", property_inventory_item),
     path("occupancies/", occupancies),
