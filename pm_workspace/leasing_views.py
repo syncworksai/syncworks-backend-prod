@@ -147,6 +147,8 @@ class PMLeaseViewSet(viewsets.ModelViewSet):
         unit=serializer.validated_data.get("unit",existing.unit)
         if tenant.workspace_id!=workspace.id or (unit and unit.workspace_id!=workspace.id):
             raise ValidationError({"detail":"Lease tenant and unit must belong to the selected portfolio."})
+        if tenant.id!=existing.tenant_id:
+            raise ValidationError({"tenant":"Existing leases cannot be moved between residents. Use a documented new lease or transfer workflow."})
         old={"rent":str(existing.monthly_rent),"tenant_share":str(existing.tenant_portion),
             "housing_share":str(existing.assistance_portion),"section8":existing.section8,
             "start":str(existing.start_date),"end":str(existing.end_date)}
