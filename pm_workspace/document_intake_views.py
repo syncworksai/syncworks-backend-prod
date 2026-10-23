@@ -19,15 +19,15 @@ from .models import PMProperty
 
 MAX_BYTES=8*1024*1024
 FIELD_NAMES={"monthly_rent", "security_deposit", "lease_start", "lease_end"}
-MONEY=r"\\$?\\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})(?:\\.([0-9]{2}))?"
+MONEY=r"\$?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,7})(?:\.([0-9]{2}))?"
 PATTERNS={
-    "monthly_rent": r"(?i)\\b(?:monthly\\s+rent|total\\s+monthly\\s+rent|contract\\s+rent|rent\\s+to\\s+owner|monthly\\s+payment)\\s*[:\\-]?\\s*"+MONEY,
-    "security_deposit": r"(?i)\\b(?:security\\s+deposit|refundable\\s+deposit)\\s*[:\\-]?\\s*"+MONEY,
+    "monthly_rent": r"(?i)\b(?:monthly\s+rent|total\s+monthly\s+rent|contract\s+rent|rent\s+to\s+owner|monthly\s+payment)\s*[:\-]?\s*"+MONEY,
+    "security_deposit": r"(?i)\b(?:security\s+deposit|refundable\s+deposit)\s*[:\-]?\s*"+MONEY,
 }
-DATE_TEXT=r"(\\d{1,2}/\\d{1,2}/\\d{4}|\\d{4}-\\d{2}-\\d{2})"
+DATE_TEXT=r"(\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d{2}-\d{2})"
 DATE_PATTERNS={
-    "lease_start":r"(?i)\\b(?:lease\\s+start|commencement\\s+date|beginning\\s+of\\s+(?:the\\s+)?lease|initial\\s+lease\\s+term\\s+starts?)\\s*[:\\-]?\\s*"+DATE_TEXT,
-    "lease_end":r"(?i)\\b(?:lease\\s+end|lease\\s+expiration|termination\\s+date|initial\\s+lease\\s+term\\s+ends?)\\s*[:\\-]?\\s*"+DATE_TEXT,
+    "lease_start":r"(?i)\b(?:lease\s+start|commencement\s+date|beginning\s+of\s+(?:the\s+)?lease|initial\s+lease\s+term\s+starts?)\s*[:\-]?\s*"+DATE_TEXT,
+    "lease_end":r"(?i)\b(?:lease\s+end|lease\s+expiration|termination\s+date|initial\s+lease\s+term\s+ends?)\s*[:\-]?\s*"+DATE_TEXT,
 }
 def _parse_text(data,ext):
     if ext==".pdf":
@@ -44,7 +44,7 @@ def _parse_text(data,ext):
         for table in doc.tables:
             for row in table.rows:
                 texts.extend(cell.text for cell in row.cells)
-        return ["\\n".join(texts)[:180000]],None
+        return ["\n".join(texts)[:180000]],None
     if ext==".txt":
         return [data.decode("utf-8",errors="replace")[:180000]],None
     return None,"Upload a selectable-text PDF, DOCX or TXT file."
@@ -70,7 +70,7 @@ def _suggestions(pages):
                         value=dt.isoformat()
                     except ValueError: continue
                 matches.append({"value":value,"page":i+1,
-                                "context":re.sub(r"\\s+"," ",page[max(0,found.start()-35):min(len(page),found.end()+35)]).strip()[:130]})
+                                "context":re.sub(r"\s+"," ",page[max(0,found.start()-35):min(len(page),found.end()+35)]).strip()[:130]})
         if matches:
             values={m["value"] for m in matches}
             suggestions[field]={"value":matches[0]["value"],"candidates":matches[:4],
