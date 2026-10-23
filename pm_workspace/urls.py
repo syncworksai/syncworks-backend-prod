@@ -11,7 +11,7 @@ from .document_builder_views import document_builder_bootstrap, document_builder
 from .document_views import PMPropertyDocumentViewSet, document_template_catalog, property_document_checklist
 from .lead_views import lead_convert_to_tenant, lead_detail, lead_note, lead_reply_email, leads
 from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeaseViewSet, PMProspectViewSet, PMUnitViewSet
-from .ledger_audit_views import oldest_first_allocation, external_payment_evidence
+from .ledger_audit_views import oldest_first_allocation, external_payment_evidence, verified_monthly_late_fee
 from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
 from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_internally
 from .payer_billing_views import generate_installment_late_fees, payer_profile, rebuild_split_rent
@@ -79,6 +79,7 @@ urlpatterns = [
     path("billing/tenants/<int:tenant_id>/reconcile-month/", reconcile_monthly_rent),
     path("billing/tenants/<int:tenant_id>/allocations/", oldest_first_allocation),
     path("billing/tenants/<int:tenant_id>/external-evidence/", external_payment_evidence),
+    path("billing/tenants/<int:tenant_id>/verified-late-fee/", verified_monthly_late_fee),
     path("billing/tenants/<int:tenant_id>/generate-advanced-late-fees/", generate_advanced_late_fees),
     path("billing/tenants/<int:tenant_id>/collections-preview/", collections_statement_preview),
     path("billing/tenants/<int:tenant_id>/undo-generated/", undo_generated_charges),
