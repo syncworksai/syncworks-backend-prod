@@ -77,7 +77,7 @@ def _allocation(rows, cutoff=None):
         remaining = source.amount
         target_month = None
         if kind == "CREDIT" and source.reference.startswith("RECON-") and source.category in ("RENT", "RENT_TENANT", "RENT_HOUSING"):
-            found = re.search(r"RECON-\\d+-(\\d{4}-\\d{2})-", source.reference)
+            found = re.search(r"RECON-\d+-(\d{4}-\d{2})-", source.reference)
             target_month = found.group(1) if found else None
         candidates = [x for x in obligations if x["payer"] == payer and x["remaining"] > 0]
         if target_month:
