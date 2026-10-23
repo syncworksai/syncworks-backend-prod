@@ -412,3 +412,80 @@ class PMTenantVerticalSliceTests(APITestCase):
         self.client.force_authenticate(self.tenant_user)
         unauthorized = self.client.get(url, **self.owner_headers())
         self.assertEqual(unauthorized.status_code, 403, unauthorized.data)
+
+
+    def test_original_rent_audit_requires_source_and_keeps_ledger(self):
+        lease = self.create_active_lease()
+        self.client.force_authenticate(self.owner)
+        entry = PMLedgerEntry.objects.create(
+            workspace=self.workspace, tenant=self.tenant, lease=lease, entry_date=lease.start_date,
+            entry_type="PAYMENT", category="RENT_TENANT", amount=Decimal("750.00"),
+            created_by=self.owner)
+        url = f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/original-lease-rent/"
+        amount = "1485.00"
+        data = {"contract_rent": amount, "effective_date": str(lease.start_date),
+                "source_note": "Original signed rental lease specifies $1485 monthly"}
+        preview = self.client.post(url, data, format="json", **self.owner_headers())
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertFalse(preview.data["applied"])
+        lease.refresh_from_db()
+        self.assertNotEqual(lease.monthly_rent, Decimal(amount))
+        blocked = self.client.post(url, {**data, "apply": True}, format="json", **self.owner_headers())
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+        apply = self.client.post(url, {**data, "apply": True, "confirmed": True}, format="json", **self.owner_headers())
+        self.assertEqual(apply.status_code, 200, apply.data)
+        lease.refresh_from_db()
+        self.assertEqual(lease.monthly_rent, Decimal(amount))
+        entry.refresh_from_db()
+        self.assertEqual(entry.amount, Decimal("750.00"))
+        self.assertEqual(entry.entry_type, "PAYMENT")
+        self.assertTrue(self.tenant.document_packets.filter(packet_type="ORIGINAL_LEASE_RENT_AUDIT").exists())
+
+    def test_rent_increase_request_does_not_raise_current_lease_rent_without_approval(self):
+        lease = self.create_active_lease()
+        lease.section8 = True
+        lease.housing_authority = "Local rental assistance"
+        lease.save()
+        self.client.force_authenticate(self.owner)
+        url = f"/api/v1/pm-hub/properties/{self.property.id}/rent-changes/"
+        initial = str(lease.monthly_rent)
+        payload = {
+            "tenant_id": self.tenant.id,
+            "current_rent": initial, "requested_rent": "1650.00",
+            "proposed_effective_date": "2027-11-01",
+            "hap_anniversary_date": "2027-11-01",
+        }
+        res = self.client.post(url, payload, format="json", **self.owner_headers())
+        self.assertEqual(res.status_code, 201, res.data)
+        self.assertEqual(res.data["schedule"]["administrator_request_deadline"], "2027-09-02")
+        lease.refresh_from_db()
+        self.assertEqual(str(lease.monthly_rent), initial)
+        edit_url = f"/api/v1/pm-hub/properties/{self.property.id}/rent-changes/{res.data['plan']['id']}/"
+        rejected = self.client.patch(edit_url, {"status": "APPROVED", "approved_rent": "1650.00",
+                                                 "approval_date": "2027-10-01"}, format="json", **self.owner_headers())
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        lease.refresh_from_db()
+        self.assertEqual(str(lease.monthly_rent), initial)
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(), 0)
+
+    def test_document_extraction_requires_human_confirmation_and_does_not_update_rent(self):
+        from django.core.files.base import ContentFile
+        from pm_workspace.document_models import PMPropertyDocument
+        lease = self.create_active_lease()
+        self.client.force_authenticate(self.owner)
+        document = PMPropertyDocument.objects.create(
+            workspace=self.workspace, property=self.property, tenant=self.tenant,
+            category="LEASE", title="Original lease", status="ACTIVE",
+            document=ContentFile(b"Monthly Rent: $1,485.00\nSecurity Deposit: $1,500.00\nLease Start: 03/01/2026", name="signed-lease.txt"),
+            created_by=self.owner)
+        url = f"/api/v1/pm-hub/properties/{self.property.id}/documents/{document.id}/intake/"
+        result = self.client.post(url, {}, format="json", **self.owner_headers())
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data["suggestions"]["monthly_rent"]["value"], "1485.00")
+        lease.refresh_from_db()
+        self.assertNotEqual(lease.monthly_rent, Decimal("1485.00"))
+        reviewed = self.client.patch(url, {"verified_fields":{"monthly_rent":"1485.00"}},
+                                      format="json", **self.owner_headers())
+        self.assertEqual(reviewed.status_code, 200, reviewed.data)
+        lease.refresh_from_db()
+        self.assertNotEqual(lease.monthly_rent, Decimal("1485.00"))
