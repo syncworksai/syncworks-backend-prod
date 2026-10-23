@@ -25,6 +25,7 @@ from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_inte
 from .payer_billing_views import generate_installment_late_fees, payer_profile, rebuild_split_rent
 from .property_profile_views import property_inventory, property_inventory_item, property_profile
 from .property_360_views import property_360
+from .tenant_property_link_views import link_existing_tenant
 from .record_views import inbox_reply, occupancies, tenant_cases, tenant_portal_communications, unified_inbox, update_tenant_case
 from .tenant_profile_views import correct_tenant_profile
 from .views import PMProjectViewSet, PMPropertyViewSet, PMTenantInvitationViewSet, PMTenantViewSet, PMWorkspaceViewSet
@@ -72,6 +73,7 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/correct-profile/", correct_tenant_profile),
     path("properties/<int:property_id>/profile/", property_profile),
     path("properties/<int:property_id>/360/", property_360),
+    path("properties/<int:property_id>/link-tenant/<int:tenant_id>/", link_existing_tenant),
     path("properties/<int:property_id>/handoff/", property_handoff),
     path("document-requests/my/", my_tenant_document_requests),
     path("properties/<int:property_id>/document-requests/", document_requests),
