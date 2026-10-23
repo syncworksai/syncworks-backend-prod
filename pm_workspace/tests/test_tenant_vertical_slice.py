@@ -830,3 +830,34 @@ class PMTenantVerticalSliceTests(APITestCase):
         self.assertEqual(allocation.data["tenant_unpaid"],"1250.00")
         self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant,category="LATE_FEE").count(),2)
         self.assertEqual(PMLedgerEntry.objects.get(pk=fee.id).amount,Decimal("50.00"))
+
+
+    def test_monthly_rent_draft_can_save_unverified_split_without_charging_tenant(self):
+        self.client.force_authenticate(self.owner)
+        url=f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/simple-schedule/"
+        payload={"source_note":"Owner's draft schedule pending housing authority documentation",
+            "months":[
+                {"month":"2026-05","rent":"1485.00","mha":"78.00"},
+                {"month":"2026-08","rent":"1485.00","mha":"344.00","status":"REQUIRES_VERIFICATION"},
+            ]}
+        first=self.client.patch(url,payload,format="json",**self.owner_headers())
+        self.assertEqual(first.status_code,200,first.data)
+        self.assertEqual(first.data["schedule"]["months"][0]["tenant"],"1407.00")
+        self.assertEqual(first.data["schedule"]["months"][1]["tenant"],"1141.00")
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(),0)
+        got=self.client.get(url,**self.owner_headers())
+        self.assertEqual(got.status_code,200,got.data)
+        self.assertEqual(got.data["schedule"]["months"][1]["source_status"],"REQUIRES_VERIFICATION")
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(),0)
+
+    def test_duplicate_manual_rent_charge_for_may_is_rejected_clearly(self):
+        self.client.force_authenticate(self.owner)
+        PMLedgerEntry.objects.create(workspace=self.workspace,tenant=self.tenant,
+            entry_date="2026-05-01",entry_type="CHARGE",
+            category="RENT",amount=Decimal("1400.00"))
+        url="/api/v1/pm-hub/ledger/"
+        duplicate=self.client.post(url,{"tenant":self.tenant.id,"entry_date":"2026-05-01",
+              "entry_type":"CHARGE","category":"RENT_TENANT","amount":"1407.00"},format="json",**self.owner_headers())
+        self.assertEqual(duplicate.status_code,400,duplicate.data)
+        self.assertIn("already has a rent charge",str(duplicate.data))
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(),1)
