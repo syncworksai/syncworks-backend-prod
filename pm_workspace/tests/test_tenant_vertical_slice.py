@@ -489,3 +489,62 @@ class PMTenantVerticalSliceTests(APITestCase):
         self.assertEqual(reviewed.status_code, 200, reviewed.data)
         lease.refresh_from_db()
         self.assertNotEqual(lease.monthly_rent, Decimal("1485.00"))
+
+
+    def test_external_document_request_requires_send_then_evidence_to_verify(self):
+        self.client.force_authenticate(self.owner)
+        from pm_workspace.document_models import PMPropertyDocument
+        url=f"/api/v1/pm-hub/properties/{self.property.id}/document-requests/"
+        request_data={
+            "title":"Recorded deed confirmation", "recipient_role":"ASSISTANCE_ADMINISTRATOR",
+            "recipient_name":"Assistance desk","recipient_email":"housing@example.net",
+            "action":"PROVIDE_DOCUMENT","instructions":"Please confirm which recorded deed is required.",
+            "due_date":(timezone.localdate()+timedelta(days=10)).isoformat()
+        }
+        created=self.client.post(url,request_data,format="json",**self.owner_headers())
+        self.assertEqual(created.status_code,201,created.data)
+        record=created.data["request"]
+        self.assertEqual(record["status"],"DRAFT")
+        req_url=f"{url}{record['id']}/"
+        unauthorized_status=self.client.patch(req_url,{"status":"VERIFIED"},format="json",**self.owner_headers())
+        self.assertEqual(unauthorized_status.status_code,409,unauthorized_status.data)
+        self.assertEqual(len(mail.outbox),0)
+        sent=self.client.post(req_url,{"operation":"SEND"},format="json",**self.owner_headers())
+        self.assertEqual(sent.status_code,200,sent.data)
+        self.assertEqual(len(mail.outbox),1)
+        self.assertEqual(mail.outbox[0].to,["housing@example.net"])
+        self.assertIn("not an electronic-signature",mail.outbox[0].body.lower())
+        second=self.client.post(req_url,{"operation":"REMIND"},format="json",**self.owner_headers())
+        self.assertEqual(second.status_code,429,second.data) if second.status_code==429 else self.assertEqual(second.status_code,200,second.data)
+        # A received/signed/approved request cannot be verified from a bare click.
+        no_evidence=self.client.patch(req_url,{"status":"VERIFIED"},format="json",**self.owner_headers())
+        self.assertEqual(no_evidence.status_code,400,no_evidence.data)
+        doc=PMPropertyDocument.objects.create(
+            workspace=self.workspace,property=self.property,category="OWNERSHIP",
+            title="Recorded deed",status="ACTIVE",created_by=self.owner
+        )
+        verified=self.client.patch(req_url,{
+            "status":"VERIFIED","completion_document_id":doc.id,
+            "completion_evidence":"Signed copy checked by property manager in official county register."
+        },format="json",**self.owner_headers())
+        self.assertEqual(verified.status_code,200,verified.data)
+        self.assertEqual(verified.data["request"]["status"],"VERIFIED")
+        resent=self.client.post(req_url,{"operation":"REMIND"},format="json",**self.owner_headers())
+        self.assertEqual(resent.status_code,409,resent.data)
+        self.client.force_authenticate(self.tenant_user)
+        denied=self.client.get(url,**self.owner_headers())
+        self.assertEqual(denied.status_code,403,denied.data)
+
+    def test_email_document_suggestions_do_not_change_handoff_or_send_emails(self):
+        self.client.force_authenticate(self.owner)
+        url=f"/api/v1/pm-hub/properties/{self.property.id}/analyze-correspondence/"
+        response=self.client.post(url,{
+            "body":"We need proof of ownership and a recorded warranty deed. Please send an inspection report."
+        },format="json",**self.owner_headers())
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertFalse(response.data["stored"])
+        keys=[row["checklist_key"] for row in response.data["suggestions"]]
+        self.assertIn("ownership_authority",keys)
+        self.assertIn("provider_inspection",keys)
+        self.assertFalse(PMDocumentPacket.objects.filter(workspace=self.workspace,packet_type="PROPERTY_HANDOFF").exists())
+        self.assertEqual(len(mail.outbox),0)
