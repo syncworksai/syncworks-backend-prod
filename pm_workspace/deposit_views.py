@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .billing_views import _active_lease, _profile_packet, _workspace
-from .models import PMLedgerEntry, PMTenant
+from .models import PMLedgerEntry, PMTenant, PMDocumentPacket
 
 
 def _money(value, default="0.00"):
@@ -20,6 +20,85 @@ def _money(value, default="0.00"):
 
 def _tenant(workspace, tenant_id):
     return PMTenant.objects.filter(workspace=workspace, pk=tenant_id).first()
+
+
+EVIDENCE_PACKET_TYPE = "TENANT_DEPOSIT_TRANSFER_REVIEW"
+
+
+def _evidence_snapshot(tenant):
+    packet = tenant.document_packets.filter(packet_type=EVIDENCE_PACKET_TYPE).order_by("-id").first()
+    if not packet:
+        return {"status": "NOT_RECONCILED", "paperwork_amount": None,
+                "reported_transfer_amount": None, "difference": None,
+                "description": "", "source_note": "", "affects_rent_balance": False}
+    fields = packet.field_data or {}
+    listed = _money(fields.get("paperwork_amount"))
+    transferred = _money(fields.get("reported_transfer_amount"))
+    return {"status": "NEEDS_REVIEW", "paperwork_amount": str(listed),
+            "reported_transfer_amount": str(transferred),
+            "difference": str((listed-transferred).quantize(Decimal("0.01"))),
+            "description": str(fields.get("description") or ""),
+            "source_note": str(fields.get("source_note") or ""),
+            "affects_rent_balance": False,
+            "last_reviewed_at": fields.get("last_reviewed_at")}
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+@transaction.atomic
+def deposit_transfer_review(request, tenant_id):
+    """Document contradictory deposit evidence without posting financial entries.
+
+    Original proposed security deposit, former-manager transfer and any later
+    authorized rent credit are three distinct concepts.
+    """
+    workspace = _workspace(request)
+    tenant = PMTenant.objects.select_for_update().filter(workspace=workspace, pk=tenant_id).first()
+    if not tenant:
+        return Response({"detail": "Tenant not found."}, status=status.HTTP_404_NOT_FOUND)
+    if request.method == "GET":
+        return Response({"review": _evidence_snapshot(tenant)})
+    def valid_amount(value):
+        try:
+            number = Decimal(str(value)).quantize(Decimal("0.01"))
+        except (ValueError, TypeError, InvalidOperation):
+            return None
+        return number if number.is_finite() and Decimal("0.00") <= number <= Decimal("999999999.99") else None
+    paperwork = valid_amount(request.data.get("paperwork_amount"))
+    transfer = valid_amount(request.data.get("reported_transfer_amount"))
+    source = str(request.data.get("source_note") or "").strip()
+    description = str(request.data.get("description") or "").strip()
+    if paperwork is None or transfer is None:
+        return Response({"detail": "Enter the separate nonnegative paperwork and reported transfer amounts."}, status=400)
+    if len(source) < 15:
+        return Response({"detail": "Note the documentary source (15 or more characters)."}, status=400)
+    if request.data.get("confirmed") is not True:
+        return Response({"detail": "Confirm that the note will not apply a rent credit or establish escrow ownership."}, status=400)
+    latest = tenant.document_packets.select_for_update().filter(packet_type=EVIDENCE_PACKET_TYPE).order_by("-id").first()
+    fields = dict(latest.field_data or {}) if latest else {}
+    fields.update({
+        "paperwork_amount": str(paperwork),
+        "reported_transfer_amount": str(transfer),
+        "description": description[:500],
+        "source_note": source[:1200],
+        "status": "NEEDS_REVIEW",
+        "last_reviewed_at": timezone.now().isoformat(),
+        "reviewed_by_user_id": request.user.pk,
+        "rent_credit_applied": False,
+    })
+    if latest:
+        history = list(fields.get("history") or [])
+        history.append({k: fields[k] for k in ("paperwork_amount", "reported_transfer_amount", "source_note", "last_reviewed_at", "reviewed_by_user_id")})
+        latest.field_data = {**fields, "history": history[-50:]}
+        latest.save(update_fields=["field_data", "updated_at"])
+    else:
+        PMDocumentPacket.objects.create(
+            workspace=workspace, tenant=tenant, lease=_active_lease(tenant),
+            packet_type=EVIDENCE_PACKET_TYPE,
+            template_name="Deposit paperwork and former-manager transfer reconciliation",
+            field_data={**fields, "history": [{k: fields[k] for k in ("paperwork_amount","reported_transfer_amount","source_note","last_reviewed_at","reviewed_by_user_id")}]})
+    return Response({"detail": "Deposit discrepancy noted separately; rent ledger unchanged.",
+                     "review": _evidence_snapshot(tenant)}, status=200)
 
 
 def _snapshot(tenant):
@@ -37,6 +116,8 @@ def _snapshot(tenant):
         "deposit_remaining": str(max(held, Decimal("0.00"))),
         "deposit_applied_to_payments": applied > 0,
         "deposit_notes": str(data.get("deposit_notes") or ""),
+        "deposit_review": _evidence_snapshot(tenant),
+        "deposit_amount_status": "LEGACY_PROFILE_UNVERIFIED",
     }
 
 
