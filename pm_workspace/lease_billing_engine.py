@@ -7,6 +7,8 @@ No security-deposit entries are created by this engine.
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 import calendar
+import hashlib
+import json
 
 from django.db import transaction
 from django.utils import timezone
@@ -262,6 +264,16 @@ def late_fee_history(tenant):
         "waived":str(waivers.get(str(x.id),Decimal("0"))),"reference":x.reference}
         for x in rows[:80]]
 
+def preview_token(tenant,lease,config,through):
+    entries=list(tenant.ledger_entries.order_by("id").values_list(
+        "id","entry_date","entry_type","category","amount","payment_method","reference"))
+    data={"tenant":tenant.id,"lease":lease.id,"lease_rent":str(lease.monthly_rent),
+        "lease_tenant_share":str(lease.tenant_portion),"lease_housing_share":str(lease.assistance_portion),
+        "config":config,"through":str(through),
+        "ledger":[list(map(str,row)) for row in entries]}
+    return hashlib.sha256(json.dumps(data,sort_keys=True,default=str).encode()).hexdigest()
+
+
 @api_view(["GET","PATCH","POST"])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
@@ -302,14 +314,17 @@ def lease_billing(request,tenant_id):
     if through>timezone.localdate() or (through-first(date.fromisoformat(data["billing_start_date"]))).days>1120:
         return Response({"detail":"Only due months in the past 36 months can be billed here."},status=400)
     rows=preview_rows(tenant,lease,data,through)
+    token=preview_token(tenant,lease,data,through)
     fees=late_fee_preview(tenant,lease,data,through) if data.get("late_fee_verified") else []
     if request.data.get("apply") is not True:
-        return Response({"applied":False,"months":rows,"late_fee_candidates":fees,
+        return Response({"applied":False,"months":rows,"late_fee_candidates":fees,"preview_token":token,
             "rent_paid_vs_owed":_json_allocation(_allocation(list(tenant.ledger_entries.all()))),
             "totals":dashboard_totals(tenant),
             "notice":"Payment dates, prior late fees and separate deposit records are not changed by rent billing."})
     if request.data.get("confirmed") is not True:
         return Response({"detail":"Confirm the monthly payer amounts and source documentation."},status=400)
+    if request.data.get("preview_token")!=token:
+        return Response({"detail":"Monthly charges changed since the preview. Refresh and review again before posting."},status=409)
     _,created=apply_rent(tenant,lease,data,through,actor=request.user)
     # Fees are separate and opt-in. Never backdate new late fees automatically
     # in this historical-reconciliation endpoint.
