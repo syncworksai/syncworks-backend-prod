@@ -12,6 +12,7 @@ from .document_views import PMPropertyDocumentViewSet, document_template_catalog
 from .lead_views import lead_convert_to_tenant, lead_detail, lead_note, lead_reply_email, leads
 from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeaseViewSet, PMProspectViewSet, PMUnitViewSet
 from .ledger_audit_views import oldest_first_allocation, external_payment_evidence, verified_monthly_late_fee
+from .handoff_views import property_handoff
 from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
 from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_internally
 from .payer_billing_views import generate_installment_late_fees, payer_profile, rebuild_split_rent
@@ -46,6 +47,7 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/complete_internal/", complete_tenant_onboarding_internally),
     path("tenants/<int:tenant_id>/correct-profile/", correct_tenant_profile),
     path("properties/<int:property_id>/profile/", property_profile),
+    path("properties/<int:property_id>/handoff/", property_handoff),
     path("properties/<int:property_id>/inventory/", property_inventory),
     path("properties/<int:property_id>/inventory/<int:item_id>/", property_inventory_item),
     path("occupancies/", occupancies),
