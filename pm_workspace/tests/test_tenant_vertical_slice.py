@@ -515,7 +515,7 @@ class PMTenantVerticalSliceTests(APITestCase):
         self.assertEqual(mail.outbox[0].to,["housing@example.net"])
         self.assertIn("not an electronic-signature",mail.outbox[0].body.lower())
         second=self.client.post(req_url,{"operation":"REMIND"},format="json",**self.owner_headers())
-        self.assertEqual(second.status_code,429,second.data) if second.status_code==429 else self.assertEqual(second.status_code,200,second.data)
+        self.assertEqual(second.status_code,429,second.data)
         # A received/signed/approved request cannot be verified from a bare click.
         no_evidence=self.client.patch(req_url,{"status":"VERIFIED"},format="json",**self.owner_headers())
         self.assertEqual(no_evidence.status_code,400,no_evidence.data)
