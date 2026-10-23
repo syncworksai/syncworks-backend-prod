@@ -287,3 +287,22 @@ class PMLedgerEntrySerializer(serializers.ModelSerializer):
         if value <= 0:
             raise serializers.ValidationError("Amount must be greater than zero.")
         return value
+    def validate(self, attrs):
+        """Prevent a second manual recurring rent bill when the month is already charged."""
+        attrs = super().validate(attrs)
+        if self.instance is not None:
+            return attrs
+        tenant = attrs.get("tenant")
+        when = attrs.get("entry_date")
+        entry_type = attrs.get("entry_type")
+        category = attrs.get("category")
+        if tenant and when and entry_type == "CHARGE" and category in ("RENT","RENT_TENANT","RENT_HOUSING"):
+            same_payer = ("RENT_HOUSING",) if category == "RENT_HOUSING" else ("RENT","RENT_TENANT")
+            if PMLedgerEntry.objects.filter(
+                tenant=tenant,entry_type="CHARGE",category__in=same_payer,
+                entry_date__year=when.year,entry_date__month=when.month).exists():
+                raise serializers.ValidationError({"detail":
+                    f"{when:%B %Y} already has a rent charge for this payer. "
+                    "Use Monthly Rent Schedule > Review to adjust the amount without duplicating it."})
+        return attrs
+
