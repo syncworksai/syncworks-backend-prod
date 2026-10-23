@@ -22,6 +22,8 @@ from .models import PMDocumentPacket, PMProperty
 PACKET_TYPE = "PROPERTY_HANDOFF"
 CASE_KINDS = {"NEW_MANAGEMENT", "SELF_MANAGE", "PURCHASE", "INITIAL_SETUP", "OTHER"}
 ASSISTANCE_TYPES = {"NONE", "HOUSING_VOUCHER", "OTHER_ASSISTANCE"}
+RENTAL_CHANNELS = {"DIRECT", "FURNISHED_FINDER", "CORPORATE", "OTHER"}
+MANAGEMENT_MODELS = {"OWNER_MANAGED", "THIRD_PARTY_MANAGER"}
 TASK_STATUSES = {"NOT_STARTED", "REQUESTED", "RECEIVED", "VERIFIED", "NOT_APPLICABLE"}
 MONEY_STATES = {"UNKNOWN", "REPORTED", "DOCUMENTED", "DISPUTED", "RECONCILED"}
 CASE_STATUSES = {"IN_PROGRESS", "AWAITING_DOCUMENTS", "AWAITING_APPROVAL", "READY_TO_REVIEW", "COMPLETED"}
@@ -36,6 +38,11 @@ GENERAL_TASKS = [
     {"key":"open_work", "title":"Open repairs, inspections, keys and warranties", "why":"Transfer work orders and prevent missed safety issues", "required":True},
     {"key":"insurance_tax", "title":"Insurance, tax and contact records", "why":"Keep owner and vendor records available", "required":False},
 ]
+FURNISHED_TASKS = [
+    {"key":"furnished_inventory","title":"Furnished unit inventory and condition photos","why":"Document furnishings and responsibility for any damage","required":True},
+    {"key":"midterm_lease","title":"Mid-term rental lease, utilities and term","why":"Use state-appropriate terms and confirm booking terms, not a short-stay template","required":True},
+    {"key":"movein_arrival","title":"Move-in instructions and access verification","why":"Document arrival, keys, parking and emergency contact","required":False},
+]
 ASSISTANCE_TASKS = [
     {"key":"provider_packet", "title":"Local assistance administrator's change packet", "why":"Obtain the administrator-specific forms; requirements vary by jurisdiction", "required":True},
     {"key":"provider_owner_docs", "title":"Ownership / agency proof and tax or direct-deposit forms", "why":"Submit only the documents required by the specific administrator", "required":True},
@@ -45,12 +52,13 @@ ASSISTANCE_TASKS = [
     {"key":"provider_payment", "title":"Assistance payment history and outstanding funds", "why":"Separate payments to former manager from money held or paid to you", "required":True},
 ]
 
-def tasks_for(assistance_type):
-    return GENERAL_TASKS + (ASSISTANCE_TASKS if assistance_type != "NONE" else [])
+def tasks_for(assistance_type, rental_channel="DIRECT"):
+    return GENERAL_TASKS + (FURNISHED_TASKS if rental_channel == "FURNISHED_FINDER" else []) + (ASSISTANCE_TASKS if assistance_type != "NONE" else [])
 
 def defaults():
     return {
         "case_kind": "NEW_MANAGEMENT", "status": "IN_PROGRESS",
+        "rental_channel": "DIRECT", "management_model": "OWNER_MANAGED",
         "effective_date": "", "former_manager": {"name":"", "email":"", "phone":"", "notice_sent_date":""},
         "assistance": {"type":"NONE", "administrator":"", "administrator_website":"", "contact_email":"",
                        "contract_status":"UNKNOWN", "payee_status":"UNKNOWN"},
@@ -116,7 +124,7 @@ def _validate(workspace, property_id, prior, updates):
     if not isinstance(updates, dict):
         raise ValueError("Invalid handoff data.")
     allowed = {"case_kind", "status", "effective_date", "former_manager", "assistance", "tasks",
-               "opening_balances", "notes"}
+               "opening_balances", "notes", "rental_channel", "management_model"}
     if set(updates) - allowed:
         raise ValueError("Unsupported handoff field.")
     data = {**prior, "property_id": property_id}
@@ -128,6 +136,14 @@ def _validate(workspace, property_id, prior, updates):
         case_status = str(updates["status"]).upper()
         if case_status not in CASE_STATUSES: raise ValueError("Invalid case status.")
         data["status"] = case_status
+    if "rental_channel" in updates:
+        channel = str(updates["rental_channel"]).upper()
+        if channel not in RENTAL_CHANNELS: raise ValueError("Invalid rental channel.")
+        data["rental_channel"] = channel
+    if "management_model" in updates:
+        model = str(updates["management_model"]).upper()
+        if model not in MANAGEMENT_MODELS: raise ValueError("Invalid management model.")
+        data["management_model"] = model
     if "effective_date" in updates:
         data["effective_date"] = _valid_iso(updates["effective_date"])
     if "notes" in updates:
@@ -155,7 +171,7 @@ def _validate(workspace, property_id, prior, updates):
     if "tasks" in updates:
         raw = updates["tasks"]
         if not isinstance(raw, dict): raise ValueError("Invalid checklist.")
-        allowed_tasks = {task["key"] for task in GENERAL_TASKS + ASSISTANCE_TASKS}
+        allowed_tasks = {task["key"] for task in GENERAL_TASKS + ASSISTANCE_TASKS + FURNISHED_TASKS}
         if set(raw) - allowed_tasks: raise ValueError("Unsupported checklist task.")
         result = dict(data.get("tasks") or {})
         for key, value in raw.items():
@@ -181,7 +197,7 @@ def _validate(workspace, property_id, prior, updates):
             raise ValueError("Provide no more than 100 opening balances.")
         data["opening_balances"] = [_money_record(item) for item in raw]
     if data.get("status") == "COMPLETED":
-        mandatory = [t["key"] for t in tasks_for(data.get("assistance", {}).get("type", "NONE"))
+        mandatory = [t["key"] for t in tasks_for(data.get("assistance", {}).get("type", "NONE"), data.get("rental_channel", "DIRECT"))
                      if t["required"]]
         if any((data.get("tasks", {}).get(key) or {}).get("status") not in {"VERIFIED", "NOT_APPLICABLE"} for key in mandatory):
             raise ValueError("Complete or mark each required step not applicable before closing the handoff.")
