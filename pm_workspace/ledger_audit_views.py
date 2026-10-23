@@ -196,3 +196,77 @@ def external_payment_evidence(request, tenant_id):
     packet.field_data = data
     packet.save(update_fields=["field_data", "updated_at"])
     return Response({"record": row, "records": records, "affects_ledger_balance": False}, status=201)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@transaction.atomic
+def verified_monthly_late_fee(request, tenant_id):
+    """Preview/apply a single documented fee for an unpaid tenant rent portion.
+
+    Never assess a fee for MHA's unpaid share, and never duplicate a fee
+    already recorded for the same rental month.
+    """
+    tenant = _tenant_for_workspace(_workspace(request), tenant_id)
+    if not tenant:
+        return Response({"detail": "Tenant not found."}, status=404)
+    month = str(request.data.get("month") or "")
+    try:
+        start = date.fromisoformat(month + "-01")
+        if start.strftime("%Y-%m") != month:
+            raise ValueError()
+    except ValueError:
+        return Response({"detail": "Enter a valid YYYY-MM month."}, status=400)
+    profile = _profile(tenant)
+    due_day = request.data.get("due_day", profile.get("rent_due_day") or 1)
+    grace = request.data.get("grace_days", profile.get("grace_days") or 0)
+    try:
+        due_day, grace = int(due_day), int(grace)
+    except (ValueError, TypeError):
+        return Response({"detail": "Enter an integer rent due day and grace days."}, status=400)
+    if not (1 <= due_day <= 28 and 0 <= grace <= 31):
+        return Response({"detail": "Due day must be 1–28 and grace days 0–31."}, status=400)
+    cutoff = date(start.year, start.month, due_day) + timedelta(days=grace)
+    fee_day = cutoff + timedelta(days=1)
+    if fee_day > timezone.localdate():
+        return Response({"detail": "This late fee is not due yet."}, status=400)
+    fee = dollars(request.data.get("amount"))
+    if not fee:
+        return Response({"detail": "Provide the late-fee amount from the signed lease."}, status=400)
+    source = str(request.data.get("source_note") or "").strip()
+    if len(source) < 12:
+        return Response({"detail": "Cite the signed lease clause and relevant payment dates."}, status=400)
+    rows = list(tenant.ledger_entries.select_for_update().order_by("entry_date", "id"))
+    existing = [x for x in rows if x.category == "LATE_FEE"
+                and (x.reference.endswith(f"-{month}") or (x.entry_date.year, x.entry_date.month) == (start.year, start.month))
+                and x.entry_type in ("CHARGE", "ADJUSTMENT")]
+    if existing:
+        return Response({"detail": f"A late fee is already recorded for {month}; verify before adding another.",
+                         "existing_fee_ids": [x.id for x in existing]}, status=409)
+    tenant_month_rent = [x for x in rows if x.entry_type == "CHARGE"
+                         and x.category in ("RENT", "RENT_TENANT")
+                         and (x.entry_date.year, x.entry_date.month) == (start.year, start.month)]
+    if not tenant_month_rent:
+        return Response({"detail": "Post/reconcile tenant rent for this month before reviewing its late fee."}, status=409)
+    as_of = _allocation(rows, cutoff=cutoff)
+    outstanding = sum((o["remaining"] for o in as_of["obligations"]
+                       if o["payer"] == "TENANT" and o["category"] in ("RENT", "RENT_TENANT")
+                       and (o["entry_date"].year, o["entry_date"].month) == (start.year, start.month)),
+                      Decimal("0.00"))
+    eligible_for_review = outstanding > 0
+    preview = {"month": month, "fee_date": str(fee_day), "unpaid_tenant_rent_at_grace": str(outstanding),
+               "fee": str(fee), "eligible_for_review": eligible_for_review,
+               "applied": False, "note": "Lease terms, payment timing and legal eligibility must be confirmed by the owner."}
+    if request.data.get("apply") is not True:
+        return Response(preview)
+    if not eligible_for_review:
+        return Response({"detail": "Tenant rent was paid by the configured grace deadline; no late fee may be posted by this workflow."}, status=409)
+    if request.data.get("lease_verified") is not True or request.data.get("confirmed") is not True:
+        return Response({"detail": "Verify the signed lease provision, payment dates and amount before applying."}, status=400)
+    entry = PMLedgerEntry.objects.create(
+        workspace=tenant.workspace, tenant=tenant, lease=_active_lease(tenant),
+        entry_date=fee_day, entry_type=PMLedgerEntry.EntryType.CHARGE,
+        amount=fee, category="LATE_FEE", reference=f"VERIFIED-LATE-{tenant.id}-{month}",
+        memo=f"Reviewed lease fee for {month}: {source}", created_by=request.user,
+    )
+    return Response({**preview, "applied": True, "ledger_entry_id": entry.id})
