@@ -97,7 +97,10 @@ def _signed(entry):
 
 def _tenant_account(tenant, as_of=None):
     as_of = as_of or timezone.localdate()
-    entries = list(tenant.ledger_entries.order_by("entry_date", "id"))
+    all_entries = list(tenant.ledger_entries.order_by("entry_date", "id"))
+    # Escrow/deposit charges and their reversals are not rent payments.
+    # Historic imports may contain either SECURITY_DEPOSIT or SECURITY DEPOSIT.
+    entries = [e for e in all_entries if e.category.strip().upper().replace(" ", "_") != "SECURITY_DEPOSIT"]
     balance = sum((_signed(entry) for entry in entries), Decimal("0.00"))
     charges_due = sum((_signed(entry) for entry in entries if entry.entry_date <= as_of), Decimal("0.00"))
     future = balance - charges_due
@@ -107,7 +110,7 @@ def _tenant_account(tenant, as_of=None):
     past_due_cutoff = current_due_date if as_of >= current_due_date else (current_due_date.replace(day=1) - timedelta(days=1))
     past_due = sum((_signed(entry) for entry in entries if entry.entry_date < past_due_cutoff), Decimal("0.00"))
     late_fees = sum((entry.amount for entry in entries if entry.entry_type == PMLedgerEntry.EntryType.CHARGE and entry.category == "LATE_FEE"), Decimal("0.00"))
-    deposits = sum((_signed(entry) for entry in entries if entry.category == "SECURITY_DEPOSIT"), Decimal("0.00"))
+    deposits = sum((_signed(entry) for entry in all_entries if entry.category.strip().upper().replace(" ", "_") == "SECURITY_DEPOSIT"), Decimal("0.00"))
     last_payment = next((entry for entry in reversed(entries) if entry.entry_type == PMLedgerEntry.EntryType.PAYMENT), None)
     return {
         "tenant_id": tenant.id,
