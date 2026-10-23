@@ -680,3 +680,26 @@ class PMTenantVerticalSliceTests(APITestCase):
         denied=self.client.get(f"/api/v1/pm-hub/properties/{self.property.id}/360/",
              **self.owner_headers())
         self.assertEqual(denied.status_code,403,denied.data)
+
+
+    def test_legacy_deposit_reversal_cannot_reduce_rent_due(self):
+        self.client.force_authenticate(self.owner)
+        PMLedgerEntry.objects.create(
+            workspace=self.workspace,tenant=self.tenant,entry_date="2026-03-01",
+            entry_type="CHARGE",category="RENT_TENANT",amount=Decimal("1400.00"))
+        PMLedgerEntry.objects.create(
+            workspace=self.workspace,tenant=self.tenant,entry_date="2026-03-01",
+            entry_type="CREDIT",category="SECURITY DEPOSIT",amount=Decimal("1500.00"),
+            memo="Reversal of pre-transfer security deposit charge")
+        summary=self.client.get("/api/v1/pm-hub/billing/summary/",**self.owner_headers())
+        self.assertEqual(summary.status_code,200,summary.data)
+        self.assertEqual(summary.data["tenants"][0]["balance"],"1400.00")
+        payer=self.client.get(f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/payer-profile/",
+                              **self.owner_headers())
+        self.assertEqual(payer.status_code,200,payer.data)
+        self.assertEqual(payer.data["buckets"]["tenant_owes"],"1400.00")
+        allocation=self.client.get(f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/allocations/",
+                                   **self.owner_headers())
+        self.assertEqual(allocation.status_code,200,allocation.data)
+        self.assertEqual(allocation.data["tenant_unpaid"],"1400.00")
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(),2)
