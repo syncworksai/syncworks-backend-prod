@@ -63,11 +63,11 @@ def scope(request, property_id):
     return workspace, obj
 
 def _packet(workspace, property_id, create=False):
-    for p in PMDocumentPacket.objects.filter(workspace=workspace, packet_type=PACKET_TYPE).order_by("-id"):
-        if isinstance(p.field_data, dict) and p.field_data.get("property_id") == property_id:
-            return p
-    if not create:
-        return None
+    p = PMDocumentPacket.objects.filter(
+        workspace=workspace, packet_type=PACKET_TYPE, field_data__property_id=property_id
+    ).order_by("-id").first()
+    if p or not create:
+        return p
     fields = defaults()
     fields["property_id"] = property_id
     return PMDocumentPacket.objects.create(
@@ -170,6 +170,8 @@ def _validate(workspace, property_id, prior, updates):
                 doc_id = int(doc_id)
             if state == "VERIFIED" and not (note or doc_id):
                 raise ValueError("Verified checklist steps need a document or source note.")
+            if state == "NOT_APPLICABLE" and not note:
+                raise ValueError("Marking a task not applicable requires an explanation.")
             result[key] = {"status": state, "note": note, "document_id": doc_id,
                            "updated_at": timezone.now().isoformat()}
         data["tasks"] = result
