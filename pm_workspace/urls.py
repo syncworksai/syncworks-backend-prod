@@ -18,6 +18,8 @@ from .document_intake_views import property_document_intake
 from .document_request_views import document_requests, document_request_detail, analyze_document_correspondence, my_tenant_document_requests
 from .lease_audit_views import original_lease_rent_review
 from .provider_catalog_views import provider_forms
+from .staff_portal_views import owner_staff, accept_staff, update_staff, employee_dashboard, owner_tasks, task_status
+from .investor_workspace_views import investor_invites, revoke_investor, investor_accept, investor_portfolios, investor_file, owner_statements, owner_shared_files, owner_unshare, investor_messages
 from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
 from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_internally
 from .payer_billing_views import generate_installment_late_fees, payer_profile, rebuild_split_rent
@@ -47,6 +49,21 @@ legacy_ledger_list = PMLedgerEntryViewSet.as_view({"get": "list", "post": "creat
 
 urlpatterns = [
     path("dashboard/command-center/", command_center),
+    path("access/team/", owner_staff),
+    path("access/team/<int:member_id>/", update_staff),
+    path("access/team/accept/", accept_staff),
+    path("access/team/dashboard/", employee_dashboard),
+    path("access/tasks/", owner_tasks),
+    path("access/tasks/<int:task_id>/", task_status),
+    path("access/investors/", investor_invites),
+    path("access/investors/<int:grant_id>/", revoke_investor),
+    path("access/investors/accept/", investor_accept),
+    path("access/investors/portfolio/", investor_portfolios),
+    path("access/investors/files/<int:document_id>/", investor_file),
+    path("access/investors/messages/", investor_messages),
+    path("access/investors/statements/", owner_statements),
+    path("access/investors/shared-files/", owner_shared_files),
+    path("access/investors/shared-files/<int:share_id>/", owner_unshare),
     path("tenants/<int:tenant_id>/complete-internally/", complete_tenant_onboarding_internally),
     path("tenants/<int:tenant_id>/complete-internally", complete_tenant_onboarding_internally),
     path("tenants/<int:tenant_id>/complete_internal/", complete_tenant_onboarding_internally),
