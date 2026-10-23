@@ -329,3 +329,34 @@ class PMTenantVerticalSliceTests(APITestCase):
         records = self.client.get(url, **self.owner_headers())
         self.assertEqual(records.status_code, 200, records.data)
         self.assertEqual(len(records.data["records"]), 3)
+
+
+    def test_reviewed_late_fee_needs_unpaid_tenant_rent_and_cannot_duplicate(self):
+        lease = self.create_active_lease()
+        lease.section8 = True
+        lease.save()
+        self.client.force_authenticate(self.owner)
+        PMLedgerEntry.objects.create(
+            workspace=self.workspace, tenant=self.tenant, lease=lease,
+            entry_date="2026-06-01", entry_type="CHARGE",
+            amount=Decimal("1407.00"), category="RENT_TENANT",
+            created_by=self.owner,
+        )
+        payload = {"month": "2026-06", "amount": "50.00", "due_day": 1,
+                   "grace_days": 0, "source_note": "Signed lease says $50 after first"}
+        url = f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/verified-late-fee/"
+        preview = self.client.post(url, payload, format="json", **self.owner_headers())
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data["eligible_for_review"], True)
+        self.assertEqual(preview.data["unpaid_tenant_rent_at_grace"], "1407.00")
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(), 1)
+        blocked = self.client.post(url, {**payload, "apply": True}, format="json", **self.owner_headers())
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+        applied = self.client.post(url, {**payload, "apply": True, "confirmed": True,
+                                         "lease_verified": True}, format="json", **self.owner_headers())
+        self.assertEqual(applied.status_code, 200, applied.data)
+        self.assertTrue(applied.data["applied"])
+        again = self.client.post(url, {**payload, "apply": True, "confirmed": True,
+                                       "lease_verified": True}, format="json", **self.owner_headers())
+        self.assertEqual(again.status_code, 409, again.data)
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant, category="LATE_FEE").count(), 1)
