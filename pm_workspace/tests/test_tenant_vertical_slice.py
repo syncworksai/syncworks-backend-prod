@@ -744,3 +744,88 @@ class PMTenantVerticalSliceTests(APITestCase):
             {"paperwork_amount":"1500.00","reported_transfer_amount":"1485.00","confirmed":True,
              "source_note":"The owner records and manager statement differ"},format="json")
         self.assertEqual(result.status_code,403,result.data)
+
+
+    def test_lease_builder_reconciles_split_and_preserves_receipts_fees_and_escrow(self):
+        from django.core.management import call_command
+        import io
+        lease=self.create_active_lease()
+        lease.section8=True
+        lease.monthly_rent=Decimal("1485.00")
+        lease.tenant_portion=Decimal("1407.00")
+        lease.assistance_portion=Decimal("78.00")
+        lease.save()
+        start=timezone.localdate().replace(day=1)
+        label=start.strftime("%Y-%m")
+        for type_,category,amount in (
+            ("CHARGE","RENT_TENANT","1400.00"),
+            ("CHARGE","LATE_FEE","50.00"),
+            ("CREDIT","SECURITY DEPOSIT","1500.00"),
+            ("PAYMENT","RENT_TENANT","500.00")
+        ):
+            PMLedgerEntry.objects.create(
+                workspace=self.workspace,tenant=self.tenant,lease=lease,
+                entry_date=start,entry_type=type_,category=category,amount=Decimal(amount))
+        self.client.force_authenticate(self.owner)
+        url=f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/lease-builder/"
+        setup={
+            "active":True,"billing_start_date":str(start),"due_day":1,"grace_days":5,
+            "late_fee_amount":"50.00","late_fee_verified":True,"auto_late_fees":False,
+            "verified_through":label,"source_note":"Signed lease and MHA monthly allocation verified",
+            "monthly_overrides":{label:{"tenant":"1407.00","housing":"78.00","abated":"0.00","note":"Voucher allocation"}}
+        }
+        saved=self.client.patch(url,setup,format="json",**self.owner_headers())
+        self.assertEqual(saved.status_code,200,saved.data)
+        preview=self.client.post(url,{},format="json",**self.owner_headers())
+        self.assertEqual(preview.status_code,200,preview.data)
+        line=preview.data["months"][0]
+        self.assertEqual(line["adjust_tenant"],"7.00")
+        self.assertEqual(line["adjust_housing"],"78.00")
+        original_count=PMLedgerEntry.objects.filter(tenant=self.tenant).count()
+        self.assertEqual(original_count,4)
+        applied=self.client.post(url,{"apply":True,"confirmed":True},
+            format="json",**self.owner_headers())
+        self.assertEqual(applied.status_code,200,applied.data)
+        self.assertEqual(len(applied.data["created_entry_ids"]),2)
+        second=self.client.post(url,{"apply":True,"confirmed":True},
+            format="json",**self.owner_headers())
+        self.assertEqual(second.status_code,200,second.data)
+        self.assertEqual(second.data["created_entry_ids"],[])
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(),6)
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant,entry_type="PAYMENT").count(),1)
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant,category="LATE_FEE").count(),1)
+        self.assertEqual(applied.data["totals"]["housing_paid_recorded"],"0")
+        self.assertEqual(applied.data["totals"]["housing_owed"],"78.00")
+        dry=io.StringIO()
+        call_command("sync_pm_lease_billing",dry_run=True,stdout=dry)
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(),6)
+        call_command("sync_pm_lease_billing",stdout=io.StringIO())
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(),6)
+
+    def test_fee_waiver_preserves_original_and_cannot_credit_rent_in_fifo(self):
+        lease=self.create_active_lease()
+        start=timezone.localdate().replace(day=1)
+        charge=PMLedgerEntry.objects.create(workspace=self.workspace,tenant=self.tenant,
+            lease=lease,entry_date=start,entry_type="CHARGE",category="RENT_TENANT",
+            amount=Decimal("1250.00"))
+        fee=PMLedgerEntry.objects.create(workspace=self.workspace,tenant=self.tenant,
+            lease=lease,entry_date=start,entry_type="CHARGE",category="LATE_FEE",
+            amount=Decimal("50.00"))
+        self.client.force_authenticate(self.owner)
+        url=f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/late-fees/{fee.id}/waive/"
+        denied=self.client.post(url,{"reason":"Review","confirmed":False},
+            format="json",**self.owner_headers())
+        self.assertEqual(denied.status_code,400,denied.data)
+        waived=self.client.post(url,{"reason":"Owner waived late fee","confirmed":True},
+            format="json",**self.owner_headers())
+        self.assertEqual(waived.status_code,201,waived.data)
+        duplicated=self.client.post(url,{"reason":"Owner waived late fee","confirmed":True},
+            format="json",**self.owner_headers())
+        self.assertEqual(duplicated.status_code,409,duplicated.data)
+        allocation=self.client.get(
+            f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/allocations/",
+            **self.owner_headers())
+        self.assertEqual(allocation.status_code,200,allocation.data)
+        self.assertEqual(allocation.data["tenant_unpaid"],"1250.00")
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant,category="LATE_FEE").count(),2)
+        self.assertEqual(PMLedgerEntry.objects.get(pk=fee.id).amount,Decimal("50.00"))
