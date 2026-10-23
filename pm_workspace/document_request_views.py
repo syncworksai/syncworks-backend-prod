@@ -276,6 +276,8 @@ def my_tenant_document_requests(request):
         qs=PMDocumentPacket.objects.filter(workspace_id=tenant.workspace_id,packet_type=TYPE)
         for packet in qs:
             fields=packet.field_data or {}
+            if not fields.get("sent_at"):
+                continue
             if (fields.get("recipient_role")!="TENANT" or
                 (fields.get("recipient_email") or "").lower()!=tenant.email.lower() or
                 fields.get("property_id") not in property_ids):continue
