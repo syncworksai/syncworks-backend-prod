@@ -158,6 +158,8 @@ class PMTenantSerializer(serializers.ModelSerializer):
     def get_balance(self, obj):
         total = Decimal("0.00")
         for entry in obj.ledger_entries.all():
+            if entry.category.strip().upper().replace(" ", "_") == "SECURITY_DEPOSIT":
+                continue  # Escrow/deposit reversals do not reduce collectible rent.
             if entry.entry_type in {PMLedgerEntry.EntryType.CHARGE, PMLedgerEntry.EntryType.ADJUSTMENT}:
                 total += entry.amount
             else:
