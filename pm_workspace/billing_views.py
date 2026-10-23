@@ -216,6 +216,17 @@ def generate_tenant_charges(request, tenant_id):
             due = _due_date(month_start, due_day)
             if due < start_date or due > through_date:
                 continue
+            # Historical voucher allocations may have changed each month.
+            # They must be reviewed separately rather than cloned from today's lease.
+            if profile.get("section8") and (month_start.year, month_start.month) != (through_date.year, through_date.month):
+                continue
+            existing_rent = tenant.ledger_entries.filter(
+                entry_date__year=month_start.year, entry_date__month=month_start.month,
+                entry_type=PMLedgerEntry.EntryType.CHARGE,
+                category__in=["RENT", "RENT_TENANT", "RENT_HOUSING"],
+            )
+            if existing_rent.exists():
+                continue
             ref = f"AUTO-RENT-{tenant.id}-{month_start:%Y-%m}"
             if not tenant.ledger_entries.filter(reference=ref).exists():
                 entry = PMLedgerEntry.objects.create(workspace=workspace, tenant=tenant, lease=lease, entry_date=due, entry_type=PMLedgerEntry.EntryType.CHARGE, amount=monthly_rent, category="RENT", reference=ref, memo=f"Automatic rent charge for {month_start:%B %Y}", created_by=request.user)
