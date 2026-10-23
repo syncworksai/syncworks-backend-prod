@@ -76,7 +76,24 @@ def _allocation(rows, cutoff=None):
         payer = _bucket(source)
         remaining = source.amount
         target_month = None
-        if kind == "CREDIT" and source.reference.startswith("RECON-") and source.category in ("RENT", "RENT_TENANT", "RENT_HOUSING"):
+        if kind == "CREDIT" and source.reference.startswith("LATE-WAIVE-"):
+            try:fee_id=int(source.reference.split("LATE-WAIVE-")[1])
+            except (TypeError,ValueError):fee_id=None
+            candidates=[x for x in obligations if x["id"]==fee_id and x["category"]=="LATE_FEE" and x["remaining"]>0]
+            for debt in candidates:
+                part=min(debt["remaining"],remaining)
+                debt["remaining"]-=part
+                remaining-=part
+                applied.append({"source_id":source.id,"source_date":str(source.entry_date),
+                    "source_type":"LATE_FEE_WAIVER","charge_id":debt["id"],
+                    "charge_month":debt["entry_date"].strftime("%Y-%m"),
+                    "category":"LATE_FEE","payer":"TENANT","amount":str(part)})
+            # A fee waiver cannot be treated as a rent payment.
+            continue
+        if kind == "CREDIT" and source.reference.startswith("LEASE-BILL-") and source.category in ("RENT_TENANT","RENT_HOUSING"):
+            found=re.search(r"LEASE-BILL-\d+-(\d{4}-\d{2})-",source.reference)
+            target_month=found.group(1) if found else None
+        elif kind == "CREDIT" and source.reference.startswith("RECON-") and source.category in ("RENT", "RENT_TENANT", "RENT_HOUSING"):
             found = re.search(r"RECON-\d+-(\d{4}-\d{2})-", source.reference)
             target_month = found.group(1) if found else None
         candidates = [x for x in obligations if x["payer"] == payer and x["remaining"] > 0]
