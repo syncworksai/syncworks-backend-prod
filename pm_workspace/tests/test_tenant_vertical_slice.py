@@ -218,3 +218,66 @@ class PMTenantVerticalSliceTests(APITestCase):
         self.assertEqual(response.status_code, 403, response.data)
         self.tenant.refresh_from_db()
         self.assertIsNone(self.tenant.user)
+
+
+    def test_monthly_section8_reconciliation_preserves_history_and_is_idempotent(self):
+        lease = self.create_active_lease()
+        lease.section8 = True
+        lease.monthly_rent = Decimal("1485.00")
+        lease.tenant_portion = Decimal("1485.00")
+        lease.assistance_portion = Decimal("0.00")
+        lease.save()
+        self.client.force_authenticate(self.owner)
+        month = "2026-08"
+        for entry_type, amount, category in (
+            ("CHARGE", "1400.00", "RENT_TENANT"),
+            ("CHARGE", "50.00", "LATE_FEE"),
+            ("PAYMENT", "750.00", "RENT_TENANT"),
+        ):
+            PMLedgerEntry.objects.create(
+                workspace=self.workspace, tenant=self.tenant, lease=lease,
+                entry_date="2026-08-06", entry_type=entry_type,
+                amount=Decimal(amount), category=category, created_by=self.owner,
+            )
+        payload = {
+            "month": month, "contract_rent": "1485.00",
+            "tenant_portion": "1485.00", "housing_portion": "0.00",
+            "source_note": "MHA confirmed August tenant full-rent obligation",
+        }
+        url = f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/reconcile-month/"
+        count = PMLedgerEntry.objects.filter(tenant=self.tenant).count()
+        preview = self.client.post(url, payload, format="json", **self.owner_headers())
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertFalse(preview.data["applied"])
+        self.assertEqual(preview.data["tenant_charge_adjustment"], "85.00")
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(), count)
+        blocked = self.client.post(url, {**payload, "apply": True}, format="json", **self.owner_headers())
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+        applied = self.client.post(url, {**payload, "apply": True, "confirmed": True}, format="json", **self.owner_headers())
+        self.assertEqual(applied.status_code, 200, applied.data)
+        self.assertEqual(applied.data["preserved_late_fees"], "50.00")
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant, entry_type="PAYMENT").count(), 1)
+        again = self.client.post(url, {**payload, "apply": True, "confirmed": True}, format="json", **self.owner_headers())
+        self.assertEqual(again.status_code, 200, again.data)
+        self.assertEqual(again.data["tenant_charge_adjustment"], "0.00")
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(), count + 1)
+
+    def test_reconcile_abatement_only_bills_confirmed_tenant_portion(self):
+        lease = self.create_active_lease()
+        lease.section8 = True
+        lease.monthly_rent = Decimal("1485.00")
+        lease.save()
+        self.client.force_authenticate(self.owner)
+        url = f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/reconcile-month/"
+        payload = {
+            "month": "2026-10", "contract_rent": "1485.00",
+            "tenant_portion": "1108.00", "housing_portion": "0.00",
+            "exclusion_reason": "MHA housing share abated from October 1; not assessed to tenant",
+            "source_note": "October inspection abatement and September rent determination",
+            "apply": True, "confirmed": True,
+        }
+        response = self.client.post(url, payload, format="json", **self.owner_headers())
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["excluded_from_charges"], "377.00")
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant, category="RENT_HOUSING").count(), 0)
+        self.assertEqual(PMLedgerEntry.objects.get(tenant=self.tenant, category="RENT_TENANT").amount, Decimal("1108.00"))
