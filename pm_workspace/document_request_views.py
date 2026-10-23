@@ -137,7 +137,8 @@ def _send_email(workspace, prop, fields, reminder=False):
         subject=subject,body=body,
         from_email=getattr(settings,"DEFAULT_FROM_EMAIL","notifications@syncworksapp.com"),
         to=[fields["recipient_email"]],reply_to=[reply] if reply else None)
-    return email.send(fail_silently=False)
+    if email.send(fail_silently=False) != 1:
+        raise RuntimeError("No outbound message accepted by email service.")
 
 @api_view(["GET","POST"])
 @permission_classes([IsAuthenticated])
@@ -184,7 +185,7 @@ def document_request_detail(request,property_id,request_id):
                 return Response({"detail":"Choose SEND or REMIND explicitly."},status=400)
             if data.get("status") in CLOSED:
                 return Response({"detail":"Closed requests cannot be sent."},status=409)
-            last=data.get("last_reminder_at") if op=="REMIND" else data.get("sent_at")
+            last=(data.get("last_reminder_at") or data.get("sent_at")) if op=="REMIND" else data.get("sent_at")
             if op=="REMIND" and not data.get("sent_at"):
                 return Response({"detail":"Send the original request before a reminder."},status=409)
             if last:
