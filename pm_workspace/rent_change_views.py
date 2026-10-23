@@ -117,6 +117,9 @@ def _validate_fields(raw, tenant, lease, existing=None):
             raise ValueError("Invalid workflow state.")
     if len(str(data.get("notes") or ""))>2500:
         raise ValueError("Notes too long.")
+    if data["status"] in {"SIGNED","SUBMITTED","UNDER_REVIEW","APPROVED","EFFECTIVE"}:
+        if data.get("owner_signature_status") != "SIGNED_VERIFIED" or data.get("tenant_signature_status") != "SIGNED_VERIFIED":
+            raise ValueError("Both required signatures must be verified before recording this stage.")
     if data["status"] in {"APPROVED","EFFECTIVE"}:
         if data.get("administrator_approval_status") != "APPROVED" and lease and lease.section8:
             raise ValueError("Record written assistance-administrator approval first.")
@@ -141,6 +144,9 @@ def property_rent_change_plans(request,property_id):
     if not tenant:
         return Response({"detail":"Select an existing tenant in this portfolio first."},status=400)
     lease=PMLease.objects.filter(workspace=workspace,tenant=tenant).order_by("-start_date","-id").first()
+    if not ((lease and lease.unit_id and lease.unit.property_id == prop.id)
+            or (tenant.property_name or "").strip().casefold() == prop.name.strip().casefold()):
+        return Response({"detail":"Tenant is not linked to this property. Verify the existing property and tenancy before creating a rent change."},status=400)
     initial={
         "tenant_id":tenant.id,"property_id":prop.id,
         "current_rent":str(lease.monthly_rent if lease else tenant.monthly_rent or "0.00"),
