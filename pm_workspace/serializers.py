@@ -136,6 +136,10 @@ class PMTenantSerializer(serializers.ModelSerializer):
             from .views import _requested_workspace
             if linked_property.workspace_id != _requested_workspace(self.context["request"]).id:
                 raise serializers.ValidationError({"property":"Property must belong to the active portfolio."})
+        if self.instance and "property" in attrs and attrs["property"] != self.instance.property:
+            raise serializers.ValidationError({"property":"Use the confirmed Property 360 linking workflow to change an existing tenant's property."})
+        if linked_property and not attrs.get("property_name") and not self.instance:
+            attrs["property_name"]=linked_property.name
         lease_start = attrs.get("lease_start") or getattr(self.instance, "lease_start", None)
         lease_end = attrs.get("lease_end") or getattr(self.instance, "lease_end", None)
         if lease_start and lease_end and lease_end < lease_start:
