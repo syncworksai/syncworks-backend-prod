@@ -76,6 +76,13 @@ def original_lease_rent_review(request,tenant_id):
         "will_change_historical_ledger":False,"will_change_payer_allocation":False,
     }
     if request.data.get("apply") is not True:return Response({"preview":payload,"applied":False})
+    # An approved later rent change may already be the current monthly amount.
+    approved_later=PMDocumentPacket.objects.filter(
+        workspace=workspace,tenant=tenant,packet_type="RENT_CHANGE_PLAN")
+    if any((p.field_data or {}).get("status") in {"APPROVED","EFFECTIVE"} and
+           (p.field_data or {}).get("proposed_effective_date","") > str(lease.start_date)
+           for p in approved_later):
+        return Response({"detail":"A later approved rent change exists. Review rent history before changing the current lease amount."},status=409)
     if request.data.get("confirmed") is not True:
         return Response({"detail":"Explicitly confirm the original signed lease and effective date."},status=400)
     old=lease.monthly_rent
