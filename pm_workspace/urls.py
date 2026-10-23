@@ -15,7 +15,7 @@ from .ledger_audit_views import oldest_first_allocation, external_payment_eviden
 from .handoff_views import property_handoff
 from .rent_change_views import property_rent_change_plans, update_rent_change_plan
 from .document_intake_views import property_document_intake
-from .document_request_views import document_requests, document_request_detail, analyze_document_correspondence
+from .document_request_views import document_requests, document_request_detail, analyze_document_correspondence, my_tenant_document_requests
 from .lease_audit_views import original_lease_rent_review
 from .provider_catalog_views import provider_forms
 from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
@@ -53,6 +53,7 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/correct-profile/", correct_tenant_profile),
     path("properties/<int:property_id>/profile/", property_profile),
     path("properties/<int:property_id>/handoff/", property_handoff),
+    path("document-requests/my/", my_tenant_document_requests),
     path("properties/<int:property_id>/document-requests/", document_requests),
     path("properties/<int:property_id>/document-requests/<int:request_id>/", document_request_detail),
     path("properties/<int:property_id>/analyze-correspondence/", analyze_document_correspondence),
