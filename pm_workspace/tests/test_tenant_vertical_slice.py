@@ -360,3 +360,55 @@ class PMTenantVerticalSliceTests(APITestCase):
                                        "lease_verified": True}, format="json", **self.owner_headers())
         self.assertEqual(again.status_code, 409, again.data)
         self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant, category="LATE_FEE").count(), 1)
+
+
+    def test_property_handoff_is_saved_without_creating_debts_or_payments(self):
+        self.client.force_authenticate(self.owner)
+        url = f"/api/v1/pm-hub/properties/{self.property.id}/handoff/"
+        initial = self.client.get(url, **self.owner_headers())
+        self.assertEqual(initial.status_code, 200, initial.data)
+        self.assertEqual(initial.data["progress"]["completed"], 0)
+        self.assertFalse(PMDocumentPacket.objects.filter(workspace=self.workspace, packet_type="PROPERTY_HANDOFF").exists())
+        updated = self.client.patch(url, {
+            "case_kind": "NEW_MANAGEMENT",
+            "effective_date": "2026-03-01",
+            "former_manager": {"name": "Prior PM", "email": "", "phone": "", "notice_sent_date": "2026-02-01"},
+            "assistance": {
+                "type": "HOUSING_VOUCHER",
+                "administrator": "Local housing program",
+                "administrator_website": "",
+                "contact_email": "",
+                "contract_status": "PENDING_APPROVAL",
+                "payee_status": "SUBMITTED",
+            },
+            "opening_balances": [
+                {"id": "hap-1", "type": "ASSISTANCE_AR", "amount": "78.00", "period": "2026-07",
+                 "counterparty": "Voucher administrator", "evidence_status": "REPORTED",
+                 "source_note": "Administrator statement: funds awaiting owner registration"},
+                {"id": "deposit-1", "type": "SECURITY_DEPOSIT", "amount": "1500.00", "period": "2024-09",
+                 "counterparty": "Former manager", "evidence_status": "DISPUTED",
+                 "source_note": "Lease lists deposit; final accounting not provided"},
+            ],
+        }, format="json", **self.owner_headers())
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["handoff"]["assistance"]["administrator"], "Local housing program")
+        self.assertTrue(any(t["key"] == "provider_packet" for t in updated.data["checklist"]))
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(), 0)
+        closed = self.client.patch(url, {"status": "COMPLETED"}, format="json", **self.owner_headers())
+        self.assertEqual(closed.status_code, 400, closed.data)
+        self.assertEqual(self.client.get(url, **self.owner_headers()).data["handoff"]["status"], "IN_PROGRESS")
+
+    def test_handoff_task_verification_requires_evidence_and_workspace_scope(self):
+        self.client.force_authenticate(self.owner)
+        url = f"/api/v1/pm-hub/properties/{self.property.id}/handoff/"
+        bad = self.client.patch(url, {"tasks": {"rent_ledger": {"status": "VERIFIED", "note": ""}}},
+                                format="json", **self.owner_headers())
+        self.assertEqual(bad.status_code, 400, bad.data)
+        good = self.client.patch(url, {"tasks": {"rent_ledger": {
+            "status": "VERIFIED", "note": "Owner reconciled the dated ledger against bank records",
+        }}}, format="json", **self.owner_headers())
+        self.assertEqual(good.status_code, 200, good.data)
+        self.assertEqual(good.data["progress"]["completed"], 1)
+        self.client.force_authenticate(self.tenant_user)
+        unauthorized = self.client.get(url, **self.owner_headers())
+        self.assertEqual(unauthorized.status_code, 403, unauthorized.data)
