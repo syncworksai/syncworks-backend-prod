@@ -80,6 +80,8 @@ def normalize_setup(payload,lease):
     if fee is None:
         raise ValueError("Enter a valid late fee.")
     active=payload.get("active") is True
+    if active and lease.status!="ACTIVE":
+        raise ValueError("Activate the signed lease before starting automatic billing.")
     fee_auto=payload.get("auto_late_fees") is True
     if fee_auto and not payload.get("late_fee_verified"):
         raise ValueError("Automatic late fees require written lease-clause verification.")
@@ -241,11 +243,15 @@ def dashboard_totals(tenant):
             else:rent_t+=signed(e)
         elif e.category=="LATE_FEE":fees+=signed(e)
     allocation=_json_allocation(_allocation(entries))
+    net_t=max(Decimal("0"),Decimal(allocation["tenant_unpaid"])-Decimal(allocation["unapplied_tenant_receipts"]))
+    net_h=max(Decimal("0"),Decimal(allocation["housing_unpaid"])-Decimal(allocation["unapplied_housing_receipts"]))
     return {"tenant_rent_charged":str(rent_t),"housing_charged":str(rent_h),
         "tenant_paid_recorded":str(received_t),"housing_paid_recorded":str(received_h),
         "late_fee_net":str(fees),
-        "tenant_owed":allocation["tenant_unpaid"],"housing_owed":allocation["housing_unpaid"],
-        "total_owed":str(Decimal(allocation["tenant_unpaid"])+Decimal(allocation["housing_unpaid"])),
+        "tenant_owed":str(net_t),"housing_owed":str(net_h),
+        "unapplied_tenant_credit":allocation["unapplied_tenant_receipts"],
+        "unapplied_housing_credit":allocation["unapplied_housing_receipts"],
+        "total_owed":str(net_t+net_h),
         "notice":"Housing amounts are billed receivables, not proof MHA sent cash. Former-manager payments and deposits require separate evidence."}
 
 def late_fee_history(tenant):
