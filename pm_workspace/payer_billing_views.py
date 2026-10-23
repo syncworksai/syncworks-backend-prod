@@ -72,6 +72,10 @@ def rebuild_split_rent(request, tenant_id):
     tenant_portion = _money(lease.tenant_portion); housing_portion = _money(lease.assistance_portion); contract = _money(lease.monthly_rent)
     if tenant_portion + housing_portion != contract: return Response({"detail": f"Tenant plus housing portions must equal contract rent (${contract})."}, status=status.HTTP_400_BAD_REQUEST)
     selected_start = _date(request.data.get("start_date")) or lease.start_date; start = date(selected_start.year, selected_start.month, 1); through = _date(request.data.get("through_date")) or timezone.localdate(); due_day = max(1, min(int(_profile(tenant).get("rent_due_day") or 1), 28))
+    if (start.year, start.month) != (through.year, through.month):
+        return Response({"detail": "Historical Section 8 splits must be reconciled one month at a time; bulk rebuild would overwrite past allocations."}, status=status.HTTP_400_BAD_REQUEST)
+    if tenant.ledger_entries.filter(entry_date__year=start.year, entry_date__month=start.month, reference__startswith="RECON-").exists():
+        return Response({"detail": "This month has audited corrections. Use the monthly reconciliation tool instead of rebuild."}, status=status.HTTP_400_BAD_REQUEST)
     generated = tenant.ledger_entries.filter(entry_date__gte=start, entry_date__lte=through, category__in=["RENT", "RENT_TENANT", "RENT_HOUSING"], reference__startswith="AUTO-"); removed = generated.count(); generated.delete(); created=[]
     cursor = start; end = date(through.year, through.month, 1)
     while cursor <= end:
