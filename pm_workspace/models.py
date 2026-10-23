@@ -150,6 +150,7 @@ class PMTenant(models.Model):
     email = models.EmailField()
     phone = models.CharField(max_length=40, blank=True)
     property_name = models.CharField(max_length=180, blank=True)
+    property = models.ForeignKey("PMProperty", null=True, blank=True, on_delete=models.SET_NULL, related_name="resident_records")
     unit_label = models.CharField(max_length=80, blank=True)
     move_in_date = models.DateField(null=True, blank=True)
     lease_start = models.DateField(null=True, blank=True)
