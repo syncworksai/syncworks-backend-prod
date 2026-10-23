@@ -55,7 +55,7 @@ def _allocation(rows, cutoff=None):
     for row in rows:
         if cutoff and row.entry_date > cutoff:
             continue
-        if row.category == "SECURITY_DEPOSIT":
+        if row.category.strip().upper().replace(" ", "_") == "SECURITY_DEPOSIT":
             continue  # held escrow is not current rent income
         if row.entry_type == PMLedgerEntry.EntryType.PAYMENT:
             receipts.append(row)
