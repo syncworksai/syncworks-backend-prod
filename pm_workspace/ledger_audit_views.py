@@ -66,7 +66,7 @@ def _allocation(rows, cutoff=None):
     # Credits are applied to the specific rent period when they arise from
     # audited rent split corrections; other credit entries use oldest-first.
     credit_rows = [row for row in rows if row.entry_type == PMLedgerEntry.EntryType.CREDIT
-                   and row.category != "SECURITY_DEPOSIT" and (not cutoff or row.entry_date <= cutoff)]
+                   and row.category.strip().upper().replace(" ", "_") != "SECURITY_DEPOSIT" and (not cutoff or row.entry_date <= cutoff)]
     receipt_events = [(r.entry_date, r.id, "PAYMENT" if r.entry_type == PMLedgerEntry.EntryType.PAYMENT else "CREDIT", r)
                       for r in receipts + credit_rows]
     receipt_events.sort(key=lambda x: (x[0], x[1]))
