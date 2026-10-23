@@ -77,40 +77,43 @@ def property_360(request,property_id):
     outstanding_assistance=sum((Decimal(v["housing_unpaid"]) for v in tenant_balances.values()),Decimal("0"))
     work=list(PMWorkOrder.objects.filter(workspace=workspace,property=prop).order_by("-created_at")[:80])
     open_work=[w for w in work if w.status not in ("COMPLETED","CANCELLED")]
-    urgent_work=[w for w in open_work if w.priority in ("EMERGENCY","URGENT")]
-    projects=list(PMProject.objects.filter(workspace=workspace,property=prop)
-                  .exclude(status__in=("COMPLETED","ARCHIVED")).order_by("-updated_at")[:50])
-    cases=list(PMTenantCase.objects.filter(workspace=workspace)
-               .filter(Q(property=prop)|Q(tenant_id__in=tenant_ids))
-               .exclude(status="CLOSED").distinct().order_by("-opened_date")[:30])
-    documents=list(PMPropertyDocument.objects.filter(workspace=workspace,property=prop)
-                   .order_by("-updated_at")[:80])
-    pending_documents=[d for d in documents if d.status in ("DRAFT","PENDING_SIGNATURE","SUBMITTED")]
+    open_work_qs=PMWorkOrder.objects.filter(workspace=workspace,property=prop).exclude(status__in=("COMPLETED","CANCELLED"))
+    open_work_count=open_work_qs.count()
+    urgent_work_count=open_work_qs.filter(priority__in=("EMERGENCY","URGENT")).count()
+    project_qs=PMProject.objects.filter(workspace=workspace,property=prop).exclude(status__in=("COMPLETED","ARCHIVED"))
+    project_count=project_qs.count()
+    case_qs=PMTenantCase.objects.filter(workspace=workspace).filter(
+        Q(property=prop)|Q(tenant_id__in=tenant_ids)).exclude(status="CLOSED").distinct()
+    case_count=case_qs.count()
+    docs_qs=PMPropertyDocument.objects.filter(workspace=workspace,property=prop)
+    documents=list(docs_qs.order_by("-updated_at")[:5])
+    pending_document_count=docs_qs.filter(status__in=("DRAFT","PENDING_SIGNATURE","SUBMITTED")).count()
     owner_records=list(PMPropertyOwner.objects.filter(workspace=workspace,properties=prop).distinct().order_by("name"))
     conversations=PMConversation.objects.filter(workspace=workspace,property=prop).exclude(status="RESOLVED")
-    tasks=list(PMStaffTask.objects.filter(workspace=workspace,property=prop)
-               .exclude(status__in=("DONE","CANCELED")).select_related("assignee").order_by("due_date","-created_at")[:100])
-    requests=list(PMDocumentPacket.objects.filter(workspace=workspace,packet_type="PM_DOCUMENT_REQUEST",
-                                                   field_data__property_id=prop.id).order_by("-updated_at")[:120])
-    open_requests=[r for r in requests if (r.field_data or {}).get("status") not in ("VERIFIED","CANCELED")]
-    past_due_requests=[r for r in open_requests if (r.field_data or {}).get("due_date") and
-                       (r.field_data or {})["due_date"]<today.isoformat()]
+    task_qs=PMStaffTask.objects.filter(workspace=workspace,property=prop).exclude(status__in=("DONE","CANCELED"))
+    task_count=task_qs.count()
+    request_qs=PMDocumentPacket.objects.filter(workspace=workspace,packet_type="PM_DOCUMENT_REQUEST",
+                                                 field_data__property_id=prop.id)
+    open_request_qs=request_qs.exclude(field_data__status__in=("VERIFIED","CANCELED"))
+    request_count=open_request_qs.count()
+    overdue_request_count=open_request_qs.filter(field_data__due_date__lt=today.isoformat()).exclude(
+        field_data__due_date="").count()
     shared_statements=PMInvestorStatement.objects.filter(workspace=workspace,property=prop,
                                                          status__in=("SHARED","PAID")).count()
     handoff=_handoff(workspace,prop)
     occupancy_count=sum(1 for u in units if u.availability=="OCCUPIED")
     property_attention=[
-        {"key":"urgent","title":"Emergency / urgent work","count":len(urgent_work),"priority":"HIGH",
+        {"key":"urgent","title":"Emergency / urgent work","count":urgent_work_count,"priority":"HIGH",
          "href":f"/pm/properties/{prop.id}?tab=maintenance"},
-        {"key":"docs","title":"Documents to review","count":len(pending_documents),"priority":"NORMAL",
+        {"key":"docs","title":"Documents to review","count":pending_document_count,"priority":"NORMAL",
          "href":f"/pm/properties/{prop.id}?tab=documents"},
-        {"key":"requests","title":"Overdue document requests","count":len(past_due_requests),"priority":"HIGH",
+        {"key":"requests","title":"Overdue document requests","count":overdue_request_count,"priority":"HIGH",
          "href":f"/pm/document-requests?property={prop.id}"},
         {"key":"messages","title":"Open conversations","count":conversations.count(),"priority":"NORMAL",
          "href":f"/pm/properties/{prop.id}?tab=messages"},
-        {"key":"tasks","title":"Open team assignments","count":len(tasks),"priority":"NORMAL",
+        {"key":"tasks","title":"Open team assignments","count":task_count,"priority":"NORMAL",
          "href":"/pm/team"},
-        {"key":"cases","title":"Open tenant cases","count":len(cases),"priority":"HIGH",
+        {"key":"cases","title":"Open tenant cases","count":case_count,"priority":"HIGH",
          "href":f"/pm/properties/{prop.id}?tab=tenants"},
     ]
     if handoff["unresolved_balances"]:
@@ -146,11 +149,11 @@ def property_360(request,property_id):
                                                         status="PAID").count(),
                       "notice":"Posted-only ledger analysis; no inference from former-manager statements, holds, disputed deposits, or unmatched receipts."},
         "owners":[{"id":o.id,"name":o.name,"type":o.owner_type} for o in owner_records],
-        "operations":{"open_work":len(open_work),"urgent_work":len(urgent_work),
-                      "active_projects":len(projects),"open_cases":len(cases),
-                      "open_messages":conversations.count(),"open_staff_tasks":len(tasks),
-                      "pending_documents":len(pending_documents),"open_requests":len(open_requests),
-                      "overdue_requests":len(past_due_requests),"released_investor_statements":shared_statements},
+        "operations":{"open_work":open_work_count,"urgent_work":urgent_work_count,
+                      "active_projects":project_count,"open_cases":case_count,
+                      "open_messages":conversations.count(),"open_staff_tasks":task_count,
+                      "pending_documents":pending_document_count,"open_requests":request_count,
+                      "overdue_requests":overdue_request_count,"released_investor_statements":shared_statements},
         "handoff":handoff,
         "attention":[x for x in property_attention if x["count"]>0],
         "recent_work":[{"id":w.id,"title":w.title,"status":w.status,"priority":w.priority,
