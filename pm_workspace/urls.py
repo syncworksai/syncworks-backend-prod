@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .advanced_billing_views import advanced_tenant_billing, collections_statement_preview, generate_advanced_late_fees
 from .billing_policy_views import apply_company_billing_template, company_billing_template, rent_allocation
-from .billing_views import generate_tenant_charges, my_tenant_account, portfolio_billing_summary, tenant_billing_profile
+from .billing_views import generate_tenant_charges, reconcile_monthly_rent, my_tenant_account, portfolio_billing_summary, tenant_billing_profile
 from .communication_views import bulk_delete_ledger, investor_ledger, my_conversations, pm_conversations, reply_conversation, request_ledger_information, requester_reply, resolve_conversation
 from .deposit_views import apply_deposit, deposit_status
 from .dashboard_views import command_center
@@ -75,6 +75,7 @@ urlpatterns = [
     path("billing/tenants/<int:tenant_id>/rebuild-split-rent/", rebuild_split_rent),
     path("billing/tenants/<int:tenant_id>/generate-installment-late-fees/", generate_installment_late_fees),
     path("billing/tenants/<int:tenant_id>/generate/", generate_tenant_charges),
+    path("billing/tenants/<int:tenant_id>/reconcile-month/", reconcile_monthly_rent),
     path("billing/tenants/<int:tenant_id>/generate-advanced-late-fees/", generate_advanced_late_fees),
     path("billing/tenants/<int:tenant_id>/collections-preview/", collections_statement_preview),
     path("billing/tenants/<int:tenant_id>/undo-generated/", undo_generated_charges),
