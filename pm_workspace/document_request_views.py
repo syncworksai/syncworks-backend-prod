@@ -257,3 +257,39 @@ def analyze_document_correspondence(request,property_id):
                                 "action":"Review the source and choose whether to request, attach or mark this item received."})
     return Response({"suggestions":suggestions,"stored":False,
         "notice":"Keyword-based suggestions, not an AI determination or proof an agency requires these forms. No email or checklist was modified."})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def my_tenant_document_requests(request):
+    """Read-only actions for an authenticated, linked tenant; no external emails."""
+    from .models import PMTenant
+    links=PMTenant.objects.filter(user=request.user,status=PMTenant.Status.CONNECTED)
+    if not links.exists():
+        return Response({"requests":[]})
+    results=[]
+    for tenant in links:
+        property_ids=list(PMProperty.objects.filter(
+            workspace_id=tenant.workspace_id,name__iexact=(tenant.property_name or "").strip()
+        ).values_list("id",flat=True))
+        if not property_ids:continue
+        qs=PMDocumentPacket.objects.filter(workspace_id=tenant.workspace_id,packet_type=TYPE)
+        for packet in qs:
+            fields=packet.field_data or {}
+            if (fields.get("recipient_role")!="TENANT" or
+                (fields.get("recipient_email") or "").lower()!=tenant.email.lower() or
+                fields.get("property_id") not in property_ids):continue
+            results.append({
+                "id":packet.id,
+                "title":fields.get("title"),
+                "action":fields.get("action"),
+                "status":fields.get("status"),
+                "instructions":fields.get("instructions"),
+                "due_date":fields.get("due_date"),
+                "sent_at":fields.get("sent_at"),
+                "property_name":tenant.property_name,
+                "is_electronic_signature":False,
+            })
+    results.sort(key=lambda r:(r["due_date"] or "9999-12-31",r["id"]))
+    return Response({"requests":results[:100],
+        "notice":"These actions are coordinated by your property manager. Contact management to obtain an approved secure document delivery or signature method."})
