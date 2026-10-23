@@ -703,3 +703,44 @@ class PMTenantVerticalSliceTests(APITestCase):
         self.assertEqual(allocation.status_code,200,allocation.data)
         self.assertEqual(allocation.data["tenant_unpaid"],"1400.00")
         self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(),2)
+
+
+    def test_deposit_transfer_discrepancy_notes_do_not_credit_rent(self):
+        self.client.force_authenticate(self.owner)
+        PMLedgerEntry.objects.create(
+            workspace=self.workspace,tenant=self.tenant,entry_date="2026-03-01",
+            entry_type="CHARGE",category="RENT_TENANT",amount=Decimal("1485.00"))
+        PMLedgerEntry.objects.create(
+            workspace=self.workspace,tenant=self.tenant,entry_date="2026-03-01",
+            entry_type="CREDIT",category="SECURITY DEPOSIT",amount=Decimal("1500.00"))
+        url=f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/deposit-transfer-review/"
+        before=self.client.get(f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/deposit-status/",**self.owner_headers())
+        self.assertEqual(before.status_code,200,before.data)
+        self.assertEqual(before.data["deposit_review"]["status"],"NOT_RECONCILED")
+        note={
+            "paperwork_amount":"1500.00","reported_transfer_amount":"1485.00",
+            "description":"Original paperwork differs from PM statement.",
+            "source_note":"Original proposed deposit $1500, former manager transfer $1485.",
+            "confirmed":True,
+        }
+        saved=self.client.post(url,note,format="json",**self.owner_headers())
+        self.assertEqual(saved.status_code,200,saved.data)
+        self.assertEqual(saved.data["review"]["difference"],"15.00")
+        self.assertFalse(saved.data["review"]["affects_rent_balance"])
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(),2)
+        summary=self.client.get("/api/v1/pm-hub/billing/summary/",**self.owner_headers())
+        self.assertEqual(summary.data["tenants"][0]["balance"],"1485.00")
+        again=self.client.post(url,note,format="json",**self.owner_headers())
+        self.assertEqual(again.status_code,200,again.data)
+        self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant).count(),2)
+        refreshed=self.client.get(url,**self.owner_headers())
+        self.assertEqual(refreshed.data["review"]["paperwork_amount"],"1500.00")
+        self.assertEqual(refreshed.data["review"]["reported_transfer_amount"],"1485.00")
+
+    def test_tenant_cannot_modify_managers_deposit_review(self):
+        self.client.force_authenticate(self.tenant_user)
+        result=self.client.post(
+            f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/deposit-transfer-review/",
+            {"paperwork_amount":"1500.00","reported_transfer_amount":"1485.00","confirmed":True,
+             "source_note":"The owner records and manager statement differ"},format="json")
+        self.assertEqual(result.status_code,403,result.data)
