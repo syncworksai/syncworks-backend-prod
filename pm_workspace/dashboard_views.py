@@ -13,6 +13,7 @@ from personal_calendar.connection_store import list_connections
 
 from .communication_models import PMConversation
 from .document_models import PMPropertyDocument
+from .access_models import PMStaffTask, PMInvestorGrant, PMInvestorStatement
 from .lead_models import PMLead
 from .lifecycle_models import PMTenantCase
 from .models import PMDocumentPacket, PMLedgerEntry, PMLease, PMProject, PMProperty, PMUnit
@@ -261,6 +262,36 @@ def command_center(request):
         "href": f"/pm/properties/{item.id}",
     } for item in properties.order_by("name")[:6]]
 
+    # Unified operational queue across jobs, assigned team tasks and external document requests.
+    team_open=PMStaffTask.objects.filter(workspace=workspace).exclude(status__in=("DONE","CANCELED"))
+    team_due=team_open.filter(due_date__lte=today+timedelta(days=7)).select_related("property","assignee").order_by("due_date","id")
+    document_packets=PMDocumentPacket.objects.filter(workspace=workspace,packet_type="PM_DOCUMENT_REQUEST").only(
+        "id","field_data","updated_at").order_by("-updated_at")[:300]
+    pending_requests=[]
+    priority_queue=[]
+    for packet in document_packets:
+        f=packet.field_data or {}
+        if f.get("status") in ("VERIFIED","CANCELED","DRAFT"): continue
+        pending_requests.append(f)
+        due=f.get("due_date") or ""
+        followup=f.get("next_followup_date") or ""
+        if (due and due<=str(today+timedelta(days=7))) or (followup and followup<=str(today)):
+            priority_queue.append({"id":f"request-{packet.id}","title":f.get("title") or "Document request",
+                "subtitle":f.get("recipient_role","External party").replace("_"," ").title(),
+                "date":due or followup,"type":"DOCUMENT","urgency":"OVERDUE" if due and due<str(today) else "UPCOMING",
+                "href":f"/pm/document-requests?property={f.get('property_id')}"})
+    for task in team_due[:30]:
+        priority_queue.append({"id":f"staff-{task.id}","title":task.title,
+           "subtitle":task.property.name+(" · "+task.assignee.name if task.assignee else " · Owner"),
+           "date":str(task.due_date) if task.due_date else None,
+           "type":"ASSIGNMENT","urgency":"OVERDUE" if task.due_date and task.due_date<today else "UPCOMING",
+           "href":"/pm/team"})
+    for wo in urgent_orders.select_related("property").order_by("-created_at")[:10]:
+        priority_queue.append({"id":f"work-{wo.id}","title":wo.title,"subtitle":wo.property.name,
+           "date":None,"type":"MAINTENANCE","urgency":"URGENT",
+           "href":f"/pm/work-orders?property={wo.property_id}"})
+    urgency_rank={"URGENT":0,"OVERDUE":1,"UPCOMING":2}
+    priority_queue.sort(key=lambda x:(urgency_rank.get(x["urgency"],9),x["date"] or "9999-12-31",x["id"]))
     financials = _financials(workspace, today)
     rent_change_deadlines = []
     for packet in PMDocumentPacket.objects.filter(workspace=workspace, packet_type="RENT_CHANGE_PLAN").only(
@@ -304,6 +335,14 @@ def command_center(request):
             "active_leads": active_leads.count(),
         },
         "financials": financials,
+        "operations_summary":{
+            "team_open":team_open.count(),
+            "team_due_7d":team_due.count(),
+            "document_requests_open":len(pending_requests),
+            "investors_connected":PMInvestorGrant.objects.filter(workspace=workspace,status="ACCEPTED").count(),
+            "investor_statements_waiting":PMInvestorStatement.objects.filter(workspace=workspace,status="DRAFT").count(),
+        },
+        "priority_queue":priority_queue[:10],
         "rent_change_deadlines": rent_change_deadlines[:12],
         "cases": {
             "open": open_cases.count(),
