@@ -76,6 +76,8 @@ def rebuild_split_rent(request, tenant_id):
         return Response({"detail": "Historical Section 8 splits must be reconciled one month at a time; bulk rebuild would overwrite past allocations."}, status=status.HTTP_400_BAD_REQUEST)
     if tenant.ledger_entries.filter(entry_date__year=start.year, entry_date__month=start.month, reference__startswith="RECON-").exists():
         return Response({"detail": "This month has audited corrections. Use the monthly reconciliation tool instead of rebuild."}, status=status.HTTP_400_BAD_REQUEST)
+    if tenant.ledger_entries.filter(entry_date__year=start.year, entry_date__month=start.month, entry_type=PMLedgerEntry.EntryType.CHARGE, category__in=["RENT", "RENT_TENANT", "RENT_HOUSING"]).exclude(reference__startswith="AUTO-").exists():
+        return Response({"detail": "A manually posted rent charge already exists for this month. Use monthly reconciliation to avoid duplicate charges."}, status=status.HTTP_400_BAD_REQUEST)
     generated = tenant.ledger_entries.filter(entry_date__gte=start, entry_date__lte=through, category__in=["RENT", "RENT_TENANT", "RENT_HOUSING"], reference__startswith="AUTO-"); removed = generated.count(); generated.delete(); created=[]
     cursor = start; end = date(through.year, through.month, 1)
     while cursor <= end:
