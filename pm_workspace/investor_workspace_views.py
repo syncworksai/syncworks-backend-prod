@@ -8,7 +8,8 @@ from django.db import transaction
 from django.db.models import Q
 from django.http import FileResponse
 from django.utils import timezone
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -214,3 +215,36 @@ def investor_messages(request):
      subject=subject,requester_email=grant.email,requester_name=grant.property_owner.name)
   PMConversationMessage.objects.create(conversation=convo,sender=request.user,sender_role="INVESTOR",body=body)
  return Response({"id":convo.id,"detail":"Message added to PM inbox."},status=201)
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser,FormParser])
+def investor_upload(request):
+ """An accepted investor may submit a property file; PM review is always required."""
+ grant=next((g for g in _grants(request.user) if str(g.id)==str(request.data.get("grant_id"))),None)
+ if not grant:return Response({"detail":"Active investor grant required."},status=403)
+ prop=PMProperty.objects.filter(workspace=grant.workspace,pk=request.data.get("property_id")).first()
+ if not prop or not grant.property_owner.properties.filter(id=prop.id).exists():
+  return Response({"detail":"Property is not owned under this grant."},status=403)
+ file=request.FILES.get("file")
+ if not file or file.size>8*1024*1024:
+  return Response({"detail":"Choose an uploaded file up to 8 MB."},status=400)
+ from pathlib import Path
+ ext=Path(file.name).suffix.lower()
+ if ext not in {".pdf",".docx",".png",".jpg",".jpeg"}:
+  return Response({"detail":"Allowed file formats: PDF, Word, PNG, JPG."},status=400)
+ if ext==".pdf" and file.read(5)!=b"%PDF-":
+  return Response({"detail":"Invalid PDF file."},status=400)
+ file.seek(0)
+ category=str(request.data.get("category") or "OTHER").upper()
+ if category not in {"OWNERSHIP","INSURANCE","OPERATING_STATEMENT","OTHER"}:
+  return Response({"detail":"Select an allowed document category."},status=400)
+ title=str(request.data.get("title") or "").strip()[:180]
+ if len(title)<3:return Response({"detail":"Document title required."},status=400)
+ record=PMPropertyDocument.objects.create(
+  workspace=grant.workspace,property=prop,property_owner=grant.property_owner,
+  category=category,title=title,document=file,status="DRAFT",created_by=request.user,
+  notes="Submitted by accepted investor for management review. Not externally shared or approved."
+ )
+ return Response({"id":record.id,"title":record.title,"status":"DRAFT",
+                  "detail":"Upload received; property manager review required."},status=201)
