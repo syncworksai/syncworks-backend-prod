@@ -250,7 +250,7 @@ def analyze_document_correspondence(request,property_id):
         match=next((p for p in phrases if p in lower),None)
         if match:
             at=lower.find(match)
-            excerpt=re.sub(r"\\s+"," ",body[max(0,at-85):min(len(body),at+len(match)+115)]).strip()
+            excerpt=re.sub(r"\s+"," ",body[max(0,at-85):min(len(body),at+len(match)+115)]).strip()
             suggestions.append({"checklist_key":key,"matched_phrase":match,
                                 "source_excerpt":excerpt,"confidence":"KEYWORD_MATCH",
                                 "action":"Review the source and choose whether to request, attach or mark this item received."})
