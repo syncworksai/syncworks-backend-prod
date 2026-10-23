@@ -83,6 +83,11 @@ def normalize_setup(payload,lease):
     fee_auto=payload.get("auto_late_fees") is True
     if fee_auto and not payload.get("late_fee_verified"):
         raise ValueError("Automatic late fees require written lease-clause verification.")
+    auto_fee_from=str(payload.get("auto_late_fee_from") or timezone.localdate())
+    try: auto_fee_from_date=date.fromisoformat(auto_fee_from)
+    except ValueError:raise ValueError("Late-fee auto-start must be a valid date.")
+    if fee_auto and auto_fee_from_date<timezone.localdate():
+        raise ValueError("Automatic late-fee start cannot be backdated. Review historical fees individually.")
     source=str(payload.get("source_note") or "").strip()
     if len(source)<12:
         raise ValueError("Describe the signed lease or verified rent determination (12+ characters).")
@@ -117,6 +122,7 @@ def normalize_setup(payload,lease):
     return {"active":active,"billing_start_date":billing_start.isoformat(),
         "due_day":due_day,"grace_days":grace,"late_fee_amount":str(fee),
         "auto_late_fees":fee_auto,"late_fee_verified":bool(payload.get("late_fee_verified")),
+        "auto_late_fee_from":str(auto_fee_from_date),
         "source_note":source[:900],"verified_through":horizon,
         "monthly_overrides":overrides,
         "updated_at":timezone.now().isoformat()}
@@ -176,11 +182,11 @@ def preview_rows(tenant,lease,config,through):
             "late_fee_net_month":str(late_charged)})
     return rows
 
-def apply_rent(tenant,lease,config,through,actor=None):
+def apply_rent(tenant,lease,config,through,actor=None,only_month=None):
     rows=preview_rows(tenant,lease,config,through)
     created=[]
     for row in rows:
-        if row["blocked"]:continue
+        if row["blocked"] or (only_month and row["month"]!=only_month):continue
         for payer,key,col in (("TENANT","adjust_tenant","RENT_TENANT"),("HOUSING","adjust_housing","RENT_HOUSING")):
             delta=Decimal(row[key])
             if delta==0:continue
@@ -244,7 +250,8 @@ def lease_billing(request,tenant_id):
     if not data:
         data={"active":False,"billing_start_date":max(lease.start_date,timezone.localdate().replace(day=1)).isoformat(),
               "due_day":1,"grace_days":5,"late_fee_amount":"0.00","auto_late_fees":False,
-              "late_fee_verified":False,"verified_through":"","monthly_overrides":{},"source_note":""}
+              "late_fee_verified":False,"auto_late_fee_from":str(timezone.localdate()),
+              "verified_through":"","monthly_overrides":{},"source_note":""}
     if request.method=="GET":
         return Response({"setup":data,"lease":{"id":lease.id,"start_date":str(lease.start_date),
             "end_date":str(lease.end_date) if lease.end_date else None,"status":lease.status,
