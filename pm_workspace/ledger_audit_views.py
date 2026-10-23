@@ -88,7 +88,10 @@ def _allocation(rows, cutoff=None):
                     "source_type":"LATE_FEE_WAIVER","charge_id":debt["id"],
                     "charge_month":debt["entry_date"].strftime("%Y-%m"),
                     "category":"LATE_FEE","payer":"TENANT","amount":str(part)})
-            # A fee waiver cannot be treated as a rent payment.
+            # An already-paid fee becomes an explicit unapplied account credit,
+            # not an unearned payment against unrelated rent.
+            if remaining>0:
+                unapplied["TENANT"]+=remaining
             continue
         if kind == "CREDIT" and source.reference.startswith("LEASE-BILL-") and source.category in ("RENT_TENANT","RENT_HOUSING"):
             found=re.search(r"LEASE-BILL-\d+-(\d{4}-\d{2})-",source.reference)
