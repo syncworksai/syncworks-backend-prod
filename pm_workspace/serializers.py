@@ -131,6 +131,9 @@ class PMTenantSerializer(serializers.ModelSerializer):
         return super().to_internal_value(normalized)
 
     def validate(self, attrs):
+        linked_property=attrs.get("property")
+        if linked_property and linked_property.workspace_id!=self.context["request"].user.pm_workspaces.filter(is_active=True,pk=linked_property.workspace_id).values_list("id",flat=True).first():
+            raise serializers.ValidationError({"property":"Property must belong to a portfolio you own."})
         lease_start = attrs.get("lease_start") or getattr(self.instance, "lease_start", None)
         lease_end = attrs.get("lease_end") or getattr(self.instance, "lease_end", None)
         if lease_start and lease_end and lease_end < lease_start:
