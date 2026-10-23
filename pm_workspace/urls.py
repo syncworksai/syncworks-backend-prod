@@ -19,7 +19,7 @@ from .document_request_views import document_requests, document_request_detail, 
 from .lease_audit_views import original_lease_rent_review
 from .provider_catalog_views import provider_forms
 from .staff_portal_views import owner_staff, accept_staff, update_staff, employee_dashboard, owner_tasks, task_status
-from .investor_workspace_views import investor_invites, revoke_investor, investor_accept, investor_portfolios, investor_file, owner_statements, owner_shared_files, owner_unshare, investor_messages
+from .investor_workspace_views import investor_invites, revoke_investor, investor_accept, investor_portfolios, investor_file, owner_statements, owner_shared_files, owner_unshare, investor_messages, investor_upload
 from .ledger_correction_views import correct_ledger_entry, undo_generated_charges
 from .owner_views import PMPropertyOwnerViewSet, complete_tenant_onboarding_internally
 from .payer_billing_views import generate_installment_late_fees, payer_profile, rebuild_split_rent
@@ -60,6 +60,7 @@ urlpatterns = [
     path("access/investors/accept/", investor_accept),
     path("access/investors/portfolio/", investor_portfolios),
     path("access/investors/files/<int:document_id>/", investor_file),
+    path("access/investors/upload/", investor_upload),
     path("access/investors/messages/", investor_messages),
     path("access/investors/statements/", owner_statements),
     path("access/investors/shared-files/", owner_shared_files),
