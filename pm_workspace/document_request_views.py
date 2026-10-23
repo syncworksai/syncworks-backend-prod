@@ -41,6 +41,36 @@ DOC_KEYWORDS = {
     "transition_agreement": ["termination agreement", "management transfer", "change of management"],
 }
 
+DOCUMENT_HELP={
+    "ownership_authority":{
+        "where_to_get":"County probate office, county recorder or recorder of deeds for the property's location; verify the official local source.",
+        "steps":"Obtain a recorded deed showing the owner and recording information. Upload it to the property's secure document library, review it, then submit via the administrator's accepted channel."
+    },
+    "provider_owner_docs":{
+        "where_to_get":"Owner's verified tax and bank records and the assistance administrator's official landlord packet.",
+        "steps":"Complete only the specific requested forms. Avoid ordinary email attachments containing tax identifiers or account numbers; use the approved secure submission channel."
+    },
+    "provider_contract":{
+        "where_to_get":"Assistance administrator's owner/landlord portal or contracting team.",
+        "steps":"Request the signed assistance contract, current rent determination, tenant share and effective dates. Compare them before changing ledger allocations."
+    },
+    "provider_inspection":{
+        "where_to_get":"Local assistance administrator's inspection department or existing landlord portal.",
+        "steps":"Request original failed items, notice delivery dates, inspection deadlines and an approved reinspection process."
+    },
+    "deposit_accounting":{
+        "where_to_get":"Former property manager's final owner and escrow accounting.",
+        "steps":"Get deposit amount, transfer receipt and tenant-level disposition; do not treat an unverified claimed deposit as rent paid."
+    },
+    "rent_ledger":{
+        "where_to_get":"Former manager's owner and resident ledger exports, bank statements, and assistance administrator's payment history.",
+        "steps":"Reconcile receipts by receipt date, payer and period; keep disputed amounts separate from verified payments."
+    },
+    "transition_agreement":{
+        "where_to_get":"Former manager, owner and original property management contract.",
+        "steps":"Confirm termination date, transfer obligations, access credentials, keys, active work orders and communication notices."
+    },
+}
 def _property(request, property_id):
     workspace = _workspace(request)
     prop = PMProperty.objects.filter(workspace=workspace, pk=property_id).first()
@@ -254,6 +284,7 @@ def analyze_document_correspondence(request,property_id):
             excerpt=re.sub(r"\s+"," ",body[max(0,at-85):min(len(body),at+len(match)+115)]).strip()
             suggestions.append({"checklist_key":key,"matched_phrase":match,
                                 "source_excerpt":excerpt,"confidence":"KEYWORD_MATCH",
+                                "help":DOCUMENT_HELP.get(key,{}),
                                 "action":"Review the source and choose whether to request, attach or mark this item received."})
     return Response({"suggestions":suggestions,"stored":False,
         "notice":"Keyword-based suggestions, not an AI determination or proof an agency requires these forms. No email or checklist was modified."})
