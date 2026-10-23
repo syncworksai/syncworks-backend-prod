@@ -44,6 +44,8 @@ def _bucket(entry):
 def _bucket_summary(tenant):
     tenant_balance = Decimal("0.00"); housing_balance = Decimal("0.00")
     for entry in tenant.ledger_entries.all():
+        if entry.category.strip().upper().replace(" ", "_") == "SECURITY_DEPOSIT":
+            continue
         if _bucket(entry) == "HOUSING": housing_balance += _signed(entry)
         else: tenant_balance += _signed(entry)
     return {"tenant_owes": str(max(tenant_balance, Decimal("0.00")).quantize(Decimal("0.01"))),"housing_owes": str(max(housing_balance, Decimal("0.00")).quantize(Decimal("0.01"))),"tenant_balance": str(tenant_balance.quantize(Decimal("0.01"))),"housing_balance": str(housing_balance.quantize(Decimal("0.01"))),"total_balance": str((tenant_balance + housing_balance).quantize(Decimal("0.01")))}
