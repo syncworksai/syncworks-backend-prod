@@ -226,6 +226,36 @@ def late_fee_preview(tenant,lease,config,through):
                         "unpaid_tenant_at_grace":str(unpaid)})
     return due
 
+def dashboard_totals(tenant):
+    entries=[e for e in tenant.ledger_entries.all()
+        if e.category.strip().upper().replace(" ","_")!="SECURITY_DEPOSIT"]
+    received_t=Decimal("0"); received_h=Decimal("0")
+    rent_t=Decimal("0");rent_h=Decimal("0");fees=Decimal("0")
+    for e in entries:
+        if e.entry_type=="PAYMENT":
+            if e.payment_method=="HOUSING_AUTHORITY" or e.category=="RENT_HOUSING":
+                received_h+=e.amount
+            else:received_t+=e.amount
+        elif e.category in RENT_CATEGORIES:
+            if e.category=="RENT_HOUSING":rent_h+=signed(e)
+            else:rent_t+=signed(e)
+        elif e.category=="LATE_FEE":fees+=signed(e)
+    allocation=_json_allocation(_allocation(entries))
+    return {"tenant_rent_charged":str(rent_t),"housing_charged":str(rent_h),
+        "tenant_paid_recorded":str(received_t),"housing_paid_recorded":str(received_h),
+        "late_fee_net":str(fees),
+        "tenant_owed":allocation["tenant_unpaid"],"housing_owed":allocation["housing_unpaid"],
+        "total_owed":str(Decimal(allocation["tenant_unpaid"])+Decimal(allocation["housing_unpaid"])),
+        "notice":"Housing amounts are billed receivables, not proof MHA sent cash. Former-manager payments and deposits require separate evidence."}
+
+def late_fee_history(tenant):
+    rows=tenant.ledger_entries.filter(category="LATE_FEE",entry_type="CHARGE").order_by("-entry_date","-id")
+    waivers={x.reference.removeprefix("LATE-WAIVE-"):x.amount for x in tenant.ledger_entries.filter(
+        category="LATE_FEE",entry_type="CREDIT",reference__startswith="LATE-WAIVE-")}
+    return [{"id":x.id,"date":str(x.entry_date),"amount":str(x.amount),
+        "waived":str(waivers.get(str(x.id),Decimal("0"))),"reference":x.reference}
+        for x in rows[:80]]
+
 @api_view(["GET","PATCH","POST"])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
@@ -257,7 +287,8 @@ def lease_billing(request,tenant_id):
             "end_date":str(lease.end_date) if lease.end_date else None,"status":lease.status,
             "contract_rent":str(lease.monthly_rent),"tenant_portion":str(lease.tenant_portion or 0),
             "housing_portion":str(lease.assistance_portion or 0),"section8":lease.section8},
-            "account":_tenant_account(tenant),"notice":"Preview is read-only. Unverified assistance receipts and security deposits are never marked paid."})
+            "account":_tenant_account(tenant),"totals":dashboard_totals(tenant),
+            "late_fees":late_fee_history(tenant),"notice":"Preview is read-only. Unverified assistance receipts and security deposits are never marked paid."})
     if not packet or not data.get("active"):
         return Response({"detail":"Save and activate a reviewed lease billing setup before posting."},status=409)
     try:through=date.fromisoformat(str(request.data.get("through_date") or timezone.localdate()))
@@ -269,6 +300,7 @@ def lease_billing(request,tenant_id):
     if request.data.get("apply") is not True:
         return Response({"applied":False,"months":rows,"late_fee_candidates":fees,
             "rent_paid_vs_owed":_json_allocation(_allocation(list(tenant.ledger_entries.all()))),
+            "totals":dashboard_totals(tenant),
             "notice":"Payment dates, prior late fees and separate deposit records are not changed by rent billing."})
     if request.data.get("confirmed") is not True:
         return Response({"detail":"Confirm the monthly payer amounts and source documentation."},status=400)
@@ -277,6 +309,7 @@ def lease_billing(request,tenant_id):
     # in this historical-reconciliation endpoint.
     return Response({"applied":True,"created_entry_ids":created,"months":preview_rows(tenant,lease,data,through),
         "rent_paid_vs_owed":_json_allocation(_allocation(list(tenant.ledger_entries.all()))),
+        "totals":dashboard_totals(tenant),
         "notice":"Only rent adjustments posted. Late fees remain available for individual, verified review."})
 
 @api_view(["POST"])
