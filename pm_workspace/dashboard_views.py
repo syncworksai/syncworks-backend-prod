@@ -262,6 +262,31 @@ def command_center(request):
     } for item in properties.order_by("name")[:6]]
 
     financials = _financials(workspace, today)
+    rent_change_deadlines = []
+    for packet in PMDocumentPacket.objects.filter(workspace=workspace, packet_type="RENT_CHANGE_PLAN").only(
+        "id", "field_data", "tenant_id", "updated_at"
+    ).order_by("-updated_at")[:250]:
+        f = packet.field_data or {}
+        if f.get("status") in {"EFFECTIVE", "DENIED", "WITHDRAWN"}:
+            continue
+        anniversary = f.get("hap_anniversary_date")
+        if not anniversary:
+            continue
+        try:
+            due = date.fromisoformat(anniversary) - timedelta(days=60)
+            prepare = date.fromisoformat(anniversary) - timedelta(days=90)
+        except (TypeError, ValueError):
+            continue
+        if due < today - timedelta(days=120) or prepare > today + timedelta(days=120):
+            continue
+        rent_change_deadlines.append({
+            "id":packet.id,"property_id":f.get("property_id"),"tenant_id":packet.tenant_id,
+            "status":f.get("status","DRAFT"),"contract_anniversary":anniversary,
+            "prepare_by":str(prepare),"submit_by":str(due),
+            "overdue":due < today and f.get("status") not in {"SUBMITTED","UNDER_REVIEW","APPROVED"},
+            "href":f"/pm/rent-increases?property={f.get('property_id')}",
+        })
+    rent_change_deadlines.sort(key=lambda item:item["submit_by"])
     return Response({
         "generated_at": timezone.now().isoformat(),
         "workspace": {"id": workspace.id, "name": workspace.name},
@@ -279,6 +304,7 @@ def command_center(request):
             "active_leads": active_leads.count(),
         },
         "financials": financials,
+        "rent_change_deadlines": rent_change_deadlines[:12],
         "cases": {
             "open": open_cases.count(),
             "collections": collection_cases.count(),
