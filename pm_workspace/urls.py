@@ -5,7 +5,7 @@ from .advanced_billing_views import advanced_tenant_billing, collections_stateme
 from .billing_policy_views import apply_company_billing_template, company_billing_template, rent_allocation
 from .billing_views import generate_tenant_charges, reconcile_monthly_rent, my_tenant_account, portfolio_billing_summary, tenant_billing_profile
 from .communication_views import bulk_delete_ledger, investor_ledger, my_conversations, pm_conversations, reply_conversation, request_ledger_information, requester_reply, resolve_conversation
-from .deposit_views import apply_deposit, deposit_status
+from .deposit_views import apply_deposit, deposit_status, deposit_transfer_review
 from .dashboard_views import command_center
 from .document_builder_views import document_builder_bootstrap, document_builder_finalize, document_builder_prefill, document_builder_save
 from .document_views import PMPropertyDocumentViewSet, document_template_catalog, property_document_checklist
@@ -112,6 +112,7 @@ urlpatterns = [
     path("billing/tenants/<int:tenant_id>/advanced/", advanced_tenant_billing),
     path("billing/tenants/<int:tenant_id>/payer-profile/", payer_profile),
     path("billing/tenants/<int:tenant_id>/deposit-status/", deposit_status),
+    path("billing/tenants/<int:tenant_id>/deposit-transfer-review/", deposit_transfer_review),
     path("billing/tenants/<int:tenant_id>/apply-deposit/", apply_deposit),
     path("billing/tenants/<int:tenant_id>/rebuild-split-rent/", rebuild_split_rent),
     path("billing/tenants/<int:tenant_id>/generate-installment-late-fees/", generate_installment_late_fees),
