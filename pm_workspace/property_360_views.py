@@ -32,10 +32,10 @@ def _linked_tenants(workspace, prop):
     """Only explicit unit/occupancy links or unique legacy name match; never match addresses loosely."""
     occupied = list(PMOccupancy.objects.filter(workspace=workspace,property=prop).values_list("tenant_id",flat=True))
     lease_tenants = list(PMLease.objects.filter(workspace=workspace,unit__property=prop).values_list("tenant_id",flat=True))
-    explicit = set(occupied + lease_tenants)
+    explicit = set(occupied + lease_tenants + list(PMTenant.objects.filter(workspace=workspace,property=prop).values_list("id",flat=True)))
     # A legacy tenant stores property_name as free text. Only trust it where the property name is unique.
     name_is_unique = PMProperty.objects.filter(workspace=workspace,name__iexact=prop.name).count() == 1
-    named = list(PMTenant.objects.filter(workspace=workspace,property_name__iexact=prop.name)
+    named = list(PMTenant.objects.filter(workspace=workspace,property__isnull=True,property_name__iexact=prop.name)
                  .exclude(id__in=explicit)) if name_is_unique else []
     linked = list(PMTenant.objects.filter(workspace=workspace,id__in=explicit).order_by("last_name","first_name"))
     linked.extend(named)
