@@ -14,6 +14,7 @@ from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeas
 from .ledger_audit_views import oldest_first_allocation, external_payment_evidence, verified_monthly_late_fee
 from .lease_billing_engine import lease_billing, waive_late_fee
 from .monthly_schedule_views import simple_monthly_rent_schedule
+from .owner_payment_review_views import owner_payment_review
 from .handoff_views import property_handoff
 from .rent_change_views import property_rent_change_plans, update_rent_change_plan
 from .document_intake_views import property_document_intake
@@ -121,6 +122,7 @@ urlpatterns = [
     path("billing/tenants/<int:tenant_id>/generate/", generate_tenant_charges),
     path("billing/tenants/<int:tenant_id>/reconcile-month/", reconcile_monthly_rent),
     path("billing/tenants/<int:tenant_id>/simple-schedule/", simple_monthly_rent_schedule),
+    path("billing/tenants/<int:tenant_id>/owner-payment-review/", owner_payment_review),
     path("billing/tenants/<int:tenant_id>/allocations/", oldest_first_allocation),
     path("billing/tenants/<int:tenant_id>/external-evidence/", external_payment_evidence),
     path("billing/tenants/<int:tenant_id>/verified-late-fee/", verified_monthly_late_fee),
