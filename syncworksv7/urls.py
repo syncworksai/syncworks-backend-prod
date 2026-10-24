@@ -18,6 +18,7 @@ urlpatterns = [
     path("api/v1/household/", include("platform_household.urls")),
     path("api/v1/pm-hub/", include("pm_workspace.urls")),
     path("api/v1/edge/", include("platform_edge.urls")),
+    path("api/v1/business-finance/", include("business_finance.urls")),
     path("admin/", admin.site.urls),
 
     path(
