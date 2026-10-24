@@ -160,6 +160,8 @@ class PMTenantSerializer(serializers.ModelSerializer):
         for entry in obj.ledger_entries.all():
             if entry.category.strip().upper().replace(" ", "_") == "SECURITY_DEPOSIT":
                 continue  # Escrow/deposit reversals do not reduce collectible rent.
+            if entry.category == "RENT_HOUSING" or entry.payment_method == "HOUSING_AUTHORITY":
+                continue  # Tenant cards must never combine agency receivables with tenant debt.
             if entry.entry_type in {PMLedgerEntry.EntryType.CHARGE, PMLedgerEntry.EntryType.ADJUSTMENT}:
                 total += entry.amount
             else:
