@@ -38,6 +38,19 @@ def as_money(value):
     return str(Decimal(value or ZERO).quantize(Decimal("0.01")))
 
 
+def invalidate_reconciliation(business, *dates):
+    """Any corrected cost reopens affected and later months."""
+    instance = BusinessFinanceSettings.objects.filter(business=business).first()
+    if not instance or not instance.expenses_reconciled_through:
+        return
+    affected = [d for d in dates if d and d <= instance.expenses_reconciled_through]
+    if not affected:
+        return
+    first = min(affected).replace(day=1)
+    instance.expenses_reconciled_through = first - timedelta(days=1)
+    instance.save(update_fields=["expenses_reconciled_through", "updated_at"])
+
+
 def expense_rows(business):
     return BusinessExpense.objects.filter(business=business).select_related("ticket")
 
@@ -136,6 +149,7 @@ class ExpenseListCreateAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         with transaction.atomic():
             instance = serializer.save(business=business, created_by=request.user)
+            invalidate_reconciliation(business, instance.incurred_on)
             if instance.ticket_id:
                 JobCostReview.objects.filter(ticket_id=instance.ticket_id, business=business).update(
                     costs_complete=False, reviewed_by=None, reviewed_at=None
@@ -155,7 +169,9 @@ class ExpenseDetailAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         with transaction.atomic():
             original_ticket_id = expense.ticket_id
+            original_incurred_on = expense.incurred_on
             instance = serializer.save()
+            invalidate_reconciliation(business, original_incurred_on, instance.incurred_on)
             review_ids = [tid for tid in {original_ticket_id, instance.ticket_id} if tid]
             JobCostReview.objects.filter(ticket_id__in=review_ids, business=business).update(
                 costs_complete=False, reviewed_by=None, reviewed_at=None
