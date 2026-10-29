@@ -11,9 +11,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from user_accounts.models.business import Business
 from user_accounts.models.stripe_connect import StripeConnectProfile
-from user_accounts.viewsets.pm_rent import _ensure_business_access, _require_biz_id
 from user_accounts.viewsets.stripe_connect import _require_business_and_access
 from .models import PMCollectionSetup
 
@@ -85,11 +83,9 @@ class PMCollectionSetupAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        business_id = _require_biz_id(request)
-        _ensure_business_access(request, business_id)
-        business = Business.objects.filter(pk=business_id, is_active=True).first()
-        if not business:
-            return Response({"detail": "Business not found."}, status=404)
+        business, _membership, error = _require_business_and_access(request)
+        if error:
+            return error
         setup, _ = PMCollectionSetup.objects.get_or_create(business_id=business.id)
         return Response(setup_status(business, setup))
 
