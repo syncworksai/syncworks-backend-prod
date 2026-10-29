@@ -70,6 +70,9 @@ def generate_monthly_cash_fee_invoices(
       - cash_confirmed_at date within [period_start..period_end]
       - sum(total_amount_cents) > 0
     """
+    if fee_bps != 100:
+        raise ValueError("Cash platform fee is fixed at 1% under beta policy.")
+
     if period_start is None or period_end is None:
         period_start, period_end, ym = month_range_for_previous_month()
     else:
