@@ -58,7 +58,7 @@ def _is_connection_verified(business, setup):
     # alone does not prove which PM portfolio or trust bank owns incoming rent.
     if setup and setup.method == PMCollectionSetup.Method.STRIPE_CONNECT:
         capable = capable and bool(setup.trust_account_reviewed_at)
-    if setup and setup.method in (PMCollectionSetup.Method.EXTERNAL, PMCollectionSetup.Method.MANUAL):
+    if setup and setup.method in (PMCollectionSetup.Method.UNCONFIGURED, PMCollectionSetup.Method.EXTERNAL, PMCollectionSetup.Method.MANUAL):
         capable = False
     return capable
 
