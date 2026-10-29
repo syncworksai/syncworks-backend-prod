@@ -27,7 +27,11 @@ def _external_url(value: str) -> str:
     parsed = urlsplit(value)
     if parsed.scheme.lower() != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise ValidationError({"external_provider_url": "Provide a secure HTTPS provider URL."})
-    if parsed.port and parsed.port != 443:
+    try:
+        port = parsed.port
+    except ValueError:
+        raise ValidationError({"external_provider_url": "Invalid provider URL port."})
+    if port and port != 443:
         raise ValidationError({"external_provider_url": "Non-standard ports are not supported."})
     try:
         ipaddress.ip_address(parsed.hostname)
