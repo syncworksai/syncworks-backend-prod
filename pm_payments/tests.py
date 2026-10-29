@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
-from rest_framework.test import APIClient
+from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
+from unittest.mock import patch
+from user_accounts.viewsets.pm_rent import PMRentChargeViewSet
 
 from user_accounts.models.business import Business
 from pm_payments.models import PMCollectionSetup
@@ -64,3 +66,11 @@ class PMCollectionSetupTests(TestCase):
         self.assertTrue(response.data["trust_account_reviewed"])
         self.assertFalse(response.data["online_rent_collection_enabled"])
         self.assertTrue(any("not yet enabled" in r for r in response.data["readiness_reasons"]))
+
+    def test_old_rent_checkout_cannot_charge_platform_without_payout(self):
+        request = APIRequestFactory().post("/api/v1/pm/rent/charges/1/checkout/", {}, format="json")
+        force_authenticate(request, user=self.owner)
+        with patch.object(PMRentChargeViewSet, "get_object", return_value=object()):
+            response = PMRentChargeViewSet.as_view({"post": "checkout"})(request, pk=1)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["code"], "PM_ONLINE_RENT_NOT_RELEASED")
