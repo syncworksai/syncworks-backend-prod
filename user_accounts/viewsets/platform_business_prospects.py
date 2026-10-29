@@ -19,6 +19,17 @@ from user_accounts.models import (
 from user_accounts.services.god_mode import is_god_mode
 
 
+PILOT_REQUIRED_CHECKS = (
+    "signup", "business", "settings", "intake", "estimate", "dispatch",
+    "invoice", "payment", "password_reset", "feedback",
+    "customer_import", "customer_dedup", "customer_search",
+    "mobile", "billing_review", "payout_review",
+)
+PILOT_OPTIONAL_CHECKS = ("completion_email",)
+PILOT_ALLOWED_CHECKS = set(PILOT_REQUIRED_CHECKS) | set(PILOT_OPTIONAL_CHECKS)
+COMPLETION_SUBJECT = "Your SyncWorks Business pilot is complete"
+
+
 class IsFounderGodMode(BasePermission):
     def has_permission(self, request, view):
         return is_god_mode(getattr(request, "user", None))
@@ -63,6 +74,7 @@ class PlatformBusinessProspectSerializer(serializers.ModelSerializer):
     activities = PlatformProspectActivitySerializer(many=True, read_only=True)
     signed_up = serializers.SerializerMethodField()
     signup_url = serializers.SerializerMethodField()
+    completion_notified = serializers.SerializerMethodField()
 
     class Meta:
         model = PlatformBusinessProspect
@@ -71,11 +83,11 @@ class PlatformBusinessProspectSerializer(serializers.ModelSerializer):
             "interests", "notes", "next_action", "follow_up_at", "status",
             "pilot_status", "pilot_checks", "pilot_feedback",
             "last_invited_at", "linked_business", "signed_up", "signed_up_at",
-            "signup_url", "activities", "created_at", "updated_at",
+            "signup_url", "completion_notified", "activities", "created_at", "updated_at",
         ]
         read_only_fields = [
             "id", "last_invited_at", "linked_business", "signed_up",
-            "signed_up_at", "signup_url", "activities", "created_at", "updated_at",
+            "signed_up_at", "signup_url", "completion_notified", "activities", "created_at", "updated_at",
         ]
 
     def validate(self, attrs):
@@ -88,13 +100,13 @@ class PlatformBusinessProspectSerializer(serializers.ModelSerializer):
         pilot_status = attrs.get("pilot_status", getattr(self.instance, "pilot_status", "NOT_STARTED"))
         checks = attrs.get("pilot_checks", getattr(self.instance, "pilot_checks", {}) or {})
         if pilot_status == PlatformBusinessProspect.PilotStatus.COMPLETE:
-            required = {"signup", "business", "settings", "intake", "estimate", "dispatch", "invoice", "payment", "password_reset", "feedback"}
+            required = set(PILOT_REQUIRED_CHECKS)
             if not self.instance or not self.instance.linked_business_id or not all(checks.get(key) is True for key in required):
-                raise serializers.ValidationError({"pilot_status": "Pilot completion requires a linked Business and all 10 checklist items confirmed."})
+                raise serializers.ValidationError({"pilot_status": f"Pilot completion requires a matched Business and all {len(required)} setup checks confirmed."})
         return attrs
 
     def validate_pilot_checks(self, value):
-        allowed = {"signup", "business", "settings", "intake", "estimate", "dispatch", "invoice", "payment", "password_reset", "feedback"}
+        allowed = PILOT_ALLOWED_CHECKS
         if not isinstance(value, dict) or set(value) - allowed or any(type(v) is not bool for v in value.values()):
             raise serializers.ValidationError("Provide only supported checklist names with true/false values.")
         return value
@@ -114,6 +126,9 @@ class PlatformBusinessProspectSerializer(serializers.ModelSerializer):
 
     def get_signup_url(self, obj):
         return _signup_url(obj)
+
+    def get_completion_notified(self, obj):
+        return any(item.subject == COMPLETION_SUBJECT for item in obj.activities.all())
 
 
 class PlatformBusinessProspectViewSet(viewsets.ModelViewSet):
@@ -157,7 +172,7 @@ class PlatformBusinessProspectViewSet(viewsets.ModelViewSet):
             PlatformProspectActivity.objects.create(
                 prospect=prospect, kind=PlatformProspectActivity.Kind.STATUS,
                 subject=f"Pilot: {old_pilot} → {prospect.pilot_status}",
-                body=f"Checklist {sum(bool(x) for x in (prospect.pilot_checks or {}).values())}/10 manually checked",
+                body=f"Checklist {sum((prospect.pilot_checks or {}).get(key) is True for key in PILOT_REQUIRED_CHECKS)}/{len(PILOT_REQUIRED_CHECKS)} manually checked",
                 created_by=self.request.user,
             )
         if prospect.status != previous:
@@ -235,6 +250,40 @@ class PlatformBusinessProspectViewSet(viewsets.ModelViewSet):
             created_by=request.user,
         )
         return Response({"detail": "Invitation handed to email provider and logged.", "prospect": self.get_serializer(prospect).data})
+
+    @action(detail=True, methods=["post"], url_path="send-completion")
+    def send_completion(self, request, pk=None):
+        """Founder-triggered transactional notification; never a marketing upsell."""
+        prospect = self.get_object()
+        if not prospect.email or not prospect.linked_business_id:
+            return Response({"detail": "A verified Business and owner email are required."}, status=409)
+        if prospect.pilot_status != PlatformBusinessProspect.PilotStatus.COMPLETE:
+            return Response({"detail": "All setup checks must be approved before notifying the owner."}, status=409)
+        if not all((prospect.pilot_checks or {}).get(key) is True for key in PILOT_REQUIRED_CHECKS):
+            return Response({"detail": "Pilot checks are incomplete."}, status=409)
+        if prospect.activities.filter(subject=COMPLETION_SUBJECT).exists():
+            return Response({"detail": "Completion notification was already handed to email provider.", "already_sent": True})
+        body = (
+            f"Hi {prospect.contact_name or 'there'},\n\n"
+            f"{prospect.company_name}'s SyncWorks Business pilot setup has been reviewed and marked complete.\n\n"
+            "Your Business dashboard is available at https://syncworksapp.com/sbo.\n"
+            "You can continue managing customer records, tickets, scheduling, and invoices.\n\n"
+            "Any optional paid features require a separate review and explicit enrollment. "
+            "No new subscription was started by this message.\n\n"
+            "— SyncWorks"
+        )
+        try:
+            count = send_mail(COMPLETION_SUBJECT, body, settings.DEFAULT_FROM_EMAIL, [prospect.email], fail_silently=False)
+        except Exception:
+            return Response({"detail": "Email delivery request failed. Nothing was marked as sent."}, status=503)
+        if count != 1:
+            return Response({"detail": "Email provider did not accept completion notification."}, status=503)
+        PlatformProspectActivity.objects.create(
+            prospect=prospect, kind=PlatformProspectActivity.Kind.EMAIL,
+            subject=COMPLETION_SUBJECT, body=body, recipient=prospect.email,
+            created_by=request.user,
+        )
+        return Response({"detail": "Completion email handed to provider and logged. Inbox delivery not verified.", "already_sent": False})
 
     @action(detail=True, methods=["post"], url_path="log-activity")
     def log_activity(self, request, pk=None):
