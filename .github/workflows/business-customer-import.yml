@@ -28,10 +28,9 @@ jobs:
           python-version: "3.12"
       - name: Install requirements
         run: python -m pip install -r requirements.txt
-      - name: Validate import code
+      - name: Validate Django system and import module
         run: |
           python -m compileall -q user_accounts/viewsets/data_imports.py
           python manage.py check
-          python manage.py migrate --noinput
-      - name: Run import permission and duplicate tests
+      - name: Run migration-backed import permission and duplicate tests
         run: python manage.py test user_accounts.tests.test_business_customer_import_safety --verbosity 2
