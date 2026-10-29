@@ -25,7 +25,7 @@ PILOT_REQUIRED_CHECKS = (
     "customer_import", "customer_dedup", "customer_search",
     "mobile", "billing_review", "payout_review",
 )
-PILOT_OPTIONAL_CHECKS = ("completion_email",)
+PILOT_OPTIONAL_CHECKS = ("completion_email", "direct_provider", "marketplace_zip")
 PILOT_ALLOWED_CHECKS = set(PILOT_REQUIRED_CHECKS) | set(PILOT_OPTIONAL_CHECKS)
 COMPLETION_SUBJECT = "Your SyncWorks Business pilot is complete"
 
