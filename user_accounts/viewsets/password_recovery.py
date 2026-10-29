@@ -63,8 +63,8 @@ class RequestPasswordResetAPIView(APIView):
             try:
                 send_mail(
                     "Reset your SyncWorks password",
-                    "We received a request to reset your SyncWorks password.\\n\\n"
-                    f"Use this link to set a new password:\\n{url}\\n\\n"
+                    "We received a request to reset your SyncWorks password.\n\n"
+                    f"Use this link to set a new password:\n{url}\n\n"
                     "If you did not request this, you can ignore this email. "
                     "This link expires in one hour.",
                     settings.DEFAULT_FROM_EMAIL,
