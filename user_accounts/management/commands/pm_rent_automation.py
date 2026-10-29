@@ -54,8 +54,10 @@ def _send_email(to_email: str, subject: str, body: str, cc_email: str | None = N
         to=[to_email],
         cc=[cc_email] if cc_email else None,
     )
-    msg.send(fail_silently=True)
-    return True
+    try:
+        return msg.send(fail_silently=False) == 1
+    except Exception:
+        return False
 
 
 def _resolve_tenant_email(tenant: PMTenant) -> str:
@@ -228,9 +230,9 @@ class Command(BaseCommand):
                                 if verbose_actions:
                                     self.stdout.write(f"[biz={biz_id}] email reminder: charge={c.id} to={to_email}")
                                 if not dry_run:
-                                    _send_email(to_email, subject, body, from_email=s.resolved_from_email() if hasattr(s, "resolved_from_email") else None)
-                                    c.last_reminder_sent_at = timezone.now()
-                                    c.save(update_fields=["last_reminder_sent_at", "updated_at"])
+                                    if _send_email(to_email, subject, body, from_email=s.resolved_from_email() if hasattr(s, "resolved_from_email") else None):
+                                        c.last_reminder_sent_at = timezone.now()
+                                        c.save(update_fields=["last_reminder_sent_at", "updated_at"])
                                 total_reminders += 1
 
                 # --- Past due email AFTER due ---
@@ -250,9 +252,9 @@ class Command(BaseCommand):
                             if verbose_actions:
                                 self.stdout.write(f"[biz={biz_id}] email past due: charge={c.id} to={to_email}")
                             if not dry_run:
-                                _send_email(to_email, subject, body, from_email=s.resolved_from_email() if hasattr(s, "resolved_from_email") else None)
-                                c.last_past_due_sent_at = timezone.now()
-                                c.save(update_fields=["last_past_due_sent_at", "updated_at"])
+                                if _send_email(to_email, subject, body, from_email=s.resolved_from_email() if hasattr(s, "resolved_from_email") else None):
+                                    c.last_past_due_sent_at = timezone.now()
+                                    c.save(update_fields=["last_past_due_sent_at", "updated_at"])
                             total_past_due += 1
 
                 # --- Late fee assessment (after grace days) ---
