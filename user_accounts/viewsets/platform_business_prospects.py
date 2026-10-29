@@ -85,6 +85,12 @@ class PlatformBusinessProspectSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     "status": "This status requires a verified linked Business. Refresh signup matching first."
                 })
+        pilot_status = attrs.get("pilot_status", getattr(self.instance, "pilot_status", "NOT_STARTED"))
+        checks = attrs.get("pilot_checks", getattr(self.instance, "pilot_checks", {}) or {})
+        if pilot_status == PlatformBusinessProspect.PilotStatus.COMPLETE:
+            required = {"signup", "business", "settings", "intake", "estimate", "dispatch", "invoice", "payment", "password_reset", "feedback"}
+            if not self.instance or not self.instance.linked_business_id or not all(checks.get(key) is True for key in required):
+                raise serializers.ValidationError({"pilot_status": "Pilot completion requires a linked Business and all 10 checklist items confirmed."})
         return attrs
 
     def validate_pilot_checks(self, value):
