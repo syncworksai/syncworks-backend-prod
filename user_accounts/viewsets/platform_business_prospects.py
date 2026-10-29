@@ -69,6 +69,7 @@ class PlatformBusinessProspectSerializer(serializers.ModelSerializer):
         fields = [
             "id", "company_name", "contact_name", "email", "phone", "industry",
             "interests", "notes", "next_action", "follow_up_at", "status",
+            "pilot_status", "pilot_checks", "pilot_feedback",
             "last_invited_at", "linked_business", "signed_up", "signed_up_at",
             "signup_url", "activities", "created_at", "updated_at",
         ]
@@ -85,6 +86,17 @@ class PlatformBusinessProspectSerializer(serializers.ModelSerializer):
                     "status": "This status requires a verified linked Business. Refresh signup matching first."
                 })
         return attrs
+
+    def validate_pilot_checks(self, value):
+        allowed = {"signup", "business", "settings", "intake", "estimate", "dispatch", "invoice", "payment", "password_reset", "feedback"}
+        if not isinstance(value, dict) or set(value) - allowed or any(type(v) is not bool for v in value.values()):
+            raise serializers.ValidationError("Provide only supported checklist names with true/false values.")
+        return value
+
+    def validate_pilot_feedback(self, value):
+        if len(value) > 4000:
+            raise serializers.ValidationError("Keep tester feedback under 4,000 characters.")
+        return value
 
     def validate_interests(self, value):
         if not isinstance(value, list) or len(value) > 20 or any(not isinstance(v, str) or len(v) > 80 for v in value):
@@ -130,8 +142,18 @@ class PlatformBusinessProspectViewSet(viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
-        previous = self.get_object().status
+        old = self.get_object()
+        previous = old.status
+        old_pilot = old.pilot_status
+        old_checks = dict(old.pilot_checks or {})
         prospect = serializer.save()
+        if prospect.pilot_status != old_pilot or (prospect.pilot_checks or {}) != old_checks:
+            PlatformProspectActivity.objects.create(
+                prospect=prospect, kind=PlatformProspectActivity.Kind.STATUS,
+                subject=f"Pilot: {old_pilot} → {prospect.pilot_status}",
+                body=f"Checklist {sum(bool(x) for x in (prospect.pilot_checks or {}).values())}/10 manually checked",
+                created_by=self.request.user,
+            )
         if prospect.status != previous:
             PlatformProspectActivity.objects.create(
                 prospect=prospect, kind=PlatformProspectActivity.Kind.STATUS,
@@ -158,7 +180,9 @@ class PlatformBusinessProspectViewSet(viewsets.ModelViewSet):
             ]) | Q(last_invited_at__isnull=False)
         ).count()
         invited_registered = qs.filter(last_invited_at__isnull=False, linked_business__isnull=False).count()
+        pilot = {code: qs.filter(pilot_status=code).count() for code in PlatformBusinessProspect.PilotStatus.values}
         return Response({
+            "pilot": pilot,
             "total": total, "contacted": contacted, "invited": invited,
             "registered": registered, "won": won,
             "lost": qs.filter(status=PlatformBusinessProspect.Status.LOST).count(),
