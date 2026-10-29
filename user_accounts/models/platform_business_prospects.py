@@ -17,6 +17,17 @@ class PlatformBusinessProspect(models.Model):
         WON = "WON", "Activated / won"
         LOST = "LOST", "Lost"
 
+    class PilotStatus(models.TextChoices):
+        NOT_STARTED = "NOT_STARTED", "Not started"
+        INVITED = "INVITED", "Invited to pilot"
+        ONBOARDING = "ONBOARDING", "Onboarding"
+        TESTING = "TESTING", "Testing workflow"
+        BLOCKED = "BLOCKED", "Blocked"
+        COMPLETE = "COMPLETE", "Completed pilot"
+
+    pilot_status = models.CharField(max_length=16, choices=PilotStatus.choices, default=PilotStatus.NOT_STARTED, db_index=True)
+    pilot_checks = models.JSONField(default=dict, blank=True)
+    pilot_feedback = models.TextField(blank=True, default="")
     company_name = models.CharField(max_length=200)
     contact_name = models.CharField(max_length=160, blank=True, default="")
     email = models.EmailField(blank=True, default="", db_index=True)

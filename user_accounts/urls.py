@@ -6,6 +6,10 @@ from rest_framework.routers import DefaultRouter
 from user_accounts.viewsets.team import TeamInvitesViewSet, TeamMembersViewSet
 from user_accounts.viewsets.me import MeViewSet
 
+from user_accounts.viewsets.password_recovery import (
+    RequestPasswordResetAPIView, ConfirmPasswordResetAPIView, ChangePasswordAPIView,
+)
+
 from user_accounts.viewsets.auth import (
     LogoutAPIView,
     MeAPIView,
@@ -518,6 +522,9 @@ urlpatterns = [
     # ----------------------------
     path("auth/register/", RegisterAPIView.as_view(), name="auth-register"),
     path("auth/login/", TokenLoginAPIView.as_view(), name="auth-login"),
+    path("auth/password/reset/request/", RequestPasswordResetAPIView.as_view(), name="auth-password-reset-request"),
+    path("auth/password/reset/confirm/", ConfirmPasswordResetAPIView.as_view(), name="auth-password-reset-confirm"),
+    path("auth/change-password/", ChangePasswordAPIView.as_view(), name="auth-change-password"),
     path("auth/me/", MeAPIView.as_view(), name="auth-me"),
     path("auth/logout/", LogoutAPIView.as_view(), name="auth-logout"),
     path("auth/upgrade-to-sbo/", UpgradeToSboAPIView.as_view(), name="auth-upgrade-to-sbo"),
