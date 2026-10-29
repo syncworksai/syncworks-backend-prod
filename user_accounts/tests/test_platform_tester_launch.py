@@ -40,7 +40,8 @@ class TesterLaunchTests(TestCase):
         self.client.force_authenticate(user=self.founder)
         business = Business.objects.create(name="Pilot Test Services", owner=self.other_user)
         self.prospect.linked_business = business
-        self.prospect.save(update_fields=["linked_business"])
+        self.prospect.email = self.other_user.email
+        self.prospect.save(update_fields=["linked_business", "email"])
         checks = {key: True for key in PILOT_REQUIRED_CHECKS}
         url = f"/api/v1/platform/prospects/{self.prospect.pk}/"
         complete = self.client.patch(url, {"pilot_status": "COMPLETE", "pilot_checks": checks}, format="json")
