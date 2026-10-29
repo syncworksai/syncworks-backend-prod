@@ -130,6 +130,12 @@ class PaymentMigrationPlanAPIView(APIView):
             raise ValidationError({"detail": "Unsupported migration plan field."})
         with transaction.atomic():
             plan, _ = PaymentMigrationPlan.objects.select_for_update().get_or_create(business=business)
+            baseline_fields = (
+                "current_processor", "current_monthly_fees", "current_monthly_transactions",
+                "average_payout_days", "monthly_reconciliation_hours",
+            )
+            old_baseline = tuple(getattr(plan, field) for field in baseline_fields)
+            old_notes = plan.test_notes
             if "current_processor" in values:
                 v = str(values["current_processor"] or "").strip()
                 if len(v) > 100:
@@ -176,6 +182,18 @@ class PaymentMigrationPlanAPIView(APIView):
                 if len(v) > 3000:
                     raise ValidationError({"test_notes": "Maximum 3000 characters."})
                 plan.test_notes = v
+            # Any edited cost baseline or test reference invalidates earlier manual
+            # reviewer sign-off. Never retain a stale migration or payout assertion.
+            baseline_changed = old_baseline != tuple(getattr(plan, field) for field in baseline_fields)
+            evidence_changed = "test_evidence" in values or ("test_notes" in values and old_notes != plan.test_notes)
+            if baseline_changed or evidence_changed or not plan.workspace_reviewed_at:
+                plan.test_review_requested_at = None
+                plan.founder_test_reviewed_at = None
+                plan.founder_test_reviewer_id = None
+                plan.founder_test_notes = ""
+                plan.switch_requested_at = None
+                if baseline_changed and values.get("costs_reviewed") is not True:
+                    plan.costs_reviewed_at = None
             if values.get("request_test_review") is True:
                 if not plan.costs_reviewed_at or not _is_connection_verified(business, PMCollectionSetup.objects.filter(business_id=business.id).first()):
                     raise ValidationError({"request_test_review": "Complete cost review and connect a verified receiving account first."})
@@ -185,8 +203,8 @@ class PaymentMigrationPlanAPIView(APIView):
             if "request_switch" in values:
                 if values["request_switch"] is not True:
                     raise ValidationError({"request_switch": "Only a switch request is allowed."})
-                if not plan.founder_test_reviewed_at:
-                    raise ValidationError({"request_switch": "Wait for founder review of controlled payment tests."})
+                if not plan.founder_test_reviewed_at or not _is_connection_verified(business, PMCollectionSetup.objects.filter(business_id=business.id).first()):
+                    raise ValidationError({"request_switch": "Verified account capabilities and founder test review are required."})
                 plan.switch_requested_at = timezone.now()
             plan.updated_by_id = request.user.id
             plan.save()
@@ -210,6 +228,8 @@ class PaymentMigrationFounderReviewAPIView(APIView):
             return Response({"detail": "Owner has not submitted test evidence for review."}, status=409)
         if not all((plan.test_evidence or {}).get(key) is True for key in TEST_ITEMS):
             return Response({"detail": "The six evidence checks are incomplete."}, status=409)
+        if not _is_connection_verified(business, PMCollectionSetup.objects.filter(business_id=business.id).first()):
+            return Response({"detail": "Bank/processor capabilities are no longer verified."}, status=409)
         plan.founder_test_reviewed_at = timezone.now()
         plan.founder_test_reviewer_id = request.user.id
         plan.founder_test_notes = notes
