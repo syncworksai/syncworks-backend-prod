@@ -60,13 +60,13 @@ def investor_invites(request):
  signup_url=f"{frontend}/register?{urlencode({'role':'owner','email':g.email,'code':token})}"
  accept_url=f"{frontend}/investor/accept?{urlencode({'code':token})}"
  subject=f"{ws.name} invited you to your property-owner portal"
- body=(f"Hello {owner.name},\\n\\n"
-       f"{ws.name} has invited you to connect your Property Owner / Partner portal in SyncWorks.\\n"
-       f"Use the email address receiving this message when you sign up or sign in.\\n\\n"
-       f"Your one-time invitation code: {token}\\n"
-       f"New to SyncWorks? Start here: {signup_url}\\n"
-       f"Already have a Personal account? Connect here: {accept_url}\\n\\n"
-       f"This invitation expires in 14 days. If you were not expecting it, contact {ws.name}.\\n"
+ body=(f"Hello {owner.name},\n\n"
+       f"{ws.name} has invited you to connect your Property Owner / Partner portal in SyncWorks.\n"
+       f"Use the email address receiving this message when you sign up or sign in.\n\n"
+       f"Your one-time invitation code: {token}\n"
+       f"New to SyncWorks? Start here: {signup_url}\n"
+       f"Already have a Personal account? Connect here: {accept_url}\n\n"
+       f"This invitation expires in 14 days. If you were not expecting it, contact {ws.name}.\n"
        f"{ws.email_signature or ws.sender_name or ws.name}")
  email_sent=False
  try:
