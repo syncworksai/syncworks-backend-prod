@@ -758,6 +758,10 @@ class PMTenantVerticalSliceTests(APITestCase):
         lease.assistance_portion=Decimal("78.00")
         lease.save()
         start=timezone.localdate().replace(day=1)
+        # The fixture bills from the first of the current month; align the
+        # synthetic lease start so date validation is stable every day.
+        lease.start_date=start
+        lease.save(update_fields=["start_date"])
         label=start.strftime("%Y-%m")
         for type_,category,amount in (
             ("CHARGE","RENT_TENANT","1400.00"),
