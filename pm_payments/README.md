@@ -43,3 +43,17 @@ The proposed $1 fee is **not guaranteed to be profit**: check processor and Conn
 ## Deployment
 
 This feature intentionally never changes live rent amounts or activates new payments. Backend CI must pass migration/isolation tests. Frontend build and PM owner sign-in testing must pass before promoting. Live collections need separate reviewed PR, Stripe test-mode end-to-end payment/return/refund tests, and legal/processor approvals.
+
+## Five-stage onboarding (new)
+
+The Business and PM owner UIs share one persistent `PaymentMigrationPlan` per Business legal entity. God Mode reads the same record using its founder-only business context; do not store a second independent set of checkmarks on the prospect.
+
+- **1. Preserve existing processor:** owner acknowledges initial Business and existing processor workflow.
+- **2. Compare actual costs:** store processor, total processing/other fees, monthly payment count, returns, unmatched deposits, average payout delay and time reconciling. These are owner-supplied estimates, **not validated bank figures**.
+- **3. Verify receiving account:** backend reads genuine Stripe Connect charges/payouts capability flags. For PM Stripe, also require recorded legal/trust-account owner review. Existing external processor records are not automatically verified.
+- **4. Test end-to-end:** owner documents six separate payment evidence items, then requests founder manual review. Owner cannot mark review complete. Founder notes and time are recorded separately; manual attestation is not a substitute for provider settlement evidence.
+- **5. Request switching:** owner may request switching only after review, but **no switch, rent checkout or automated funds movement can be activated by this endpoint**; it remains locked pending separate payment release.
+
+API: `GET/PATCH /api/v1/payment-migration/plan/` (with active `X-Business-Id`), `POST /api/v1/payment-migration/review-test/` (founder only). All costs and milestones are stored per Business, not per browser or per PM workspace. A changed baseline or test proof invalidates a previous review and any pending switch request.
+
+The initial Business guided setup links to the migration workflow under Business Finance; PM Settings and its payment setup screen display the same stages. A company can remain on an existing processor indefinitely; this is intentionally not a mandatory subscription activation gate.
