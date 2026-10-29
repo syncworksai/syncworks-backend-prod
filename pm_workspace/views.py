@@ -1,5 +1,6 @@
-from urllib.parse import urlencode
 from __future__ import annotations
+
+from urllib.parse import urlencode
 
 from datetime import timedelta
 
