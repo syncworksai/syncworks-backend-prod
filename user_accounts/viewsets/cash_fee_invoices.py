@@ -221,6 +221,9 @@ class CashFeeInvoiceViewSet(viewsets.ModelViewSet):
         except Exception:
             due_days = 7
 
+        if fee_bps != 100:
+            return Response({"detail": "Beta platform fee is fixed at 1%."}, status=400)
+
         res = generate_monthly_cash_fee_invoices(
             fee_bps=fee_bps,
             due_days=due_days,
