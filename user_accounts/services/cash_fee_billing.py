@@ -125,6 +125,22 @@ def generate_monthly_cash_fee_invoices(
             )
         )
         fee_cents = max(0, fee_cents)
+        # A monthly aggregate must not bypass the $50 per-ticket fee cap.
+        fee_cents = sum(
+            min(
+                5000,
+                int((Decimal(max(0, cents or 0)) * Decimal(fee_bps) / Decimal(10000)).quantize(
+                    Decimal("1"), rounding=ROUND_HALF_UP
+                )),
+            )
+            for cents in Ticket.objects.filter(
+                assigned_business=b,
+                payment_method=Ticket.PaymentMethod.CASH,
+                cash_confirmed_at__isnull=False,
+                cash_confirmed_at__date__gte=period_start,
+                cash_confirmed_at__date__lte=period_end,
+            ).values_list("total_amount_cents", flat=True).iterator(chunk_size=1000)
+        )
 
         due_date = timezone.localdate() + timedelta(days=max(0, int(due_days)))
 
