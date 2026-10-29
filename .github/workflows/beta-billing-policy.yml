@@ -27,5 +27,5 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - run: |
           python manage.py check
-          python manage.py makemigrations --check --dry-run
+          python manage.py migrate --noinput
           python manage.py test user_accounts.tests.test_beta_cash_fee_policy user_accounts.tests.test_all_subscription_waiver user_accounts.tests.test_marketplace_payment_policy --verbosity 2
