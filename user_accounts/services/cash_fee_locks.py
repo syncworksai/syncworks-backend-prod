@@ -8,6 +8,7 @@ from typing import Optional
 from django.utils import timezone
 
 from user_accounts.models import Business, CashFeeInvoice
+from user_accounts.services.cash_fee_policy import should_lock_cash_fees, CASH_LOCK_REASON
 
 try:
     from user_accounts.models import PlatformBillingProfile
@@ -25,6 +26,8 @@ class LockRunResult:
     overdue_found: int = 0
     businesses_locked: int = 0
     businesses_skipped_exempt: int = 0
+    businesses_unlocked: int = 0
+    still_in_grace: int = 0
 
 
 def _business_is_exempt(b: Business) -> bool:
@@ -44,7 +47,7 @@ def _business_is_exempt(b: Business) -> bool:
 
 def enforce_overdue_cash_fee_locks(*, today: Optional[date] = None) -> LockRunResult:
     """
-    Lock businesses that have 1 overdue CashFeeInvoice.
+    Lock only after 3 calendar months past the oldest unpaid cash-fee due date.
     """
     today = today or timezone.localdate()
     res = LockRunResult()
@@ -73,12 +76,18 @@ def enforce_overdue_cash_fee_locks(*, today: Optional[date] = None) -> LockRunRe
             except Exception:
                 pass
 
+        if not should_lock_cash_fees(inv.due_date, today):
+            res.still_in_grace += 1
+            continue
+
         # Lock via PlatformBillingProfile if present, else BusinessAccessControl
         if PlatformBillingProfile is not None:
             prof = PlatformBillingProfile.objects.filter(business=b).first()
             if prof is None:
                 prof = PlatformBillingProfile(business=b)
 
+            if getattr(prof, "is_locked", False):
+                continue  # Never overwrite a manual or unrelated lock reason.
             if hasattr(prof, "is_locked"):
                 prof.is_locked = True
             if hasattr(prof, "lock_reason"):
