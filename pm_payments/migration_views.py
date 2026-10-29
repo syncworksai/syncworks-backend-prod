@@ -26,7 +26,8 @@ TEST_ITEMS = (
 )
 UPDATABLE = {
     "workspace_reviewed", "current_processor", "current_monthly_fees",
-    "current_monthly_transactions", "average_payout_days",
+    "current_monthly_transactions", "monthly_other_provider_costs",
+    "monthly_returned_payments", "monthly_unmatched_deposits", "average_payout_days",
     "monthly_reconciliation_hours", "costs_reviewed", "test_evidence",
     "test_notes", "request_test_review", "request_switch",
 }
@@ -92,6 +93,10 @@ def _summary(business, plan):
         "current_processor": plan.current_processor,
         "current_monthly_fees": str(plan.current_monthly_fees) if plan.current_monthly_fees is not None else "",
         "current_monthly_transactions": plan.current_monthly_transactions,
+        "monthly_other_provider_costs": str(plan.monthly_other_provider_costs) if plan.monthly_other_provider_costs is not None else "",
+        "monthly_returned_payments": plan.monthly_returned_payments,
+        "monthly_unmatched_deposits": plan.monthly_unmatched_deposits,
+        "total_monthly_provider_cost": str((plan.current_monthly_fees or Decimal("0.00")) + (plan.monthly_other_provider_costs or Decimal("0.00"))),
         "average_payout_days": str(plan.average_payout_days) if plan.average_payout_days is not None else "",
         "monthly_reconciliation_hours": str(plan.monthly_reconciliation_hours) if plan.monthly_reconciliation_hours is not None else "",
         "workspace_reviewed": bool(plan.workspace_reviewed_at),
@@ -132,6 +137,7 @@ class PaymentMigrationPlanAPIView(APIView):
             plan, _ = PaymentMigrationPlan.objects.select_for_update().get_or_create(business=business)
             baseline_fields = (
                 "current_processor", "current_monthly_fees", "current_monthly_transactions",
+                "monthly_other_provider_costs", "monthly_returned_payments", "monthly_unmatched_deposits",
                 "average_payout_days", "monthly_reconciliation_hours",
             )
             old_baseline = tuple(getattr(plan, field) for field in baseline_fields)
@@ -143,6 +149,21 @@ class PaymentMigrationPlanAPIView(APIView):
                 plan.current_processor = v
             if "current_monthly_fees" in values:
                 plan.current_monthly_fees = _decimal(values["current_monthly_fees"], "current_monthly_fees", Decimal("9999999999"), 2)
+            if "monthly_other_provider_costs" in values:
+                plan.monthly_other_provider_costs = _decimal(values["monthly_other_provider_costs"], "monthly_other_provider_costs", Decimal("9999999999"), 2)
+            for count_field in ("monthly_returned_payments", "monthly_unmatched_deposits"):
+                if count_field in values:
+                    raw = values[count_field]
+                    if raw is None or raw == "":
+                        setattr(plan, count_field, None)
+                    else:
+                        try:
+                            n = int(str(raw))
+                            if n < 0 or n > 1000000 or str(raw).strip() != str(n):
+                                raise ValueError()
+                        except (ValueError, TypeError):
+                            raise ValidationError({count_field: "Enter a non-negative whole number."})
+                        setattr(plan, count_field, n)
             if "current_monthly_transactions" in values:
                 raw = values["current_monthly_transactions"]
                 if raw is None or raw == "":
