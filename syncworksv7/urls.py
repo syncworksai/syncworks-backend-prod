@@ -19,6 +19,7 @@ urlpatterns = [
     path("api/v1/pm-hub/", include("pm_workspace.urls")),
     path("api/v1/edge/", include("platform_edge.urls")),
     path("api/v1/business-finance/", include("business_finance.urls")),
+    path("api/v1/pm-collection/", include("pm_payments.urls")),
     path("admin/", admin.site.urls),
 
     path(
