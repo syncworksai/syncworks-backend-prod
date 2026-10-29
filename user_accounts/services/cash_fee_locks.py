@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from user_accounts.models import Business, CashFeeInvoice
 from user_accounts.services.cash_fee_policy import should_lock_cash_fees, CASH_LOCK_REASON
+from user_accounts.services.cash_fee_unlock import unlock_settled_cash_fees
 
 try:
     from user_accounts.models import PlatformBillingProfile
@@ -112,4 +113,5 @@ def enforce_overdue_cash_fee_locks(*, today: Optional[date] = None) -> LockRunRe
             bac.save()
             res.businesses_locked += 1
 
+    res.businesses_unlocked = unlock_settled_cash_fees(today)
     return res
