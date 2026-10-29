@@ -263,6 +263,8 @@ class PlatformBusinessProspectViewSet(viewsets.ModelViewSet):
         prospect = self.get_object()
         if not prospect.email or not prospect.linked_business_id:
             return Response({"detail": "A verified Business and owner email are required."}, status=409)
+        if prospect.email.strip().lower() != (prospect.linked_business.owner.email or "").strip().lower():
+            return Response({"detail": "The invited email no longer matches the linked Business owner. Review the prospect first."}, status=409)
         if prospect.pilot_status != PlatformBusinessProspect.PilotStatus.COMPLETE:
             return Response({"detail": "All setup checks must be approved before notifying the owner."}, status=409)
         if not all((prospect.pilot_checks or {}).get(key) is True for key in PILOT_REQUIRED_CHECKS):
