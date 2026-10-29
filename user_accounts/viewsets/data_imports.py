@@ -12,8 +12,8 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
-from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -356,12 +356,26 @@ def _find_customer(business, payload):
     return None, "new"
 
 
+def _authorize_customer_import(request):
+    """Bulk customer writes require owner or delegated Business settings access."""
+    business, membership, _ = _business_context(request)
+    if business.owner_id == request.user.id or getattr(request.user, "is_superuser", False) or getattr(request.user, "is_platform_admin", False):
+        return business
+    if not membership or not membership.is_active or not membership.can_manage_settings:
+        raise PermissionDenied("Business owner or settings-management permission required to import customers.")
+    return business
+
+
 def _upsert_customer(business, actor, values, source_system, batch_id):
     payload = _customer_payload(values, source_system, batch_id)
     customer, matched_by = _find_customer(business, payload)
 
     if customer:
         for field, value in payload.items():
+            # Keep original provenance and KPI eligibility for active customers.
+            # Re-importing contact details must not turn a live customer into a historical-only record.
+            if field in {"record_source", "is_imported", "import_batch_id", "exclude_from_kpis"}:
+                continue
             if value not in ("", None, []):
                 setattr(customer, field, value)
         customer.updated_by = actor
@@ -458,17 +472,17 @@ def _update_customer_history(customer, ticket):
 class BusinessDataImportViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = BusinessDataImportSerializer
     permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
-        business, _, _ = _business_context(self.request)
+        business = _authorize_customer_import(self.request)
         return BusinessDataImport.objects.filter(
             business=business,
         ).select_related("business", "created_by")
 
     @action(detail=False, methods=["post"], url_path="preview")
     def preview(self, request):
-        business, _, _ = _business_context(request)
+        business = _authorize_customer_import(request)
 
         import_type = str(
             request.data.get("import_type") or ""
@@ -559,7 +573,7 @@ class BusinessDataImportViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=["post"], url_path="execute")
     def execute(self, request, pk=None):
         batch = self.get_object()
-        business, _, _ = _business_context(request)
+        business = _authorize_customer_import(request)
 
         confirm = str(request.data.get("confirm") or "").strip().lower()
         if confirm not in {"1", "true", "yes"}:
