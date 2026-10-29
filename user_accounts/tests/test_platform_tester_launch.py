@@ -1,4 +1,6 @@
-from django.test import TestCase
+from django.test import TestCase, override_settings
+from django.core import mail
+from user_accounts.viewsets.platform_business_prospects import PILOT_REQUIRED_CHECKS
 from rest_framework.test import APIClient
 
 from user_accounts.models import Business, PlatformBusinessProspect
@@ -33,13 +35,33 @@ class TesterLaunchTests(TestCase):
         self.assertEqual(premature.status_code, 400)
         self.assertEqual(self.client.get("/api/v1/platform/prospects/metrics/").status_code, 200)
 
-    def test_completion_needs_linked_business_and_ten_manual_checks(self):
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_completion_needs_linked_business_and_manual_checks(self):
         self.client.force_authenticate(user=self.founder)
         business = Business.objects.create(name="Pilot Test Services", owner=self.other_user)
         self.prospect.linked_business = business
         self.prospect.save(update_fields=["linked_business"])
-        checks = {key: True for key in ("signup", "business", "settings", "intake", "estimate", "dispatch", "invoice", "payment", "password_reset", "feedback")}
+        checks = {key: True for key in PILOT_REQUIRED_CHECKS}
         url = f"/api/v1/platform/prospects/{self.prospect.pk}/"
         complete = self.client.patch(url, {"pilot_status": "COMPLETE", "pilot_checks": checks}, format="json")
         self.assertEqual(complete.status_code, 200, complete.data)
         self.assertEqual(complete.data["pilot_status"], "COMPLETE")
+        self.assertFalse(complete.data["completion_notified"])
+        notify = self.client.post(f"/api/v1/platform/prospects/{self.prospect.pk}/send-completion/", {}, format="json")
+        self.assertEqual(notify.status_code, 200, notify.data)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("no new subscription", mail.outbox[0].body.lower()) if "no new subscription" in mail.outbox[0].body.lower() else self.assertIn("No new subscription", mail.outbox[0].body)
+        again = self.client.post(f"/api/v1/platform/prospects/{self.prospect.pk}/send-completion/", {}, format="json")
+        self.assertEqual(again.status_code, 200, again.data)
+        self.assertTrue(again.data["already_sent"])
+        self.assertEqual(len(mail.outbox), 1)
+
+
+    def test_notification_rejects_unapproved_and_no_marketing(self):
+        self.client.force_authenticate(user=self.founder)
+        self.assertEqual(self.client.post(
+            f"/api/v1/platform/prospects/{self.prospect.pk}/send-completion/",
+            {}, format="json").status_code, 409)
+        self.assertEqual(self.client.patch(
+            f"/api/v1/platform/prospects/{self.prospect.pk}/",
+            {"pilot_checks": {"customer_import": "yes"}}, format="json").status_code, 400)
