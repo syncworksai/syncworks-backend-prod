@@ -21,6 +21,7 @@ class MarketplacePaymentQuote:
 def proposed_marketplace_quote(service_subtotal, platform_fee_bps=100):
     """Cents-accurate preview of a uniform platform-service fee, never a card surcharge.
 
+    Caps the 1% SyncWorks platform-service fee at $50 per job (not per monthly statement).
     Assumes connected business receives service subtotal through destination
     charges and platform collects customer fee as Stripe application fee.
     Does NOT model taxes, processing costs, refunds, or local requirements.
@@ -32,9 +33,9 @@ def proposed_marketplace_quote(service_subtotal, platform_fee_bps=100):
         raise ValueError("Service subtotal must be expressed in cents.")
     if not isinstance(platform_fee_bps, int) or isinstance(platform_fee_bps, bool) or platform_fee_bps != 100:
         raise ValueError("Only the proposed 1% fee is supported in this review-only quote.")
-    fee = (amount * Decimal(platform_fee_bps) / Decimal("10000")).quantize(
+    fee = min(Decimal("50.00"), (amount * Decimal(platform_fee_bps) / Decimal("10000")).quantize(
         Decimal("0.01"), rounding=ROUND_HALF_UP
-    )
+    ))
     return MarketplacePaymentQuote(
         service_subtotal=amount, customer_platform_fee=fee,
         customer_total_before_tax=amount + fee,
