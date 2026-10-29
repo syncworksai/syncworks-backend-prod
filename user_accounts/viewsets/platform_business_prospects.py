@@ -56,7 +56,11 @@ def _reconcile_signup(prospect):
         return  # Never guess when a contact controls several companies.
     prospect.linked_business = match
     prospect.signed_up_at = match.created_at or timezone.now()
-    fields = ["linked_business", "signed_up_at", "updated_at"]
+    # Confirmable from the owner/business relationship; all operational steps stay manual.
+    prospect.pilot_checks = {**(prospect.pilot_checks or {}), "signup": True, "business": True}
+    if prospect.pilot_status in (PlatformBusinessProspect.PilotStatus.NOT_STARTED, PlatformBusinessProspect.PilotStatus.INVITED):
+        prospect.pilot_status = PlatformBusinessProspect.PilotStatus.ONBOARDING
+    fields = ["linked_business", "signed_up_at", "pilot_checks", "pilot_status", "updated_at"]
     if prospect.status not in (PlatformBusinessProspect.Status.WON, PlatformBusinessProspect.Status.LOST):
         prospect.status = PlatformBusinessProspect.Status.REGISTERED
         fields.append("status")
@@ -241,9 +245,11 @@ class PlatformBusinessProspectViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Email provider did not accept this invitation."}, status=503)
         now = timezone.now()
         prospect.last_invited_at = now
+        if prospect.pilot_status == PlatformBusinessProspect.PilotStatus.NOT_STARTED:
+            prospect.pilot_status = PlatformBusinessProspect.PilotStatus.INVITED
         if prospect.status in [PlatformBusinessProspect.Status.NEW, PlatformBusinessProspect.Status.CONTACTED]:
             prospect.status = PlatformBusinessProspect.Status.INVITED
-        prospect.save(update_fields=["last_invited_at", "status", "updated_at"])
+        prospect.save(update_fields=["last_invited_at", "status", "pilot_status", "updated_at"])
         PlatformProspectActivity.objects.create(
             prospect=prospect, kind=PlatformProspectActivity.Kind.INVITATION,
             subject=subject, body=body, recipient=prospect.email,
