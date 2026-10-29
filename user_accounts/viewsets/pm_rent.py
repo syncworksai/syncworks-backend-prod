@@ -731,6 +731,13 @@ class PMRentChargeViewSet(ModelViewSet):
     # -----------------------------
     @action(detail=True, methods=["post"], url_path="checkout")
     def checkout(self, request, pk=None):
+        # SAFETY GATE: legacy route previously charged SyncWorks's platform
+        # without any verified landlord destination or fee/ledger reconciliation.
+        # Connecting Stripe alone is not approval to charge tenant rent.
+        return Response({
+            "detail": "Online rent collections are paused pending verified connected-account routing, trust-account review and webhook reconciliation. Record verified outside payments in the PM ledger.",
+            "code": "PM_ONLINE_RENT_NOT_RELEASED",
+        }, status=409)
         charge: PMRentCharge = self.get_object()
 
         stripe.api_key = getattr(settings, "STRIPE_SECRET_KEY", None)
