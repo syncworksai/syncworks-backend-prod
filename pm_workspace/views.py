@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import urlencode
+
 from datetime import timedelta
 
 from django.conf import settings
@@ -294,13 +296,15 @@ class PMTenantViewSet(viewsets.ModelViewSet):
             reply_to_email=workspace.reply_to_email or workspace.tenant_email or workspace.office_email,
             created_by=request.user,
         )
-        accept_url = f"{str(getattr(settings, 'FRONTEND_BASE_URL', 'https://syncworksapp.com')).rstrip('/')}/tenant/accept?code={invite.code}"
+        frontend = str(getattr(settings, "FRONTEND_BASE_URL", "https://syncworksapp.com")).rstrip("/")
+        accept_url = f"{frontend}/tenant/accept?{urlencode({'code': invite.code})}"
+        signup_url = f"{frontend}/register?{urlencode({'role': 'tenant', 'email': tenant.email, 'code': invite.code})}"
         subject = f"{workspace.name} invited you to SyncWorks"
         body = (
             f"Hello {tenant.first_name},\n\n"
             f"{workspace.name} invited you to connect to your tenant portal for "
             f"{tenant.property_name or 'your property'}{(' - ' + tenant.unit_label) if tenant.unit_label else ''}.\n\n"
-            f"Invitation code: {invite.code}\nOpen: {accept_url}\n\n"
+            f"Invitation code: {invite.code}\nNew to SyncWorks? Create your Personal account: {signup_url}\nAlready have an account? Open: {accept_url}\n\n"
             f"This invitation expires {invite.expires_at:%B %d, %Y}.\n\n"
             f"{workspace.email_signature or workspace.sender_name or workspace.name}"
         )

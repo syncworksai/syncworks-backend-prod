@@ -109,6 +109,8 @@ class PMTenantVerticalSliceTests(APITestCase):
 
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn(f"/tenant/accept?code={invite.code}", mail.outbox[0].body)
+        self.assertIn("register?role=tenant", mail.outbox[0].body)
+        self.assertIn("email=tenant%40example.com", mail.outbox[0].body)
 
         self.client.force_authenticate(self.tenant_user)
         response = self.client.post(
@@ -756,6 +758,10 @@ class PMTenantVerticalSliceTests(APITestCase):
         lease.assistance_portion=Decimal("78.00")
         lease.save()
         start=timezone.localdate().replace(day=1)
+        # The fixture bills from the first of the current month; align the
+        # synthetic lease start so date validation is stable every day.
+        lease.start_date=start
+        lease.save(update_fields=["start_date"])
         label=start.strftime("%Y-%m")
         for type_,category,amount in (
             ("CHARGE","RENT_TENANT","1400.00"),

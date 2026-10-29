@@ -2,6 +2,9 @@
 import hashlib
 import secrets
 import re
+from urllib.parse import urlencode
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from django.db import transaction
@@ -51,8 +54,34 @@ def investor_invites(request):
   defaults={"email":owner.email.strip().casefold(),"status":"INVITED","user":None,
             "accepted_at":None,"invite_token_hash":hashlib.sha256(token.encode()).hexdigest(),
             "invite_expires_at":timezone.now()+timedelta(days=14)})
+ # Send using the PM organization's contact details. A failed mail send does not
+ # claim delivery; the owner can share the generated one-time code privately.
+ frontend=str(getattr(settings,"FRONTEND_BASE_URL","https://syncworksapp.com")).rstrip("/")
+ signup_url=f"{frontend}/register?{urlencode({'role':'owner','email':g.email,'code':token})}"
+ accept_url=f"{frontend}/investor/accept?{urlencode({'code':token})}"
+ subject=f"{ws.name} invited you to your property-owner portal"
+ body=(f"Hello {owner.name},\n\n"
+       f"{ws.name} has invited you to connect your Property Owner / Partner portal in SyncWorks.\n"
+       f"Use the email address receiving this message when you sign up or sign in.\n\n"
+       f"Your one-time invitation code: {token}\n"
+       f"New to SyncWorks? Start here: {signup_url}\n"
+       f"Already have a Personal account? Connect here: {accept_url}\n\n"
+       f"This invitation expires in 14 days. If you were not expecting it, contact {ws.name}.\n"
+       f"{ws.email_signature or ws.sender_name or ws.name}")
+ email_sent=False
+ try:
+  email=EmailMultiAlternatives(
+   subject=subject,body=body,
+   from_email=getattr(settings,"DEFAULT_FROM_EMAIL","notifications@syncworksapp.com"),
+   to=[g.email],
+   reply_to=[ws.reply_to_email or ws.office_email] if (ws.reply_to_email or ws.office_email) else None)
+  email_sent=bool(email.send(fail_silently=False))
+ except Exception:
+  email_sent=False
  return Response({"investor":_grant(g),"invitation_code":token,
-                  "detail":"Invitation prepared. Share code privately; not emailed automatically."},status=201)
+                  "email_sent":email_sent,"invited_email":g.email,
+                  "detail":"Invitation email sent." if email_sent else
+                   "Invitation prepared but email delivery failed. Share the code privately or retry."},status=201)
 
 @api_view(["PATCH"])
 @permission_classes([IsAuthenticated])
