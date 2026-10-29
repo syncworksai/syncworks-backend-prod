@@ -167,8 +167,12 @@ class StripeConnectExpressStartAPIView(APIView):
         base = _platform_base_url()
 
         # ✅ Route users back into the real SettingsHub route
-        refresh_url = f"{base}/settings?connect=refresh&return=/sbo"
-        return_url = f"{base}/settings?connect=return&return=/sbo"
+        # Only approved application paths, never a client-provided redirect URL.
+        destination = (request.data or {}).get("return_to", "/sbo/settings")
+        if destination not in ("/sbo/settings", "/pm/payment-setup"):
+            destination = "/sbo/settings"
+        refresh_url = f"{base}{destination}?connect=refresh"
+        return_url = f"{base}{destination}?connect=return"
 
         link = stripe.AccountLink.create(
             account=business.stripe_connect_account_id,
