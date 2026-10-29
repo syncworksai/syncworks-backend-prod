@@ -74,3 +74,55 @@ class PMCollectionSetupTests(TestCase):
             response = PMRentChargeViewSet.as_view({"post": "checkout"})(request, pk=1)
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.data["code"], "PM_ONLINE_RENT_NOT_RELEASED")
+
+    def test_owner_can_save_five_step_baseline_without_enabling_collection(self):
+        self.client.force_authenticate(user=self.owner)
+        url = "/api/v1/payment-migration/plan/"
+        initial = self.client.get(url, **self.header)
+        self.assertEqual(initial.status_code, 200, initial.data)
+        self.assertEqual(initial.data["completed_count"], 0)
+        self.assertFalse(initial.data["online_collection_enabled"])
+        first = self.client.patch(url, {"workspace_reviewed": True}, format="json", **self.header)
+        self.assertEqual(first.status_code, 200, first.data)
+        second = self.client.patch(url, {
+            "current_processor": "Current bank merchant",
+            "current_monthly_fees": "58.75",
+            "current_monthly_transactions": 40,
+            "average_payout_days": "2.5",
+            "monthly_reconciliation_hours": "6.0",
+            "costs_reviewed": True,
+        }, format="json", **self.header)
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(second.data["completed_count"], 2)
+        self.assertEqual(second.data["current_monthly_fees"], "58.75")
+        self.assertFalse(second.data["bank_ready"])
+        denied = self.client.patch(url, {"request_switch": True}, format="json", **self.header)
+        self.assertEqual(denied.status_code, 400)
+        reread = self.client.get(url, **self.header)
+        self.assertEqual(reread.data["completed_count"], 2)
+        self.assertFalse(reread.data["switch_requested"])
+
+    def test_no_cross_tenant_access_or_fake_processor_verification(self):
+        self.client.force_authenticate(user=self.other)
+        url = "/api/v1/payment-migration/plan/"
+        self.assertEqual(self.client.get(url, **self.header).status_code, 403)
+        self.assertEqual(self.client.patch(url, {"workspace_reviewed": True}, format="json", **self.header).status_code, 403)
+        self.client.force_authenticate(user=self.owner)
+        self.assertEqual(self.client.patch(url, {"bank_ready": True}, format="json", **self.header).status_code, 400)
+        self.assertEqual(self.client.patch(url, {"founder_test_reviewed": True}, format="json", **self.header).status_code, 400)
+        bad_evidence = self.client.patch(url, {"test_evidence": {"bank_deposit_verified": "yes"}}, format="json", **self.header)
+        self.assertEqual(bad_evidence.status_code, 400)
+        self.assertEqual(self.client.post("/api/v1/payment-migration/review-test/",
+                {"notes": "approve"}, format="json", **self.header).status_code, 403)
+
+    def test_request_test_review_requires_connected_payouts_and_evidence(self):
+        self.client.force_authenticate(user=self.owner)
+        url = "/api/v1/payment-migration/plan/"
+        self.client.patch(url, {"workspace_reviewed": True}, format="json", **self.header)
+        self.client.patch(url, {
+            "current_processor": "Existing Processor", "current_monthly_fees": "20.00",
+            "costs_reviewed": True,
+        }, format="json", **self.header)
+        missing = self.client.patch(url, {"request_test_review": True}, format="json", **self.header)
+        self.assertEqual(missing.status_code, 400)
+        self.assertFalse(self.client.get(url, **self.header).data["online_collection_enabled"])
