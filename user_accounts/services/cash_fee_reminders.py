@@ -6,7 +6,7 @@ from django.core.mail import send_mail
 from django.db.models import F
 from django.utils import timezone
 from user_accounts.models import CashFeeInvoice
-from user_accounts.services.cash_fee_policy import should_lock_cash_fees
+from user_accounts.services.cash_fee_policy import should_lock_cash_fees, cash_lock_date
 
 UNPAID = (CashFeeInvoice.Status.OPEN, CashFeeInvoice.Status.OVERDUE)
 
@@ -42,7 +42,7 @@ def send_cash_fee_reminders(*, today=None, dry_run=False):
         age_days = (today - oldest_due).days
         lock_now = should_lock_cash_fees(oldest_due, today)
         subject = "SyncWorks: unpaid cash platform fees" + (" — account restricted" if lock_now else "")
-        deadline = oldest_due + __import__("dateutil.relativedelta", fromlist=["relativedelta"]).relativedelta(months=3)
+        deadline = cash_lock_date(oldest_due)
         body = (
             f"{biz.name} has ${Decimal(balance_cents) / Decimal(100):,.2f} in unpaid cash-platform-fee invoices.\n"
             f"Oldest payment due: {oldest_due.isoformat()} ({age_days} days ago).\n"
