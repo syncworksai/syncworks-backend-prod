@@ -109,6 +109,8 @@ class PMTenantVerticalSliceTests(APITestCase):
 
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn(f"/tenant/accept?code={invite.code}", mail.outbox[0].body)
+        self.assertIn("register?role=tenant", mail.outbox[0].body)
+        self.assertIn("email=tenant%40example.com", mail.outbox[0].body)
 
         self.client.force_authenticate(self.tenant_user)
         response = self.client.post(
