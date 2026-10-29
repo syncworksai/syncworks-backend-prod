@@ -475,7 +475,7 @@ class BusinessDataImportViewSet(viewsets.ReadOnlyModelViewSet):
     parser_classes = [MultiPartParser, FormParser]
 
     def get_queryset(self):
-        business, _, _ = _business_context(self.request)
+        business = _authorize_customer_import(self.request)
         return BusinessDataImport.objects.filter(
             business=business,
         ).select_related("business", "created_by")
