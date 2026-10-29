@@ -314,6 +314,7 @@ else:
 # Authentication
 # -------------------------------------------------
 AUTH_USER_MODEL = "user_accounts.User"
+PASSWORD_RESET_TIMEOUT = 3600  # One hour. Single-use after password is changed.
 
 AUTH_PASSWORD_VALIDATORS = [
     {
