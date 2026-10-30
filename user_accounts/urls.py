@@ -45,6 +45,7 @@ from user_accounts.viewsets.platform_broadcasts import (
 )
 
 from user_accounts.viewsets.platform_business_prospects import PlatformBusinessProspectViewSet
+from user_accounts.viewsets.platform_pilot_readiness import PilotReadinessAPIView
 from user_accounts.viewsets.platform_console import (
     PlatformBillingSummaryViewSet,
     PlatformBusinessesViewSet,
@@ -578,6 +579,7 @@ urlpatterns = [
     # ----------------------------
     # Platform KPIs / Metrics / Broadcasts
     # ----------------------------
+    path("platform/pilot-readiness/", PilotReadinessAPIView.as_view(), name="platform-pilot-readiness"),
     path("platform/kpis/", PlatformKPIAPIView.as_view(), name="platform-kpis"),
     path("platform/metrics/summary/", PlatformMetricsSummaryAPIView.as_view(), name="platform-metrics-summary"),
     path("platform/metrics/alerts/", PlatformMetricsAlertsAPIView.as_view(), name="platform-metrics-alerts"),
