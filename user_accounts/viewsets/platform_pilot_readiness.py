@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from user_accounts.models.production_readiness import ProductionReadinessState
-from user_accounts.permissions.god_mode import IsGodMode
+from user_accounts.permissions import IsGodMode
 
 RECORD_KEY = "PILOT_READINESS"
 STATES = frozenset(("NOT_TESTED", "PASS", "FAIL", "BLOCKED"))
