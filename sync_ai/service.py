@@ -77,6 +77,7 @@ def create_sync_response(
     instructions: str,
     metadata: dict[str, str],
     timeout_seconds: int = 45,
+    max_output_tokens: int | None = None,
 ) -> SyncAIResult:
     if not ai_enabled():
         raise SyncAIConfigurationError("SYNC AI is currently disabled.")
@@ -90,6 +91,9 @@ def create_sync_response(
         "safety_identifier": safety_identifier(user_id),
         "metadata": {str(k): str(v)[:512] for k, v in metadata.items()},
     }
+
+    if max_output_tokens is not None:
+        body["max_output_tokens"] = min(max(int(max_output_tokens), 1), 1200)
 
     try:
         response = requests.post(
