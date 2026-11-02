@@ -71,10 +71,12 @@ class SyncAIStatusView(APIView):
                 "enabled": ai_enabled(),
                 "configured": bool((os.getenv("OPENAI_API_KEY") or "").strip()),
                 "model": configured_model(),
-                "workspaces": ["personal", "business"],
+                "workspaces": ["personal", "business", "pm"],
                 "capabilities": {
                     "chat": True,
                     "read_only_context": True,
+                    "workflow_intake": ["maintenance", "service_booking", "sales_lead"],
+                    "pm_work_order_create_confirmed": True,
                     "draft_actions": [
                         "ticket_reply",
                         "lead_follow_up",
