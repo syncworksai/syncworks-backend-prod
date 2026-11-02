@@ -1,3 +1,4 @@
+import os
 from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
@@ -44,6 +45,8 @@ class BusinessFeatureTrialView(APIView):
         business = _business(request, pk)
         feature = str(request.data.get("feature") or "").strip()
         if feature not in FEATURES: raise ValidationError({"feature":"Unknown feature."})
+        enabled = {item.strip() for item in os.getenv("SYNC_TRIAL_FEATURES", "").split(",") if item.strip()}
+        if feature not in enabled: raise ValidationError("This feature is not available for trial yet.")
         row, _ = BusinessFeatureEntitlement.objects.select_for_update().get_or_create(business=business, feature=feature)
         if row.trial_started_at is not None:
             raise ValidationError("This business has already started a trial for this feature.")
