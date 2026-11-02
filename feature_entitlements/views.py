@@ -75,3 +75,11 @@ class FounderFeatureOverrideView(APIView):
         row.modified_by = request.user
         row.save()
         return Response(_payload(business))
+
+class FounderStripePriceAuditView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        if not _is_founder(request.user):
+            raise PermissionDenied("Founder access required.")
+        from .pricing import inspect_stripe_prices
+        return Response({"prices": inspect_stripe_prices(), "note": "Read-only price verification; does not activate or modify subscriptions."})
