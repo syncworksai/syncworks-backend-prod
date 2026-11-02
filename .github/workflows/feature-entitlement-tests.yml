@@ -1,0 +1,32 @@
+name: Feature entitlement security
+on:
+  pull_request:
+    paths:
+      - 'feature_entitlements/**'
+      - 'syncworksv7/settings.py'
+      - 'syncworksv7/urls.py'
+      - '.github/workflows/feature-entitlement-tests.yml'
+  workflow_dispatch:
+jobs:
+  entitlements:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Migrations and system checks
+        env:
+          DJANGO_DEBUG: '1'
+          DJANGO_SECRET_KEY: test-only-key
+        run: |
+          python manage.py check
+          python manage.py makemigrations --check --dry-run
+      - name: Access, trial, override and cost tests
+        env:
+          DJANGO_DEBUG: '1'
+          DJANGO_SECRET_KEY: test-only-key
+        run: python manage.py test feature_entitlements --verbosity 2
