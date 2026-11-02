@@ -5,8 +5,10 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path, re_path
 from django.views.static import serve
+from .shop_assist import search_products
 
 urlpatterns = [
+    path("api/v1/shop-assist/search/", search_products),
     path("api/v1/health/", include("health_profiles.urls")),
     path("api/v1/sync-ai/", include("sync_ai.urls")),
     path("api/v1/personal-calendar/", include("personal_calendar.urls")),
