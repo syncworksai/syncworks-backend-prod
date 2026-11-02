@@ -1,0 +1,31 @@
+name: Marketplace geography checks
+on:
+  pull_request:
+    paths:
+      - 'user_accounts/services/tickets.py'
+      - 'user_accounts/tests/test_marketplace_geo_rules_beta.py'
+      - 'requirements.txt'
+      - '.github/workflows/marketplace-geography-check.yml'
+  workflow_dispatch:
+
+jobs:
+  geography:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - name: Django system checks
+        env:
+          DJANGO_DEBUG: '1'
+          DJANGO_SECRET_KEY: test-only-not-for-production
+        run: python manage.py check
+      - name: Geographic rule tests
+        env:
+          DJANGO_DEBUG: '1'
+          DJANGO_SECRET_KEY: test-only-not-for-production
+        run: python manage.py test user_accounts.tests.test_marketplace_geo_rules_beta --verbosity 2

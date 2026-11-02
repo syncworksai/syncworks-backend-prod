@@ -225,16 +225,16 @@ def _service_area_rule_matches(ticket: Ticket, rule: dict, geo: dict[str, str]) 
     if area_type == "ZIP":
         return geo.get("zip", "") in values
     if area_type == "CITY":
-        return geo.get("city", "") in values
+        city = geo.get("city", "")
+        state = geo.get("state", "")
+        return bool(city and state and f"{city}, {state}" in values)
     if area_type == "COUNTY":
         return geo.get("county", "") in values
     if area_type == "STATE":
         return geo.get("state", "") in values
     if area_type == "REGION":
-        return bool(
-            {geo.get("state", ""), geo.get("city", ""), geo.get("county", "")}
-            & values
-        )
+        # Multi-state region selections represent states, not broad substring matches.
+        return bool(geo.get("state") and geo["state"] in values)
     return False
 
 

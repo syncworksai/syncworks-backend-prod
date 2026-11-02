@@ -13,3 +13,6 @@ PyJWT[crypto]>=2.9,<3.0
 
 pypdf>=5.0,<7.0
 python-docx>=1.1,<2.0
+
+# Postal-code geography for marketplace radius/city/state routing
+pgeocode>=0.5,<1.0
