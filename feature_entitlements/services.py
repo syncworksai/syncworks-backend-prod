@@ -54,3 +54,12 @@ def settle_ai_cost(business, reserved_cents, actual_cents):
     budget.reserved_cents -= reserved_cents
     budget.spent_cents += actual_cents
     budget.save(update_fields=["reserved_cents", "spent_cents"])
+
+@transaction.atomic
+def release_ai_reservation(business, reserved_cents):
+    period = timezone.now().strftime("%Y-%m")
+    budget = BusinessAIBudget.objects.select_for_update().get(business=business, period=period)
+    if reserved_cents < 0 or reserved_cents > budget.reserved_cents:
+        raise ValidationError("Invalid reservation release.")
+    budget.reserved_cents -= reserved_cents
+    budget.save(update_fields=["reserved_cents"])
