@@ -7,6 +7,7 @@ from django.urls import include, path, re_path
 from django.views.static import serve
 
 urlpatterns = [
+    path("api/v1/feature-entitlements/", include("feature_entitlements.urls")),
     path("api/v1/health/", include("health_profiles.urls")),
     path("api/v1/sync-ai/", include("sync_ai.urls")),
     path("api/v1/personal-calendar/", include("personal_calendar.urls")),

@@ -205,6 +205,7 @@ INSTALLED_APPS = [
 
     # Local
     "user_accounts.apps.UserAccountsConfig",
+    "feature_entitlements.apps.FeatureEntitlementsConfig",
     "business_finance.apps.BusinessFinanceConfig",
     "pm_payments.apps.PMPaymentsConfig",
     "tickets",
