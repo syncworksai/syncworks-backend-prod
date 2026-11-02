@@ -18,6 +18,7 @@ class FeatureEntitlementTests(TestCase):
         self.business = Business.objects.create(owner=self.owner, name="Entitlement Test Shop")
         self.client = APIClient()
 
+    @patch.dict("os.environ", {"SYNC_TRIAL_FEATURES": "business_jarvis"})
     def test_trial_starts_once_and_expires(self):
         self.client.force_authenticate(self.owner)
         endpoint = f"/api/v1/feature-entitlements/businesses/{self.business.pk}/trial/"
