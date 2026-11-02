@@ -36,8 +36,8 @@ def _customer_profile(user) -> dict[str, Any]:
 
 def resolve_workspace(*, user, workspace: str, business_id: str | None) -> WorkspaceContext:
     normalized = (workspace or "personal").strip().lower()
-    if normalized not in {"personal", "business"}:
-        raise ValueError("workspace must be personal or business")
+    if normalized not in {"personal", "business", "pm"}:
+        raise ValueError("workspace must be personal, business, or pm")
 
     if normalized == "personal":
         return WorkspaceContext(
@@ -46,6 +46,32 @@ def resolve_workspace(*, user, workspace: str, business_id: str | None) -> Works
             role="PERSONAL",
             profile=_customer_profile(user),
             data=personal_snapshot(user),
+        )
+
+    if normalized == "pm":
+        from pm_workspace.models import PMWorkspace, PMProperty
+        from pm_workspace.workorder_models import PMWorkOrder
+
+        # PM selection is owner-scoped; never reuse a Business header for PM.
+        portfolios = PMWorkspace.objects.filter(owner=user, is_active=True)
+        portfolio = portfolios.order_by("id").first()
+        if portfolio is None:
+            raise PermissionError("You do not have access to a Property Management portfolio.")
+        active_orders = PMWorkOrder.objects.filter(workspace=portfolio).exclude(
+            status__in=[PMWorkOrder.Status.COMPLETED, PMWorkOrder.Status.CANCELLED]
+        )
+        return WorkspaceContext(
+            workspace="pm",
+            business=None,
+            role="PM_OWNER",
+            profile={"pm_workspace_id": portfolio.id, "name": portfolio.name},
+            data={
+                "property_count": PMProperty.objects.filter(workspace=portfolio).count(),
+                "open_work_orders": active_orders.count(),
+                "urgent_work_orders": active_orders.filter(
+                    priority__in=[PMWorkOrder.Priority.URGENT, PMWorkOrder.Priority.EMERGENCY]
+                ).count(),
+            },
         )
 
     if not business_id:
@@ -92,7 +118,7 @@ def build_instructions(context: WorkspaceContext) -> str:
     scope = (
         "You are SYNC, the Personal assistant inside SyncWorks."
         if context.workspace == "personal"
-        else "You are SYNC, the Business operations assistant inside SyncWorks."
+        else ("You are SYNC, the Property Management assistant inside SyncWorks." if context.workspace == "pm" else "You are SYNC, the Business operations assistant inside SyncWorks.")
     )
     return (
         f"{scope}\n"
