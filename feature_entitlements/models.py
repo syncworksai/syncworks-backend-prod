@@ -5,6 +5,7 @@ from django.utils import timezone
 FEATURES = ("business_jarvis", "technician_tracking", "ai_weather", "ai_traffic", "smart_routes", "automated_email", "ai_phone")
 
 class BusinessFeatureEntitlement(models.Model):
+    id = models.BigAutoField(primary_key=True)
     business = models.ForeignKey("user_accounts.Business", on_delete=models.CASCADE, related_name="feature_entitlements")
     feature = models.CharField(max_length=48, choices=[(f, f) for f in FEATURES])
     state = models.CharField(max_length=16, choices=[("OFF", "Off"), ("TRIAL", "Trial"), ("PAID", "Paid"), ("OVERRIDE", "Admin override")], default="OFF")
@@ -25,6 +26,7 @@ class BusinessFeatureEntitlement(models.Model):
         return False
 
 class BusinessAIBudget(models.Model):
+    id = models.BigAutoField(primary_key=True)
     business = models.ForeignKey("user_accounts.Business", on_delete=models.CASCADE, related_name="ai_budgets")
     period = models.CharField(max_length=7)  # UTC YYYY-MM
     reserved_cents = models.PositiveIntegerField(default=0)
