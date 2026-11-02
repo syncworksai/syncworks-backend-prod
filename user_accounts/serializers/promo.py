@@ -12,6 +12,7 @@ class PromoCodeSerializer(serializers.ModelSerializer):
             "code",
             "is_active",
             "billing_exempt",
+            "waive_subscriptions",
             "expires_at",
             "max_redemptions",
             "redemption_count",

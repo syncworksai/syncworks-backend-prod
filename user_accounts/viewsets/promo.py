@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from rest_framework import viewsets
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, BasePermission
 
 from user_accounts.models import PromoCode, PromoRedemption
 
@@ -13,9 +13,14 @@ def _is_platform_admin(user) -> bool:
 from user_accounts.serializers.promo import PromoCodeSerializer, PromoRedemptionSerializer
 
 
+class IsFounderPromoAdmin(BasePermission):
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and _is_platform_admin(request.user))
+
+
 class PromoCodeViewSet(viewsets.ModelViewSet):
     serializer_class = PromoCodeSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsFounderPromoAdmin]
 
     def get_queryset(self):
         # Platform admin only
