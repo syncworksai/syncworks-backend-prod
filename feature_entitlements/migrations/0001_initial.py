@@ -13,7 +13,7 @@ class Migration(migrations.Migration):
             name="BusinessFeatureEntitlement",
             fields=[
                 ("id", models.BigAutoField(primary_key=True, serialize=False)),
-                ("feature", models.CharField(max_length=48, choices=[(x,x) for x in ("business_jarvis","technician_tracking","ai_weather","ai_traffic","smart_routes","automated_email","ai_phone")])),
+                ("feature", models.CharField(max_length=48, choices=[(x,x) for x in ("business_jarvis","ai_assistant","technician_tracking","ai_weather","ai_traffic","smart_routes","automated_email","ai_phone")])),
                 ("state", models.CharField(max_length=16, default="OFF", choices=[("OFF","Off"),("TRIAL","Trial"),("PAID","Paid"),("OVERRIDE","Admin override")])),
                 ("trial_started_at", models.DateTimeField(null=True, blank=True)),
                 ("trial_expires_at", models.DateTimeField(null=True, blank=True)),
