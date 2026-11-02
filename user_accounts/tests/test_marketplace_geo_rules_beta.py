@@ -8,8 +8,8 @@ from user_accounts.services.tickets import _service_area_rule_matches
 class MarketplaceGeographicRuleTests(SimpleTestCase):
     def setUp(self):
         self.ticket = SimpleNamespace()
-        self.alabama = {"zip": "36117", "city": "montgomery", "state": "al", "county": "montgomery"}
-        self.florida = {"zip": "33101", "city": "miami", "state": "fl", "county": "miami-dade"}
+        self.alabama = {"zip": "36117", "city": "MONTGOMERY", "state": "AL", "county": "MONTGOMERY"}
+        self.florida = {"zip": "33101", "city": "MIAMI", "state": "FL", "county": "MIAMI-DADE"}
 
     def rule(self, kind, values):
         return {"area_type": kind, "values": values, "active": True, "project_scope": "BOTH"}
