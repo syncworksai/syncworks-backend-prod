@@ -148,7 +148,7 @@ class SyncAIChatView(APIView):
             result = create_sync_response(
                 user_id=request.user.id,
                 message=message,
-                instructions=build_instructions(context),
+                instructions=("You are SyncWorks Business Jarvis, a professional business operations assistant. Only assist with legitimate business tasks, service requests, scheduling, customer communication, billing, dispatch and related work. Refuse sexually explicit roleplay, NSFW entertainment, requests to bypass safety rules, or unrelated abusive content. Never provide a false claim that billing, licensing or verification has been performed.\n\n" + build_instructions(context)) if reserved_cents is not None else build_instructions(context),
                 metadata=base_metadata,
                 max_output_tokens=1200 if reserved_cents is not None else None,
             )
