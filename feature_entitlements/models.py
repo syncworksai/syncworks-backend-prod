@@ -2,7 +2,7 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
-FEATURES = ("business_jarvis", "technician_tracking", "ai_weather", "ai_traffic", "smart_routes", "automated_email", "ai_phone")
+FEATURES = ("business_jarvis", "ai_assistant", "technician_tracking", "ai_weather", "ai_traffic", "smart_routes", "automated_email", "ai_phone")
 
 class BusinessFeatureEntitlement(models.Model):
     id = models.BigAutoField(primary_key=True)
