@@ -131,7 +131,7 @@ class SyncAIChatView(APIView):
             if not business_prompt_allowed(message):
                 return Response({"detail": "Business Jarvis supports professional business-related requests only."}, status=400)
             try:
-                reserved_cents = reserve_ai_cost(context.business, "business_jarvis", 4000, 1200)
+                reserved_cents = reserve_ai_cost(context.business, "business_jarvis", 16000, 1200)
             except (PermissionDenied, ValidationError) as exc:
                 return Response({"detail": str(exc)}, status=403)
 
