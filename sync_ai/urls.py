@@ -24,6 +24,7 @@ from .professional_services_views import BusinessProfessionalAppointmentsView, C
 from .production_readiness_views import ProductionReadinessAPIView
 from .workforce_views import BusinessOperationsSummaryView, BusinessWorkforceView, TicketOperationsView
 from .views import SyncAIActionDraftView, SyncAIChatView, SyncAIStatusView, SyncAITicketReplyExecuteView
+from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOrderCreateView
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
@@ -32,6 +33,8 @@ urlpatterns = [
     path("health/ready/", ReadinessView.as_view(), name="sync-health-ready"),
     path("production/readiness/", ProductionReadinessAPIView.as_view(), name="sync-production-readiness"),
     path("chat/", SyncAIChatView.as_view(), name="sync-ai-chat"),
+    path("workflows/preview/", SyncWorkflowIntakePreviewView.as_view(), name="sync-workflow-intake-preview"),
+    path("workflows/pm-work-order/create/", SyncWorkflowPMWorkOrderCreateView.as_view(), name="sync-workflow-pm-create"),
     path("local-intelligence/", SyncLocalIntelligenceView.as_view(), name="sync-local-intelligence"),
     path("briefing/", SyncRoleAwareBriefingView.as_view(), name="sync-role-aware-briefing"),
     path("briefing/god-mode/", SyncGodModeBriefingView.as_view(), name="sync-god-mode-briefing"),
