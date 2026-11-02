@@ -227,7 +227,7 @@ def _service_area_rule_matches(ticket: Ticket, rule: dict, geo: dict[str, str]) 
     if area_type == "CITY":
         city = geo.get("city", "")
         state = geo.get("state", "")
-        return bool(city and (city in values or (state and f"{city}, {state}" in values)))
+        return bool(city and state and f"{city}, {state}" in values)
     if area_type == "COUNTY":
         return geo.get("county", "") in values
     if area_type == "STATE":
