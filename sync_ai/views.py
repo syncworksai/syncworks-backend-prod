@@ -10,6 +10,8 @@ from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 
 from user_accounts.models import AuditLog
+from feature_entitlements.services import reserve_ai_cost, settle_ai_cost, release_ai_reservation
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from .action_drafts import build_draft_prompt, get_draft_definition
 from .context import build_instructions, resolve_workspace
@@ -118,6 +120,21 @@ class SyncAIChatView(APIView):
         except PermissionError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
 
+        # Business AI requests require an active entitlement and a reserved cost allowance.
+        # Personal and PM AI require their own product-specific budget integration.
+        reserved_cents = None
+        if context.workspace == "business":
+            if not context.business:
+                return Response({"detail": "Select an authorized business."}, status=403)
+            # Block obvious misuse before sending text to the paid AI provider.
+            from .business_prompt_safety import business_prompt_allowed
+            if not business_prompt_allowed(message):
+                return Response({"detail": "Business Jarvis supports professional business-related requests only."}, status=400)
+            try:
+                reserved_cents = reserve_ai_cost(context.business, "business_jarvis", 4000, 1200)
+            except (PermissionDenied, ValidationError) as exc:
+                return Response({"detail": str(exc)}, status=403)
+
         started = time.monotonic()
         base_metadata = {
             "feature": "sync_chat",
@@ -133,14 +150,20 @@ class SyncAIChatView(APIView):
                 message=message,
                 instructions=build_instructions(context),
                 metadata=base_metadata,
+                max_output_tokens=1200 if reserved_cents is not None else None,
             )
         except (SyncAIConfigurationError, SyncAIProviderError) as exc:
+            if reserved_cents is not None:
+                release_ai_reservation(context.business, reserved_cents)
             return _provider_error_response(
                 request=request,
                 metadata=base_metadata,
                 exc=exc,
             )
 
+        if reserved_cents is not None:
+            # Conservative: charge the full reservation, never allow unbounded provider usage.
+            settle_ai_cost(context.business, reserved_cents, reserved_cents)
         latency_ms = round((time.monotonic() - started) * 1000)
         AuditLog.objects.create(
             actor=request.user,
