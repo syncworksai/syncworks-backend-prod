@@ -220,6 +220,18 @@ class SyncAIActionDraftView(APIView):
         except PermissionError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_403_FORBIDDEN)
 
+        reserved_draft_cents = None
+        if context.workspace == "business":
+            if not context.business:
+                return Response({"detail": "Select an authorized business."}, status=403)
+            from .business_prompt_safety import business_prompt_allowed
+            if not business_prompt_allowed(instruction):
+                return Response({"detail": "Business Jarvis supports professional business-related requests only."}, status=400)
+            try:
+                reserved_draft_cents = reserve_ai_cost(context.business, "business_jarvis", 16000, 1200)
+            except (PermissionDenied, ValidationError) as exc:
+                return Response({"detail": str(exc)}, status=403)
+
         started = time.monotonic()
         metadata = {
             "feature": "sync_action_draft",
@@ -240,14 +252,19 @@ class SyncAIActionDraftView(APIView):
                 ),
                 instructions=build_instructions(context),
                 metadata=metadata,
+                max_output_tokens=1200 if reserved_draft_cents is not None else None,
             )
         except (SyncAIConfigurationError, SyncAIProviderError) as exc:
+            if reserved_draft_cents is not None:
+                release_ai_reservation(context.business, reserved_draft_cents)
             return _provider_error_response(
                 request=request,
                 metadata=metadata,
                 exc=exc,
             )
 
+        if reserved_draft_cents is not None:
+            settle_ai_cost(context.business, reserved_draft_cents, reserved_draft_cents)
         latency_ms = round((time.monotonic() - started) * 1000)
         AuditLog.objects.create(
             actor=request.user,
