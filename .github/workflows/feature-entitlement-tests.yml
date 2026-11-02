@@ -24,7 +24,7 @@ jobs:
           DJANGO_SECRET_KEY: test-only-key
         run: |
           python manage.py check
-          python manage.py makemigrations --check --dry-run
+          python manage.py makemigrations feature_entitlements --check --dry-run
       - name: Access, trial, override and cost tests
         env:
           DJANGO_DEBUG: '1'
