@@ -9,10 +9,12 @@ from django.core import mail
 from django.core.exceptions import ImproperlyConfigured
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from pm_workspace.document_models import PMPropertyDocument
-from pm_workspace.models import PMLease, PMOccupancy, PMProperty, PMTenant, PMWorkspace
+from pm_workspace.lifecycle_models import PMOccupancy
+from pm_workspace.models import PMProperty, PMWorkspace
 from pm_workspace.private_document_storage import pm_document_storage
 
 
@@ -36,6 +38,8 @@ class PMOnboardingJourneyTests(APITestCase):
 
     def test_property_application_lease_document_invite_payment_and_maintenance(self):
         # One synthetic case traverses owner + resident endpoints in a temporary DB.
+        today = timezone.localdate()
+        due = today.replace(day=1)
         prop = self.client.post("/api/v1/pm-hub/properties/", {
             "name": "Test Maple", "address": "42 Maple Avenue",
             "city": "Montgomery", "state": "AL", "zip": "36104",
@@ -74,7 +78,7 @@ class PMOnboardingJourneyTests(APITestCase):
 
         lease = self.client.post("/api/v1/pm-hub/leases/", {
             "tenant": tenant_id, "unit": unit_id, "term": "MONTH_TO_MONTH",
-            "start_date": "2026-11-01", "monthly_rent": "1485.00",
+            "start_date": due.isoformat(), "monthly_rent": "1485.00",
             "status": "ACTIVE",
         }, format="json", **self.headers)
         self.assertEqual(lease.status_code, 201, lease.data)
@@ -141,13 +145,13 @@ class PMOnboardingJourneyTests(APITestCase):
 
         charge = self.client.post("/api/v1/pm-hub/ledger/", {
             "tenant": tenant_id, "lease": lease.data["id"],
-            "entry_date": "2026-11-01", "entry_type": "CHARGE",
+            "entry_date": due.isoformat(), "entry_type": "CHARGE",
             "category": "RENT_TENANT", "amount": "1485.00",
         }, format="json", **self.headers)
         self.assertEqual(charge.status_code, 201, charge.data)
         payment = self.client.post("/api/v1/pm-hub/ledger/", {
             "tenant": tenant_id, "lease": lease.data["id"],
-            "entry_date": "2026-11-03", "entry_type": "PAYMENT",
+            "entry_date": today.isoformat(), "entry_type": "PAYMENT",
             "category": "RENT_TENANT", "amount": "400.00",
             "payment_method": "OTHER", "reference": "TEST-MANUAL-RECEIPT",
         }, format="json", **self.headers)
