@@ -8,6 +8,7 @@ on:
       - 'pm_payments/models.py'
       - 'pm_payments/migrations/**'
       - 'pm_workspace/**'
+      - 'user_accounts/migrations/**'
   workflow_dispatch:
 jobs:
   migration-drift:
