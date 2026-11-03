@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+from .private_document_storage import pm_document_storage
 
 
 class PMPropertyDocument(models.Model):
@@ -37,7 +38,7 @@ class PMPropertyDocument(models.Model):
     property_owner = models.ForeignKey("pm_workspace.PMPropertyOwner", null=True, blank=True, on_delete=models.SET_NULL, related_name="documents")
     category = models.CharField(max_length=40, choices=Category.choices)
     title = models.CharField(max_length=220)
-    document = models.FileField(upload_to="pm/documents/%Y/%m/", null=True, blank=True)
+    document = models.FileField(upload_to="pm/documents/%Y/%m/", storage=pm_document_storage, null=True, blank=True)
     source_url = models.URLField(blank=True)
     source_name = models.CharField(max_length=255, blank=True)
     state_code = models.CharField(max_length=2, blank=True)
