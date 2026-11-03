@@ -126,7 +126,7 @@ class PMOnboardingJourneyTests(APITestCase):
         account = self.client.get("/api/v1/pm-hub/billing/my-account/")
         self.assertEqual(account.status_code, 200, account.data)
         self.assertEqual(account.data["property_name"], "Test Maple")
-        self.assertEqual(account.data["lease"]["monthly_rent"], "1485.00")
+        self.assertEqual(str(account.data["lease"]["monthly_rent"]), "1485.00")
 
         maintenance = self.client.post(
             "/api/v1/pm-hub/tenant-portal/communications/",
@@ -159,7 +159,7 @@ class PMOnboardingJourneyTests(APITestCase):
         self.client.force_authenticate(self.resident)
         after = self.client.get("/api/v1/pm-hub/billing/my-account/")
         self.assertEqual(after.status_code, 200, after.data)
-        self.assertEqual(after.data["account"]["amount_due"], "1085.00")
+        self.assertEqual(str(after.data["account"]["amount_due"]), "1085.00")
 
     def test_private_r2_adapter_requires_complete_configuration(self):
         with patch.dict(os.environ, {"PM_R2_STORAGE_ENABLED": "true"}, clear=True):
