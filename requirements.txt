@@ -14,5 +14,8 @@ PyJWT[crypto]>=2.9,<3.0
 pypdf>=5.0,<7.0
 python-docx>=1.1,<2.0
 
+# Optional private S3-compatible/R2 document storage (enabled only by PM_R2_STORAGE_ENABLED)
+django-storages[s3]>=1.14.5,<2.0
+
 # Postal-code geography for marketplace radius/city/state routing
 pgeocode>=0.5,<1.0
