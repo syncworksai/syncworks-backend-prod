@@ -1,0 +1,33 @@
+name: Sprint 01 migration drift diagnosis
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/sprint01-migration-drift.yml'
+      - 'platform_edge/models.py'
+      - 'platform_edge/migrations/**'
+      - 'pm_payments/models.py'
+      - 'pm_payments/migrations/**'
+      - 'pm_workspace/**'
+  workflow_dispatch:
+jobs:
+  migration-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Django system checks
+        env: &django-env
+          DJANGO_DEBUG: '1'
+          DJANGO_SECRET_KEY: migration-drift-diagnostic-only
+        run: python manage.py check
+      - name: Print proposed migrations without modifying database
+        env: *django-env
+        run: python manage.py makemigrations platform_edge pm_payments pm_workspace --dry-run --verbosity 3
+      - name: Enforce no unrecorded schema changes
+        env: *django-env
+        run: python manage.py makemigrations --check --dry-run
