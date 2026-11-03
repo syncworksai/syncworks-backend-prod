@@ -31,3 +31,41 @@ jobs:
       - name: Enforce no unrecorded schema changes
         env: *django-env
         run: python manage.py makemigrations --check --dry-run
+
+  fresh-postgres-migration-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: syncworks_test
+          POSTGRES_USER: syncworks
+          POSTGRES_PASSWORD: local-test-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U syncworks -d syncworks_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DJANGO_DEBUG: '1'
+      DJANGO_SECRET_KEY: migration-test-only
+      DB_ENGINE: postgres
+      POSTGRES_DB: syncworks_test
+      POSTGRES_USER: syncworks
+      POSTGRES_PASSWORD: local-test-only
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: '5432'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Apply all migrations to isolated disposable Postgres
+        run: python manage.py migrate --noinput
+      - name: Check model consistency against migration history
+        run: python manage.py makemigrations --check --dry-run
