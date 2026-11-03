@@ -1,0 +1,38 @@
+name: Phase 2 ticket-to-invoice smoke
+on:
+  pull_request:
+    paths:
+      - 'user_accounts/migrations/**'
+      - 'user_accounts/tests/test_ticket_flow.py'
+      - 'user_accounts/tests/test_business_marketplace_beta_acceptance.py'
+      - 'sync_ai/test_invoice_experience.py'
+      - 'sync_ai/test_invoice_customer_loop.py'
+      - 'sync_ai/test_stripe_event_ledger.py'
+      - '.github/workflows/phase2-ticket-invoice-smoke.yml'
+  workflow_dispatch:
+jobs:
+  synthetic-ticket-invoice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DB_ENGINE: sqlite
+      DJANGO_DEBUG: 'true'
+      DJANGO_SECRET_KEY: 'synthetic-test-only-not-for-production'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Django checks
+        run: python manage.py check
+      - name: Marketplace / ticket / invoice / ledger smoke (isolated test DB)
+        run: |
+          python manage.py test \
+            user_accounts.tests.test_business_marketplace_beta_acceptance \
+            user_accounts.tests.test_ticket_flow \
+            sync_ai.test_invoice_experience \
+            sync_ai.test_invoice_customer_loop \
+            sync_ai.test_stripe_event_ledger --verbosity 2

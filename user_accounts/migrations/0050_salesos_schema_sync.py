@@ -45,11 +45,9 @@ def forwards(apps, schema_editor):
         SalesPipeline,
         models.DateTimeField(null=True, blank=True, name="created_at"),
     )
-    _add_column_if_missing(
-        schema_editor,
-        SalesPipeline,
-        models.DateTimeField(null=True, blank=True, name="updated_at"),
-    )
+    # Do not create SalesPipeline.updated_at here. Migration 0051 adds it
+    # through a tracked AddField operation. Creating it early bypasses migration
+    # state and breaks fresh PostgreSQL installation with DuplicateColumn.
 
     # If you have other Sales OS models and want timestamps there too,
     # uncomment and ensure the model names exist in user_accounts.
