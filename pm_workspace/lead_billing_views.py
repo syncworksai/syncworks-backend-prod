@@ -117,6 +117,8 @@ def pm_lead_checkout(request):
     except stripe.error.StripeError:
         return Response({"detail": "Stripe could not create recurring checkout. No checkout was started."}, status=502)
     current = current or PMLeadSubscription(workspace=workspace)
+    if current.status.upper() in ("NONE", "CANCELED", "INCOMPLETE_EXPIRED"):
+        current.stripe_subscription_id = ""
     current.stripe_customer_id = customer_id
     current.stripe_checkout_session_id = session.id
     current.mailbox_count = qty
@@ -180,6 +182,24 @@ def _apply_subscription_event(subscription, event_type):
     return True
 
 
+def process_pm_lead_subscription_event(event):
+    """Handle a signature-verified event, also used by primary billing ingress."""
+    event_type = str(event.get("type") or "")
+    obj = event["data"]["object"]
+    applied = False
+    if event_type in ("customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"):
+        applied = _apply_subscription_event(obj, event_type)
+    elif event_type == "checkout.session.completed" and _metadata(obj).get("syncworks_scope") == "pm_lead_capture":
+        wid = _metadata(obj).get("workspace_id")
+        row = PMLeadSubscription.objects.filter(workspace_id=wid, stripe_checkout_session_id=str(obj.get("id") or "")).first()
+        if row and str(obj.get("customer") or "") == row.stripe_customer_id:
+            row.stripe_subscription_id = str(obj.get("subscription") or "")
+            row.save(update_fields=["stripe_subscription_id", "updated_at"])
+            # NOT ACTIVE until Stripe confirms subscription active/trialing.
+            applied = True
+    return applied
+
+
 @csrf_exempt
 def pm_lead_stripe_webhook(request):
     if request.method != "POST":
@@ -200,19 +220,7 @@ def pm_lead_stripe_webhook(request):
     if not first:
         return HttpResponse(status=200)
     try:
-        event_type = str(event.get("type") or "")
-        obj = event["data"]["object"]
-        applied = False
-        if event_type in ("customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"):
-            applied = _apply_subscription_event(obj, event_type)
-        elif event_type == "checkout.session.completed" and _metadata(obj).get("syncworks_scope") == "pm_lead_capture":
-            wid = _metadata(obj).get("workspace_id")
-            row = PMLeadSubscription.objects.filter(workspace_id=wid, stripe_checkout_session_id=str(obj.get("id") or "")).first()
-            if row and str(obj.get("customer") or "") == row.stripe_customer_id:
-                row.stripe_subscription_id = str(obj.get("subscription") or "")
-                row.save(update_fields=["stripe_subscription_id", "updated_at"])
-                # NOT ACTIVE until Stripe confirms subscription active/trialing.
-                applied = True
+        applied = process_pm_lead_subscription_event(event)
         mark_stripe_event_processed(log, ignored=not applied)
     except Exception as error:
         mark_stripe_event_failed(log, error)
