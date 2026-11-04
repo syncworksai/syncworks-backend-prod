@@ -269,7 +269,10 @@ def pm_property_housing_profile(request, property_id):
         # Prices here are advisory; they do not mutate lease or ledger entries.
         profile.custom_data = {**(profile.custom_data or {}), "section8_pricing": current}
         profile.updated_by = request.user
-        profile.save(update_fields=["custom_data", "updated_by", "updated_at"])
+        if profile.pk:
+            profile.save(update_fields=["custom_data", "updated_by", "updated_at"])
+        else:
+            profile.save()
     return Response({"property_id": prop.id, "property_name": prop.name, "section8_pricing": current,
                      "inquiries": PMLead.objects.filter(workspace=workspace, property=prop).count(),
                      "notice": "Voucher payment standard is not an approved HAP share. This profile does not post rent."})
