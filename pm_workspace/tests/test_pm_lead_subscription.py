@@ -80,6 +80,60 @@ class PMLeadBillingTests(APITestCase):
         self.assertTrue(checkout.data["founder_access"])
         self.assertFalse(PMLeadSubscription.objects.filter(workspace=pm).exists())
 
+    @override_settings(STRIPE_SECRET_KEY="sk_test_local_fake", PLATFORM_BASE_URL="https://app.example.org")
+    def test_checkout_uses_server_price_and_reuses_pending_session(self):
+        with patch.dict("os.environ", {
+            "STRIPE_PM_LEAD_CHECKOUT_ENABLED": "true",
+            "STRIPE_PM_LEAD_WEBHOOK_SECRET": "whsec_local_fake",
+        }), patch("stripe.Customer.create") as customer, patch("stripe.checkout.Session.create") as create:
+            customer.return_value = SimpleNamespace(id="cus_sandbox")
+            create.return_value = SimpleNamespace(
+                id="cs_sandbox", url="https://checkout.stripe.com/c/test-session"
+            )
+            resp = self.client.post(
+                "/api/v1/pm-hub/lead-addons/checkout/",
+                {"mailboxes": 3, "features": ["inbox_capture", "duplicate_detection",
+                                            "quick_messages"], "monthly_cents": 1},
+                format="json", **self.headers,
+            )
+            self.assertEqual(resp.status_code, 201, resp.data)
+            self.assertEqual(resp.data["quote"]["monthly_cents"], 2697)
+            details = create.call_args.kwargs
+            self.assertEqual(details["mode"], "subscription")
+            self.assertEqual(details["line_items"][0]["price_data"]["unit_amount"], 2697)
+            self.assertEqual(details["subscription_data"]["metadata"]["workspace_id"],
+                             str(self.workspace.pk))
+            record = PMLeadSubscription.objects.get(workspace=self.workspace)
+            self.assertEqual(record.status, "PENDING")
+            self.assertFalse(record.is_active())
+        with patch.dict("os.environ", {
+            "STRIPE_PM_LEAD_CHECKOUT_ENABLED": "true",
+            "STRIPE_PM_LEAD_WEBHOOK_SECRET": "whsec_local_fake",
+        }), override_settings(STRIPE_SECRET_KEY="sk_test_local_fake",
+                              PLATFORM_BASE_URL="https://app.example.org"), (
+            patch("stripe.checkout.Session.retrieve") as retrieve
+        ):
+            retrieve.return_value = {"id": "cs_sandbox", "status": "open",
+                                     "url": "https://checkout.stripe.com/c/test-session"}
+            duplicate = self.client.post(
+                "/api/v1/pm-hub/lead-addons/checkout/",
+                {"mailboxes": 3}, format="json", **self.headers,
+            )
+            self.assertEqual(duplicate.status_code, 200, duplicate.data)
+            self.assertEqual(duplicate.data["checkout_session_id"], "cs_sandbox")
+
+    def test_unreleased_features_cannot_be_billed(self):
+        with patch.dict("os.environ", {
+            "STRIPE_PM_LEAD_CHECKOUT_ENABLED": "true",
+            "STRIPE_PM_LEAD_WEBHOOK_SECRET": "whsec_local_fake",
+        }), override_settings(STRIPE_SECRET_KEY="sk_test_local_fake",
+                              PLATFORM_BASE_URL="https://app.example.org"):
+            bad = self.client.post("/api/v1/pm-hub/lead-addons/checkout/",
+                {"mailboxes": 1, "features": ["ai_extraction"]},
+                format="json", **self.headers)
+        self.assertEqual(bad.status_code, 400)
+        self.assertFalse(PMLeadSubscription.objects.exists())
+
     def test_signed_subscription_events_control_paid_access(self):
         row = PMLeadSubscription.objects.create(
             workspace=self.workspace, status="PENDING", stripe_customer_id="cus_sandbox",
