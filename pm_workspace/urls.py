@@ -10,6 +10,10 @@ from .dashboard_views import command_center
 from .document_builder_views import document_builder_bootstrap, document_builder_finalize, document_builder_prefill, document_builder_save
 from .document_views import PMPropertyDocumentViewSet, document_template_catalog, property_document_checklist
 from .lead_views import lead_convert_to_tenant, lead_detail, lead_note, lead_reply_email, leads
+from .onboarding_views import (
+    pm_onboarding_overview, pm_lead_application_profile, pm_application_invite,
+    pm_resident_application, pm_property_housing_profile,
+)
 from .leasing_views import PMDocumentPacketViewSet, PMLedgerEntryViewSet, PMLeaseViewSet, PMProspectViewSet, PMUnitViewSet
 from .ledger_audit_views import oldest_first_allocation, external_payment_evidence, verified_monthly_late_fee
 from .lease_billing_engine import lease_billing, waive_late_fee
@@ -99,6 +103,11 @@ urlpatterns = [
     path("messages/", unified_inbox),
     path("messages/<int:conversation_id>/reply/", inbox_reply),
     path("messages/<int:conversation_id>/email/", email_conversation),
+    path("onboarding/overview/", pm_onboarding_overview),
+    path("onboarding/applications/my/", pm_resident_application),
+    path("onboarding/leads/<int:lead_id>/profile/", pm_lead_application_profile),
+    path("onboarding/leads/<int:lead_id>/invite/", pm_application_invite),
+    path("onboarding/properties/<int:property_id>/housing/", pm_property_housing_profile),
     path("leads/", leads),
     path("leads/<int:lead_id>/", lead_detail),
     path("leads/<int:lead_id>/note/", lead_note),
