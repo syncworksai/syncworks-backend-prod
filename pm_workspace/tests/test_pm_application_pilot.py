@@ -81,6 +81,24 @@ class PMApplicationPilotTests(APITestCase):
         self.assertEqual(overview.status_code, 200)
         self.assertEqual(overview.data["applications_submitted"], 1)
         self.assertEqual(overview.data["properties"][0]["inquiries"], 1)
+        # Conversion carries applicant and housing agent details into an
+        # owner-scoped tenant intake packet without posting rent.
+        self.client.patch(
+            f"/api/v1/pm-hub/leads/{self.lead.id}/",
+            {"stage": "WON"}, format="json", **self.headers,
+        )
+        converted = self.client.post(
+            f"/api/v1/pm-hub/leads/{self.lead.id}/convert-to-tenant/",
+            {}, format="json", **self.headers,
+        )
+        self.assertEqual(converted.status_code, 201, converted.data)
+        from pm_workspace.models import PMDocumentPacket
+        packet = PMDocumentPacket.objects.get(
+            tenant_id=converted.data["tenant_id"], packet_type="TENANT_INTAKE_PROFILE",
+        )
+        self.assertEqual(packet.field_data["agent_email"], "agent@example.org")
+        self.assertEqual(packet.field_data["voucher_amount"], "1750.00")
+        self.assertEqual(PMLedgerEntry.objects.count(), 0)
 
     def test_invitation_replaced_and_property_data_not_billing(self):
         url = f"/api/v1/pm-hub/onboarding/leads/{self.lead.id}/invite/"
