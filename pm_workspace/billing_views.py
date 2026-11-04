@@ -400,6 +400,10 @@ def my_tenant_account(request):
             "packet_type": packet.packet_type,
             "template_name": packet.template_name,
             "status": packet.status,
+            "document_status": str((packet.field_data or {}).get("document_status") or "") if packet.packet_type == "DOCUMENT_BUILDER" else "",
+            "signature_pending": bool(packet.packet_type == "DOCUMENT_BUILDER" and
+                (packet.field_data or {}).get("document_status") == "READY_FOR_SIGNATURE" and
+                packet.status not in ("COMPLETED", "VOID")),
             "sent_at": packet.sent_at,
             "completed_at": packet.completed_at,
             "updated_at": packet.updated_at,
