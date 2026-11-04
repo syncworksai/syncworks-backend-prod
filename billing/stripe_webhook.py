@@ -6,6 +6,7 @@ from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from user_accounts.stripe_webhook_events import claim_stripe_event, mark_stripe_event_failed, mark_stripe_event_processed
+from pm_workspace.lead_billing_views import process_pm_lead_subscription_event
 
 stripe.api_key = getattr(settings, "STRIPE_SECRET_KEY", None) or getattr(settings, "STRIPE_API_KEY", None)
 
@@ -49,7 +50,8 @@ def stripe_webhook(request):
     try:
         # This legacy ingress currently has no remaining business mutation of its
         # own. Mark verified events ignored until a dedicated handler claims them.
-        mark_stripe_event_processed(ledger, ignored=True)
+        applied = process_pm_lead_subscription_event(event)
+        mark_stripe_event_processed(ledger, ignored=not applied)
     except Exception as exc:
         mark_stripe_event_failed(ledger, exc)
         raise
