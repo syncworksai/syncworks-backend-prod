@@ -122,7 +122,7 @@ def _application_payload(lead):
         "pets": lead.pets, "property_id": lead.property_id,
         "property_name": lead.property.name if lead.property_id else "",
         "section8_requested": lead.lead_type == PMLead.LeadType.SECTION8,
-        "application": {key: profile.get(key, "") for key in APPLICATION_FIELDS},
+        "application": {key: profile.get(key, lead.phone if key == "phone" else "") for key in APPLICATION_FIELDS},
         "voucher_amount": profile.get("voucher_amount", ""),
         "voucher_bedrooms": profile.get("voucher_bedrooms", 0),
         "application_status": profile.get("application_status", "NOT_STARTED"),
@@ -248,9 +248,11 @@ def pm_property_housing_profile(request, property_id):
     prop = PMProperty.objects.filter(workspace=workspace, pk=property_id).first()
     if not prop:
         return Response({"detail": "Property not found."}, status=404)
-    profile, _ = PMPropertyProfile.objects.select_for_update().get_or_create(property=prop, workspace=workspace)
-    current = dict((profile.custom_data or {}).get("section8_pricing") or {})
+    profile = PMPropertyProfile.objects.select_for_update().filter(property=prop, workspace=workspace).first()
+    current = dict((profile.custom_data or {}).get("section8_pricing") or {}) if profile else {}
     if request.method == "PATCH":
+        if profile is None:
+            profile = PMPropertyProfile(property=prop, workspace=workspace)
         for field in HOUSING_FIELDS:
             if field not in request.data:
                 continue
