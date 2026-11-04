@@ -364,6 +364,86 @@ class PMTenantVerticalSliceTests(APITestCase):
         self.assertEqual(PMLedgerEntry.objects.filter(tenant=self.tenant, category="LATE_FEE").count(), 1)
 
 
+    def test_two_signed_lease_fee_stages_are_audited_and_waivable(self):
+        lease = self.create_active_lease()
+        self.client.force_authenticate(self.owner)
+        rent = PMLedgerEntry.objects.create(
+            workspace=self.workspace, tenant=self.tenant, lease=lease,
+            entry_date="2026-06-01", entry_type="CHARGE", category="RENT_TENANT",
+            amount=Decimal("1407.00"), created_by=self.owner,
+        )
+        url = f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/verified-late-fee/"
+        base = {
+            "month": "2026-06", "amount": "50.00", "due_day": 1,
+            "source_note": "Signed lease: $50 after fifth and additional $50 after tenth; dated receipts reviewed.",
+            "lease_verified": True, "confirmed": True, "apply": True,
+        }
+        early = self.client.post(
+            url, {**base, "stage": "AFTER_5TH"}, format="json", **self.owner_headers(),
+        )
+        self.assertEqual(early.status_code, 200, early.data)
+        self.assertEqual(early.data["fee_date"], "2026-06-06")
+        duplicate = self.client.post(
+            url, {**base, "stage": "AFTER_5TH"}, format="json", **self.owner_headers(),
+        )
+        self.assertEqual(duplicate.status_code, 409, duplicate.data)
+        additional = self.client.post(
+            url, {**base, "stage": "AFTER_10TH"}, format="json", **self.owner_headers(),
+        )
+        self.assertEqual(additional.status_code, 200, additional.data)
+        self.assertEqual(additional.data["fee_date"], "2026-06-11")
+        third = self.client.post(
+            url, {**base, "stage": "AFTER_10TH"}, format="json", **self.owner_headers(),
+        )
+        self.assertEqual(third.status_code, 409, third.data)
+        fee_id = early.data["ledger_entry_id"]
+        waived = self.client.post(
+            f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/late-fees/{fee_id}/waive/",
+            {"reason": "Approved lease review courtesy waiver", "confirmed": True},
+            format="json", **self.owner_headers(),
+        )
+        self.assertEqual(waived.status_code, 201, waived.data)
+        credit = PMLedgerEntry.objects.get(reference=f"LATE-WAIVE-{fee_id}")
+        self.assertEqual(credit.amount, Decimal("50.00"))
+        self.assertEqual(credit.entry_type, "CREDIT")
+        allocation = self.client.get(
+            f"/api/v1/pm-hub/billing/tenants/{self.tenant.id}/allocations/",
+            **self.owner_headers(),
+        )
+        self.assertEqual(allocation.status_code, 200, allocation.data)
+        self.assertEqual(allocation.data["tenant_unpaid"], "1457.00")
+        self.assertTrue(PMLedgerEntry.objects.filter(pk=rent.id).exists())
+        self.assertEqual(self.tenant.ledger_entries.filter(category="LATE_FEE", entry_type="CHARGE").count(), 2)
+
+    def test_future_two_stage_automation_requires_exact_lease_configuration(self):
+        from pm_workspace.lease_billing_engine import normalize_setup
+
+        lease = self.create_active_lease()
+        payload = {
+            "active": True,
+            "billing_start_date": timezone.localdate().isoformat(),
+            "due_day": 1,
+            "grace_days": 5,
+            "late_fee_amount": "50.00",
+            "late_fee_schedule": "TWO_STAGE",
+            "auto_late_fees": True,
+            "late_fee_verified": True,
+            "auto_late_fee_from": timezone.localdate().isoformat(),
+            "source_note": "Verified signed lease due on the first, $50 after fifth and tenth.",
+            "monthly_overrides": {},
+        }
+        reviewed = normalize_setup(payload, lease)
+        self.assertEqual(reviewed["late_fee_schedule"], "TWO_STAGE")
+        self.assertTrue(reviewed["auto_late_fees"])
+        with self.assertRaises(ValueError):
+            normalize_setup({**payload, "late_fee_verified": False}, lease)
+        with self.assertRaises(ValueError):
+            normalize_setup({**payload, "due_day": 2}, lease)
+        with self.assertRaises(ValueError):
+            normalize_setup({**payload, "late_fee_amount": "75.00"}, lease)
+        with self.assertRaises(ValueError):
+            normalize_setup({**payload, "auto_late_fee_from": "2020-01-01"}, lease)
+
     def test_property_handoff_is_saved_without_creating_debts_or_payments(self):
         self.client.force_authenticate(self.owner)
         url = f"/api/v1/pm-hub/properties/{self.property.id}/handoff/"

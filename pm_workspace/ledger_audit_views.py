@@ -246,13 +246,22 @@ def verified_monthly_late_fee(request, tenant_id):
         return Response({"detail": "Enter an integer rent due day and grace days."}, status=400)
     if not (1 <= due_day <= 28 and 0 <= grace <= 31):
         return Response({"detail": "Due day must be 1–28 and grace days 0–31."}, status=400)
-    cutoff = date(start.year, start.month, due_day) + timedelta(days=grace)
+    stage = str(request.data.get("stage") or "STANDARD").upper()
+    if stage not in {"STANDARD", "AFTER_5TH", "AFTER_10TH"}:
+        return Response({"detail": "Choose a valid documented late-fee stage."}, status=400)
+    # Two-stage clauses are explicitly reviewed, never inferred from payer history.
+    # The standard mode preserves existing single-fee behavior for other leases.
+    if stage != "STANDARD" and due_day != 1:
+        return Response({"detail": "The 5th/10th late-fee stages require rent due on the first."}, status=400)
+    cutoff = date(start.year, start.month, 5 if stage == "AFTER_5TH" else 10) if stage != "STANDARD" else date(start.year, start.month, due_day) + timedelta(days=grace)
     fee_day = cutoff + timedelta(days=1)
     if fee_day > timezone.localdate():
         return Response({"detail": "This late fee is not due yet."}, status=400)
     fee = dollars(request.data.get("amount"))
     if not fee:
         return Response({"detail": "Provide the late-fee amount from the signed lease."}, status=400)
+    if stage != "STANDARD" and fee != Decimal("50.00"):
+        return Response({"detail": "This reviewed two-stage lease rule specifies $50 per stage."}, status=400)
     source = str(request.data.get("source_note") or "").strip()
     if len(source) < 12:
         return Response({"detail": "Cite the signed lease clause and relevant payment dates."}, status=400)
@@ -260,7 +269,13 @@ def verified_monthly_late_fee(request, tenant_id):
     existing = [x for x in rows if x.category == "LATE_FEE"
                 and (x.reference.endswith(f"-{month}") or (x.entry_date.year, x.entry_date.month) == (start.year, start.month))
                 and x.entry_type in ("CHARGE", "ADJUSTMENT")]
-    if existing:
+    if stage == "AFTER_10TH":
+        # One existing fee must be confirmed as the first $50. Never automatically
+        # interpret two legacy charges as eligible for a third.
+        if len(existing) != 1 or existing[0].amount != Decimal("50.00") or "AFTER_10TH" in existing[0].reference:
+            return Response({"detail": "Review the first $50 fee and any existing fees before adding the second $50.",
+                             "existing_fee_ids": [x.id for x in existing]}, status=409)
+    elif existing:
         return Response({"detail": f"A late fee is already recorded for {month}; verify before adding another.",
                          "existing_fee_ids": [x.id for x in existing]}, status=409)
     tenant_month_rent = [x for x in rows if x.entry_type == "CHARGE"
@@ -274,7 +289,7 @@ def verified_monthly_late_fee(request, tenant_id):
                        and (o["entry_date"].year, o["entry_date"].month) == (start.year, start.month)),
                       Decimal("0.00"))
     eligible_for_review = outstanding > 0
-    preview = {"month": month, "fee_date": str(fee_day), "unpaid_tenant_rent_at_grace": str(outstanding),
+    preview = {"month": month, "stage": stage, "fee_date": str(fee_day), "unpaid_tenant_rent_at_grace": str(outstanding),
                "fee": str(fee), "eligible_for_review": eligible_for_review,
                "applied": False, "note": "Lease terms, payment timing and legal eligibility must be confirmed by the owner."}
     if request.data.get("apply") is not True:
@@ -286,7 +301,7 @@ def verified_monthly_late_fee(request, tenant_id):
     entry = PMLedgerEntry.objects.create(
         workspace=tenant.workspace, tenant=tenant, lease=_active_lease(tenant),
         entry_date=fee_day, entry_type=PMLedgerEntry.EntryType.CHARGE,
-        amount=fee, category="LATE_FEE", reference=f"VERIFIED-LATE-{tenant.id}-{month}",
+        amount=fee, category="LATE_FEE", reference=f"VERIFIED-LATE-{tenant.id}-{month}" + (f"-{stage}" if stage != "STANDARD" else ""),
         memo=f"Reviewed lease fee for {month}: {source}", created_by=request.user,
     )
     return Response({**preview, "applied": True, "ledger_entry_id": entry.id})
