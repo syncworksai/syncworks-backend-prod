@@ -3,6 +3,7 @@
 Do not grant access based on a selected UI checkbox or a Checkout redirect.
 Only a verified Stripe event can mark a paid workspace ACTIVE.
 """
+import os
 from decimal import Decimal, ROUND_HALF_UP
 from user_accounts.models.user_billing import UserBillingProfile
 from .models import PMLeadSubscription
@@ -74,6 +75,11 @@ def has_capture_entitlement(workspace, owner=None):
 
 
 def mailbox_is_entitled(user, workspace, connection_id):
+    # Preserve currently connected inbox routing during a billing migration.
+    # Enforce paid mailbox quotas only once live recurring checkout and webhook
+    # reconciliation are operational and the rollout flag is enabled.
+    if os.getenv("PM_LEAD_CAPTURE_ENFORCEMENT", "").lower() != "true":
+        return True
     if not has_capture_entitlement(workspace, user):
         return False
     if is_founder(user):
