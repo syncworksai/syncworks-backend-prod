@@ -110,9 +110,7 @@ class PMLeadBillingTests(APITestCase):
             "STRIPE_PM_LEAD_CHECKOUT_ENABLED": "true",
             "STRIPE_PM_LEAD_WEBHOOK_SECRET": "whsec_local_fake",
         }), override_settings(STRIPE_SECRET_KEY="sk_test_local_fake",
-                              PLATFORM_BASE_URL="https://app.example.org"), (
-            patch("stripe.checkout.Session.retrieve") as retrieve
-        ):
+                              PLATFORM_BASE_URL="https://app.example.org"), patch("stripe.checkout.Session.retrieve") as retrieve:
             retrieve.return_value = {"id": "cs_sandbox", "status": "open",
                                      "url": "https://checkout.stripe.com/c/test-session"}
             duplicate = self.client.post(
