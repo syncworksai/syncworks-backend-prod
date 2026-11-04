@@ -17,7 +17,7 @@ from personal_calendar.sync_service import connection_access_token
 
 from .lead_models import PMLead, PMLeadMessage
 from .leasing_views import requested_workspace
-from .models import PMProperty, PMTenant
+from .models import PMDocumentPacket, PMProperty, PMTenant
 
 
 LEAD_TYPES = {value for value, _ in PMLead.LeadType.choices}
@@ -254,4 +254,14 @@ def lead_convert_to_tenant(request, lead_id):
         notes=(item.notes + "\n\nLead source: " + (item.source_label or item.get_source_display())).strip(),
         created_by=request.user,
     )
-    return Response({"tenant_id": tenant.id, "detail": "Lead converted to a tenant draft. Complete occupancy and lease details from the Tenant Center."}, status=status.HTTP_201_CREATED)
+    # Carry reusable applicant/voucher/agent data into a portfolio-scoped
+    # intake packet, never into unrestricted notes or an approved HAP split.
+    intake = dict((item.metadata or {}).get("pm_onboarding") or {})
+    if intake:
+        intake["source_lead_id"] = item.pk
+        PMDocumentPacket.objects.create(
+            workspace=workspace, tenant=tenant, packet_type="TENANT_INTAKE_PROFILE",
+            template_name="Tenant application and housing assistance intake",
+            template_version="1", field_data=intake, status=PMDocumentPacket.Status.DRAFT,
+        )
+    return Response({"tenant_id": tenant.id, "detail": "Lead converted to a tenant draft. Application and voucher information was preserved for lease preparation; confirm the actual HAP share and signatures separately."}, status=status.HTTP_201_CREATED)
