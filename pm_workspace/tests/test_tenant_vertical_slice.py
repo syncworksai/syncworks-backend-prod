@@ -415,6 +415,35 @@ class PMTenantVerticalSliceTests(APITestCase):
         self.assertTrue(PMLedgerEntry.objects.filter(pk=rent.id).exists())
         self.assertEqual(self.tenant.ledger_entries.filter(category="LATE_FEE", entry_type="CHARGE").count(), 2)
 
+    def test_future_two_stage_automation_requires_exact_lease_configuration(self):
+        from pm_workspace.lease_billing_engine import normalize_setup
+
+        lease = self.create_active_lease()
+        payload = {
+            "active": True,
+            "billing_start_date": timezone.localdate().isoformat(),
+            "due_day": 1,
+            "grace_days": 5,
+            "late_fee_amount": "50.00",
+            "late_fee_schedule": "TWO_STAGE",
+            "auto_late_fees": True,
+            "late_fee_verified": True,
+            "auto_late_fee_from": timezone.localdate().isoformat(),
+            "source_note": "Verified signed lease due on the first, $50 after fifth and tenth.",
+            "monthly_overrides": {},
+        }
+        reviewed = normalize_setup(payload, lease)
+        self.assertEqual(reviewed["late_fee_schedule"], "TWO_STAGE")
+        self.assertTrue(reviewed["auto_late_fees"])
+        with self.assertRaises(ValueError):
+            normalize_setup({**payload, "late_fee_verified": False}, lease)
+        with self.assertRaises(ValueError):
+            normalize_setup({**payload, "due_day": 2}, lease)
+        with self.assertRaises(ValueError):
+            normalize_setup({**payload, "late_fee_amount": "75.00"}, lease)
+        with self.assertRaises(ValueError):
+            normalize_setup({**payload, "auto_late_fee_from": "2020-01-01"}, lease)
+
     def test_property_handoff_is_saved_without_creating_debts_or_payments(self):
         self.client.force_authenticate(self.owner)
         url = f"/api/v1/pm-hub/properties/{self.property.id}/handoff/"
