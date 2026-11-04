@@ -77,6 +77,16 @@ def pm_lead_checkout(request):
     if current and current.stripe_subscription_id and current.status.upper() not in ("NONE", "CANCELED", "INCOMPLETE_EXPIRED"):
         return Response({"detail": "This PM portfolio already has a subscription. Use Manage Billing to avoid duplicate recurring charges."}, status=409)
     stripe_client = _stripe()
+    if current and current.status == "PENDING" and current.stripe_checkout_session_id:
+        try:
+            prior = stripe_client.checkout.Session.retrieve(current.stripe_checkout_session_id)
+            if prior.get("status") == "open" and prior.get("url"):
+                return Response({"url": prior["url"], "checkout_session_id": prior["id"],
+                                 "detail": "Resume existing secure checkout."})
+            if prior.get("status") == "complete":
+                return Response({"detail": "Your prior checkout completed. Waiting for Stripe subscription verification. Refresh status before starting another."}, status=409)
+        except stripe.error.StripeError:
+            return Response({"detail": "Unable to verify the prior checkout. No new subscription was created."}, status=502)
     try:
         if current and current.stripe_customer_id:
             customer_id = current.stripe_customer_id
