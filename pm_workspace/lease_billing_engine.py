@@ -84,6 +84,11 @@ def normalize_setup(payload,lease):
     active=payload.get("active") is True
     if active and lease.status!="ACTIVE":
         raise ValueError("Activate the signed lease before starting automatic billing.")
+    fee_schedule=str(payload.get("late_fee_schedule") or "SINGLE").upper()
+    if fee_schedule not in {"SINGLE","TWO_STAGE"}:
+        raise ValueError("Choose the verified single or two-stage fee schedule.")
+    if fee_schedule=="TWO_STAGE" and (due_day!=1 or grace!=5 or fee!=Decimal("50.00")):
+        raise ValueError("Two-stage fees require rent due on the 1st, $50 after the 5th and $50 after the 10th.")
     fee_auto=payload.get("auto_late_fees") is True
     if fee_auto and not payload.get("late_fee_verified"):
         raise ValueError("Automatic late fees require written lease-clause verification.")
@@ -125,7 +130,8 @@ def normalize_setup(payload,lease):
         raise ValueError("Current lease tenant plus housing split must equal contract rent.")
     return {"active":active,"billing_start_date":billing_start.isoformat(),
         "due_day":due_day,"grace_days":grace,"late_fee_amount":str(fee),
-        "auto_late_fees":fee_auto,"late_fee_verified":bool(payload.get("late_fee_verified")),
+        "auto_late_fees":fee_auto,"late_fee_schedule":fee_schedule,
+        "late_fee_verified":bool(payload.get("late_fee_verified")),
         "auto_late_fee_from":str(auto_fee_from_date),
         "source_note":source[:900],"verified_through":horizon,
         "monthly_overrides":overrides,
@@ -207,27 +213,47 @@ def apply_rent(tenant,lease,config,through,actor=None,only_month=None):
     return rows,created
 
 def late_fee_preview(tenant,lease,config,through):
+    """Preview only. Two-stage lease fees require explicit activation and evidence.
+
+    Dated receipts are reconstructed oldest-first. Housing arrears never trigger
+    tenant late fees. Existing (even waived) charges prevent accidental repeats.
+    """
     entries=list(tenant.ledger_entries.order_by("entry_date","id"))
     rows=plan(tenant,lease,config,through)
     due=[]
+    two_stage=config.get("late_fee_schedule")=="TWO_STAGE"
     for row in rows:
-        if row["blocked"]:continue
+        if row["blocked"]:
+            continue
         mo=row["month"]
-        grace_end=date.fromisoformat(row["due_date"])+timedelta(days=int(config["grace_days"]))
-        fee_date=grace_end+timedelta(days=1)
-        if fee_date>through:continue
-        if any(e.category=="LATE_FEE" and (e.entry_date.strftime("%Y-%m")==mo or
-            e.reference.endswith("-"+mo)) and e.entry_type=="CHARGE" for e in entries):
-            continue
-        if any(e.reference.startswith("LATE-WAIVE-") and e.entry_date.strftime("%Y-%m")==mo for e in entries):
-            continue
-        snap=_allocation(entries,cutoff=grace_end)
-        unpaid=sum((x["remaining"] for x in snap["obligations"]
-            if x["payer"]=="TENANT" and x["category"] in ("RENT","RENT_TENANT")
-            and x["entry_date"].strftime("%Y-%m")==mo),Decimal("0"))
-        if unpaid>0:
-            due.append({"month":mo,"date":str(fee_date),"amount":str(config["late_fee_amount"]),
-                        "unpaid_tenant_at_grace":str(unpaid)})
+        start=month_date(mo)
+        existing=[e for e in entries if e.category=="LATE_FEE" and e.entry_type=="CHARGE"
+                  and (e.entry_date.strftime("%Y-%m")==mo or
+                       e.reference.endswith("-"+mo) or f"-{mo}-" in e.reference)]
+        stages = (
+            [("AFTER_5TH",date(start.year,start.month,5)),
+             ("AFTER_10TH",date(start.year,start.month,10))]
+            if two_stage else
+            [("STANDARD",date.fromisoformat(row["due_date"])+timedelta(days=int(config["grace_days"])))]
+        )
+        for stage, cutoff in stages:
+            fee_date=cutoff+timedelta(days=1)
+            if fee_date>through:continue
+            if stage in ("STANDARD","AFTER_5TH") and existing:continue
+            if stage=="AFTER_10TH" and (
+                len(existing)!=1 or existing[0].amount!=Decimal("50.00") or
+                "AFTER_10TH" in existing[0].reference
+            ):continue
+            snap=_allocation(entries,cutoff=cutoff)
+            unpaid=sum((x["remaining"] for x in snap["obligations"]
+                if x["payer"]=="TENANT" and x["category"] in ("RENT","RENT_TENANT")
+                and x["entry_date"].strftime("%Y-%m")==mo),Decimal("0"))
+            if unpaid>0:
+                due.append({"month":mo,"stage":stage,"date":str(fee_date),
+                            "amount":str(config["late_fee_amount"]),
+                            "unpaid_tenant_at_grace":str(unpaid)})
+            if two_stage and stage=="AFTER_5TH" and not existing:
+                break
     return due
 
 def dashboard_totals(tenant):
