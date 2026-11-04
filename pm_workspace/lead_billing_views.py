@@ -24,7 +24,7 @@ def _checkout_configured():
     return bool(
         os.getenv("STRIPE_PM_LEAD_CHECKOUT_ENABLED", "").lower() == "true"
         and (getattr(settings, "STRIPE_SECRET_KEY", "") or "")
-        and os.getenv("STRIPE_PM_LEAD_WEBHOOK_SECRET")
+        and (os.getenv("STRIPE_PM_LEAD_WEBHOOK_SECRET") or getattr(settings, "STRIPE_WEBHOOK_SECRET", ""))
         and getattr(settings, "PLATFORM_BASE_URL", "")
     )
 
