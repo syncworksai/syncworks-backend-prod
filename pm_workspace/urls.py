@@ -10,6 +10,7 @@ from .dashboard_views import command_center
 from .document_builder_views import document_builder_bootstrap, document_builder_finalize, document_builder_prefill, document_builder_save
 from .document_views import PMPropertyDocumentViewSet, document_template_catalog, property_document_checklist
 from .lead_views import lead_convert_to_tenant, lead_detail, lead_note, lead_reply_email, leads
+from .lead_billing_views import pm_lead_addon_status, pm_lead_checkout, pm_lead_billing_portal, pm_lead_stripe_webhook
 from .onboarding_views import (
     pm_onboarding_overview, pm_lead_application_profile, pm_application_invite,
     pm_resident_application, pm_property_housing_profile,
@@ -59,6 +60,10 @@ legacy_ledger_list = PMLedgerEntryViewSet.as_view({"get": "list", "post": "creat
 
 urlpatterns = [
     path("dashboard/command-center/", command_center),
+    path("lead-addons/status/", pm_lead_addon_status),
+    path("lead-addons/checkout/", pm_lead_checkout),
+    path("lead-addons/billing-portal/", pm_lead_billing_portal),
+    path("lead-addons/stripe-webhook/", pm_lead_stripe_webhook),
     path("access/team/", owner_staff),
     path("access/team/<int:member_id>/", update_staff),
     path("access/team/accept/", accept_staff),
