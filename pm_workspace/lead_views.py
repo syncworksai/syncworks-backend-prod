@@ -215,7 +215,11 @@ def lead_reply_email(request, lead_id):
         return Response({"detail": "Connect or select the Microsoft/Outlook mailbox that should send this reply."}, status=status.HTTP_400_BAD_REQUEST)
     try:
         token, _ = connection_access_token(request.user, connection)
-        subject_base = item.source_subject or f"Rental inquiry for {item.property.name if item.property else workspace.name}"
+        subject_base = str(request.data.get("subject") or item.source_subject or
+            f"Rental inquiry for {item.property.name if item.property else workspace.name}")
+        subject_base = subject_base.replace("\\r", " ").replace("\\n", " ").strip()[:220]
+        if not subject_base:
+            subject_base = f"Rental inquiry - {workspace.name}"
         subject = subject_base if f"SW-LEAD-{item.id}" in subject_base else f"[SW-LEAD-{item.id}] {subject_base}"
         send_microsoft_mail(token, to_email=to_email, subject=subject, body=body)
     except Exception as exc:
