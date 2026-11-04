@@ -13,6 +13,7 @@ from pm_workspace.communication_models import PMConversation, PMConversationMess
 from pm_workspace.lead_models import PMLead, PMLeadMessage
 from pm_workspace.models import PMProperty, PMTenant, PMWorkspace
 from pm_workspace.owner_models import PMPropertyOwner
+from pm_workspace.lead_billing_service import mailbox_is_entitled
 
 
 LEAD_DOMAINS = {
@@ -257,6 +258,10 @@ def import_microsoft_mail(user, connection, access_token):
         for workspace in workspaces:
             classification = classify_for_workspace(workspace, sender_email, subject, text)
             if classification["kind"] == "LEAD" and "LEADS" in {str(v).upper() for v in connection.get("mail_categories") or []}:
+                if not mailbox_is_entitled(user, workspace, connection.get("id")):
+                    # Manual PM lead entry is always free; paid email importing
+                    # requires an active subscription for this workspace/inbox.
+                    continue
                 _upsert_lead(user, connection, workspace, remote, sender_email, sender_name, subject, text, classification)
                 counts["leads"] += 1; routed = True
                 break
