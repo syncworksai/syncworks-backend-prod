@@ -27,10 +27,10 @@ def is_founder(user):
         return False
     if str(getattr(user, "email", "")).strip().lower() != FOUNDER_EMAIL:
         return False
-    # A connected, logged-in and verified Personal account owns the email.
-    # Beta flags preserve existing founder/tester policy and prevent granting
-    # new accounts free access based solely on a typed email address.
+    # Require a trusted verified account or existing internal founder/beta flag;
+    # do not grant a founder waiver merely because an unverified user typed the address.
     return bool(
+        getattr(user, "email_verified", False) or
         getattr(user, "is_superuser", False) or
         getattr(user, "is_platform_admin", False) or
         UserBillingProfile.objects.filter(
