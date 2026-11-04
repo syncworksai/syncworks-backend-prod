@@ -68,13 +68,14 @@ class Command(BaseCommand):
                         fees+=1
                         continue
                     # Locking tenant row + deterministic reference prevents reruns.
-                    ref=f"LEASE-AUTO-LATE-{tenant.id}-{item['month']}"
+                    stage=item.get("stage","STANDARD")
+                    ref=f"LEASE-AUTO-LATE-{tenant.id}-{item['month']}" + (f"-{stage}" if stage!="STANDARD" else "")
                     if tenant.ledger_entries.filter(reference=ref).exists():continue
                     PMLedgerEntry.objects.create(
                         workspace=tenant.workspace,tenant=tenant,lease=lease,
                         entry_date=date.fromisoformat(item["date"]),
                         entry_type="CHARGE",category="LATE_FEE",amount=Decimal(item["amount"]),
-                        reference=ref,memo="Verified lease late fee after grace period; tenant rent was unpaid.",
+                        reference=ref,memo=f"Verified {stage} lease fee: tenant rent remained unpaid at checkpoint; housing assistance excluded. Source: {config['source_note'][:300]}",
                     )
                     fees+=1
         self.stdout.write(f"PM lease billing: rent adjustments {posted}, late fees {fees}, skipped {skipped}, dry_run={bool(options['dry_run'])}.")
