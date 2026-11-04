@@ -151,6 +151,8 @@ def _base_fields(workspace, property_obj, tenant=None):
     case = _case(workspace, property_obj, tenant) if tenant else None
     unit = occupancy.unit if occupancy and occupancy.unit_id else lease.unit if lease and lease.unit_id else None
     profile = _advanced_profile(tenant) if tenant else {}
+    intake_packet = tenant.document_packets.filter(packet_type="TENANT_INTAKE_PROFILE").order_by("-id").first() if tenant else None
+    intake = dict(intake_packet.field_data or {}) if intake_packet else {}
     return {
         "generated_on": timezone.localdate().isoformat(),
         "property_id": property_obj.id,
@@ -183,7 +185,12 @@ def _base_fields(workspace, property_obj, tenant=None):
         "monthly_rent": _money(lease.monthly_rent if lease else tenant.monthly_rent if tenant else None),
         "security_deposit": _money(lease.security_deposit if lease else profile.get("deposit_required")),
         "section8": bool(lease.section8) if lease else False,
-        "housing_authority": lease.housing_authority if lease else "",
+        "housing_authority": lease.housing_authority if lease and lease.housing_authority else intake.get("agency_name", ""),
+        "housing_agent_name": intake.get("agent_name", ""),
+        "housing_agent_email": intake.get("agent_email", ""),
+        "voucher_payment_standard_reference": intake.get("voucher_amount", ""),
+        "voucher_bedrooms_reference": intake.get("voucher_bedrooms", ""),
+        "application_received_at": intake.get("submitted_at", ""),
         "tenant_portion": _money(lease.tenant_portion if lease else None),
         "assistance_portion": _money(lease.assistance_portion if lease else None),
         "occupancy_id": occupancy.id if occupancy else None,
