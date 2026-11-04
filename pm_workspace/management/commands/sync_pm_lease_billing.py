@@ -63,6 +63,9 @@ class Command(BaseCommand):
                 candidates=[x for x in late_fee_preview(tenant,lease,config,today)
                     if x["month"]==target_month and date.fromisoformat(x["date"])>=since]
                 for item in candidates:
+                    # Missed scheduler runs must not quietly create backdated new fees.
+                    # Those are reviewed manually against lease, payment, and notice history.
+                    if date.fromisoformat(item["date"]) != today: continue
                     if Decimal(item["amount"])<=0:continue
                     if options["dry_run"]:
                         fees+=1
