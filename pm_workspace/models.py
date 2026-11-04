@@ -357,3 +357,6 @@ class PMLedgerEntry(models.Model):
     class Meta:
         ordering = ["-entry_date", "-id"]
         indexes = [models.Index(fields=["workspace", "tenant", "entry_date"])]
+
+# PM recurring lead add-ons
+from .lead_subscription_models import PMLeadSubscription  # noqa: E402,F401
