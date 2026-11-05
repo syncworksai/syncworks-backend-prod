@@ -241,7 +241,7 @@ def _resolve_application(request, token):
     return lead
 
 
-@api_view(["GET", "POST"])
+@api_view(["GET", "PATCH", "POST"])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
 def pm_resident_application(request):
@@ -249,10 +249,10 @@ def pm_resident_application(request):
     lead = _resolve_application(request, token)
     if not lead:
         return Response({"detail": "The application link is expired, replaced, or does not belong to this signed-in email."}, status=403)
-    if request.method == "POST":
-        # Serialize concurrent submissions without locking nullable joins.
-        # Legacy clients can submit their form; new clients also record
-        # an explicit accuracy certification, never a screening authorization.
+    if request.method in ("PATCH", "POST"):
+        # Serialize draft saves and final submissions without locking any
+        # nullable property joins. A submitted application is immutable to
+        # the applicant until management explicitly opens a new version.
         lead = PMLead.objects.select_for_update().get(pk=lead.pk, workspace=lead.workspace)
         if _onboarding(lead).get("application_status") == "SUBMITTED":
             return Response({"detail": "This application has already been submitted. Contact management for changes."}, status=409)
@@ -260,11 +260,15 @@ def pm_resident_application(request):
         if error:
             return Response({"detail": error}, status=400)
         profile = _onboarding(lead)
-        profile["application_status"] = "SUBMITTED"
-        profile["submitted_at"] = timezone.now().isoformat()
-        profile["submitted_by_user"] = request.user.pk
-        if request.data.get("certifies_truth") is True:
-            profile["information_certified_at"] = timezone.now().isoformat()
+        if request.method == "POST":
+            profile["application_status"] = "SUBMITTED"
+            profile["submitted_at"] = timezone.now().isoformat()
+            profile["submitted_by_user"] = request.user.pk
+            if request.data.get("certifies_truth") is True:
+                profile["information_certified_at"] = timezone.now().isoformat()
+        else:
+            profile["application_status"] = "IN_PROGRESS"
+            profile["draft_saved_at"] = timezone.now().isoformat()
         lead.metadata = {**(lead.metadata or {}), "pm_onboarding": profile}
         lead.stage = PMLead.Stage.APPLICATION
         lead.save()
