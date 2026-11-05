@@ -100,6 +100,91 @@ class PMApplicationPilotTests(APITestCase):
         self.assertEqual(packet.field_data["voucher_amount"], "1750.00")
         self.assertEqual(PMLedgerEntry.objects.count(), 0)
 
+    def test_unassigned_lead_profile_is_postgres_safe_and_prefills_lead_data(self):
+        """GET and PATCH must not lock the nullable PMLead.property outer join."""
+        from datetime import date
+        self.lead.phone = "555-0123"
+        self.lead.requested_start = date(2027, 2, 14)
+        self.lead.lead_type = PMLead.LeadType.SECTION8
+        self.lead.pet_notes = "One cat"
+        self.lead.save()
+        url = f"/api/v1/pm-hub/onboarding/leads/{self.lead.pk}/profile/"
+        read = self.client.get(url, **self.headers)
+        self.assertEqual(read.status_code, 200, read.data)
+        self.assertEqual(read.data["application"]["phone"], "555-0123")
+        self.assertEqual(read.data["application"]["preferred_move_in"], "2027-02-14")
+        self.assertEqual(read.data["application"]["pets_notes"], "One cat")
+        self.assertTrue(read.data["section8_requested"])
+        self.assertIsNone(read.data["property_id"])
+        patched = self.client.patch(
+            url, {"preferred_move_in": "2027-03-01", "current_employer": "Example Co",
+                  "current_residence_address": "123 Sample Rd"},
+            format="json", **self.headers,
+        )
+        self.assertEqual(patched.status_code, 200, patched.data)
+        self.lead.refresh_from_db()
+        self.assertEqual(self.lead.requested_start, date(2027, 3, 1))
+        self.assertIsNone(self.lead.property_id)
+        self.assertEqual(patched.data["application"]["current_employer"], "Example Co")
+        self.assertEqual(PMLedgerEntry.objects.count(), 0)
+
+    def test_applicant_can_save_and_resume_draft_without_billing(self):
+        invite = self.client.post(
+            f"/api/v1/pm-hub/onboarding/leads/{self.lead.id}/invite/",
+            {}, format="json", **self.headers,
+        )
+        self.assertEqual(invite.status_code, 201, invite.data)
+        token = invite.data["application_path"].split("token=", 1)[1]
+        self.client.force_authenticate(self.applicant)
+        draft = self.client.patch("/api/v1/pm-hub/onboarding/applications/my/", {
+            "token": token, "current_employer": "Example Service",
+            "current_residence_address": "5 Previous St", "preferred_move_in": "2027-04-01",
+        }, format="json")
+        self.assertEqual(draft.status_code, 200, draft.data)
+        self.assertEqual(draft.data["application_status"], "IN_PROGRESS")
+        resumed = self.client.get(
+            "/api/v1/pm-hub/onboarding/applications/my/", {"token": token},
+        )
+        self.assertEqual(resumed.status_code, 200, resumed.data)
+        self.assertEqual(resumed.data["application"]["current_employer"], "Example Service")
+        self.assertEqual(resumed.data["application"]["preferred_move_in"], "2027-04-01")
+        self.assertEqual(PMLedgerEntry.objects.count(), 0)
+        sent = self.client.post(
+            "/api/v1/pm-hub/onboarding/applications/my/",
+            {"token": token, "certifies_truth": True}, format="json",
+        )
+        self.assertEqual(sent.status_code, 200, sent.data)
+        denied = self.client.patch(
+            "/api/v1/pm-hub/onboarding/applications/my/",
+            {"token": token, "current_employer": "Not allowed"}, format="json",
+        )
+        self.assertEqual(denied.status_code, 409, denied.data)
+        self.assertEqual(PMLedgerEntry.objects.count(), 0)
+
+    def test_applicant_certification_is_audit_note_not_screening_consent(self):
+        invite = self.client.post(
+            f"/api/v1/pm-hub/onboarding/leads/{self.lead.id}/invite/",
+            {}, format="json", **self.headers,
+        )
+        self.assertEqual(invite.status_code, 201, invite.data)
+        token = invite.data["application_path"].split("token=", 1)[1]
+        self.client.force_authenticate(self.applicant)
+        submitted = self.client.post("/api/v1/pm-hub/onboarding/applications/my/", {
+            "token": token, "certifies_truth": True,
+            "current_employer": "Example Employer", "moving_reason": "Closer to work",
+        }, format="json")
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        self.lead.refresh_from_db()
+        self.assertEqual(self.lead.metadata["pm_onboarding"]["current_employer"], "Example Employer")
+        self.assertIn("information_certified_at", self.lead.metadata["pm_onboarding"])
+        self.client.force_authenticate(self.owner)
+        again = self.client.post(
+            f"/api/v1/pm-hub/onboarding/leads/{self.lead.id}/invite/",
+            {}, format="json", **self.headers,
+        )
+        self.assertEqual(again.status_code, 409, again.data)
+        self.assertEqual(PMLedgerEntry.objects.count(), 0)
+
     def test_invitation_replaced_and_property_data_not_billing(self):
         url = f"/api/v1/pm-hub/onboarding/leads/{self.lead.id}/invite/"
         first = self.client.post(url, {}, format="json", **self.headers)

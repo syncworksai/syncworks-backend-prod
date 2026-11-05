@@ -31,6 +31,18 @@ APPLICATION_FIELDS = {
     "housing_notes": 500, "pets_notes": 250, "agent_name": 120,
     "agent_email": 254, "agency_name": 180, "voucher_code_hint": 80,
     "household_notes": 400,
+    "current_employer": 180, "current_job_title": 120, "current_employment_years": 16,
+    "current_employer_address": 250, "current_supervisor": 120,
+    "previous_employer": 180, "previous_job_title": 120,
+    "previous_employment_years": 16, "annual_income": 40,
+    "current_residence_address": 300, "current_residence_monthly_rent": 40,
+    "current_residence_years": 16, "current_lease_end": 12,
+    "current_landlord_name": 120, "current_landlord_contact": 120,
+    "previous_residence_address": 300, "previous_residence_years": 16,
+    "previous_residence_monthly_rent": 40,
+    "previous_landlord_name": 120, "previous_landlord_contact": 120,
+    "moving_reason": 400, "vehicles_description": 300,
+    "other_occupants_description": 400, "smoking_preference": 32,
 }
 HOUSING_FIELDS = {"accepts_section8", "proposed_rent", "voucher_payment_standard",
                   "approved_tenant_share", "approved_hap_share", "approval_status",
@@ -122,7 +134,12 @@ def _application_payload(lead):
         "pets": lead.pets, "property_id": lead.property_id,
         "property_name": lead.property.name if lead.property_id else "",
         "section8_requested": lead.lead_type == PMLead.LeadType.SECTION8,
-        "application": {key: profile.get(key, lead.phone if key == "phone" else "") for key in APPLICATION_FIELDS},
+        "application": {key: profile.get(key, (
+            lead.phone if key == "phone" else
+            lead.requested_start.isoformat() if key == "preferred_move_in" and lead.requested_start else
+            lead.pet_notes if key == "pets_notes" else
+            ""
+        )) for key in APPLICATION_FIELDS},
         "voucher_amount": profile.get("voucher_amount", ""),
         "voucher_bedrooms": profile.get("voucher_bedrooms", 0),
         "application_status": profile.get("application_status", "NOT_STARTED"),
@@ -155,7 +172,13 @@ def pm_onboarding_overview(request):
 @transaction.atomic
 def pm_lead_application_profile(request, lead_id):
     workspace = requested_workspace(request)
-    lead = PMLead.objects.select_for_update().select_related("property").filter(workspace=workspace, pk=lead_id).first()
+    # PostgreSQL rejects FOR UPDATE against the nullable side of a LEFT JOIN:
+    # PMLead.property is optional until the prospect picks a home.
+    # GET is read-only. PATCH locks only the PMLead row (not an outer joined property).
+    queryset = PMLead.objects.filter(workspace=workspace, pk=lead_id)
+    if request.method == "PATCH":
+        queryset = queryset.select_for_update(of=("self",))
+    lead = queryset.first()
     if lead is None:
         return Response({"detail": "Lead not found."}, status=404)
     if request.method == "PATCH":
@@ -176,8 +199,10 @@ def pm_application_invite(request, lead_id):
         return Response({"detail": "Lead not found."}, status=404)
     if not lead.email:
         return Response({"detail": "Add the applicant's email before generating a link."}, status=400)
-    version = uuid4().hex
     profile = _onboarding(lead)
+    if profile.get("application_status") == "SUBMITTED":
+        return Response({"detail": "This application was already submitted. Review it before issuing a new invitation."}, status=409)
+    version = uuid4().hex
     profile["invite_nonce"] = version
     profile["application_status"] = "INVITED"
     profile["invite_created_at"] = timezone.now().isoformat()
@@ -216,7 +241,7 @@ def _resolve_application(request, token):
     return lead
 
 
-@api_view(["GET", "POST"])
+@api_view(["GET", "PATCH", "POST"])
 @permission_classes([IsAuthenticated])
 @transaction.atomic
 def pm_resident_application(request):
@@ -224,16 +249,26 @@ def pm_resident_application(request):
     lead = _resolve_application(request, token)
     if not lead:
         return Response({"detail": "The application link is expired, replaced, or does not belong to this signed-in email."}, status=403)
-    if request.method == "POST":
+    if request.method in ("PATCH", "POST"):
+        # Serialize draft saves and final submissions without locking any
+        # nullable property joins. A submitted application is immutable to
+        # the applicant until management explicitly opens a new version.
+        lead = PMLead.objects.select_for_update().get(pk=lead.pk, workspace=lead.workspace)
         if _onboarding(lead).get("application_status") == "SUBMITTED":
             return Response({"detail": "This application has already been submitted. Contact management for changes."}, status=409)
         error = _save_profile(lead, request.data, lead.workspace, applicant=True)
         if error:
             return Response({"detail": error}, status=400)
         profile = _onboarding(lead)
-        profile["application_status"] = "SUBMITTED"
-        profile["submitted_at"] = timezone.now().isoformat()
-        profile["submitted_by_user"] = request.user.pk
+        if request.method == "POST":
+            profile["application_status"] = "SUBMITTED"
+            profile["submitted_at"] = timezone.now().isoformat()
+            profile["submitted_by_user"] = request.user.pk
+            if request.data.get("certifies_truth") is True:
+                profile["information_certified_at"] = timezone.now().isoformat()
+        else:
+            profile["application_status"] = "IN_PROGRESS"
+            profile["draft_saved_at"] = timezone.now().isoformat()
         lead.metadata = {**(lead.metadata or {}), "pm_onboarding": profile}
         lead.stage = PMLead.Stage.APPLICATION
         lead.save()

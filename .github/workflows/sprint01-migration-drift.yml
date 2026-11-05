@@ -70,3 +70,5 @@ jobs:
         run: python manage.py migrate --noinput
       - name: Check model consistency against migration history
         run: python manage.py makemigrations --check --dry-run
+      - name: Validate PM application endpoints against PostgreSQL
+        run: python manage.py test pm_workspace.tests.test_pm_application_pilot --noinput -v 2
