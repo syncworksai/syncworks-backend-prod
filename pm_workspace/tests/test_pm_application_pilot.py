@@ -128,6 +128,39 @@ class PMApplicationPilotTests(APITestCase):
         self.assertEqual(patched.data["application"]["current_employer"], "Example Co")
         self.assertEqual(PMLedgerEntry.objects.count(), 0)
 
+    def test_applicant_can_save_and_resume_draft_without_billing(self):
+        invite = self.client.post(
+            f"/api/v1/pm-hub/onboarding/leads/{self.lead.id}/invite/",
+            {}, format="json", **self.headers,
+        )
+        self.assertEqual(invite.status_code, 201, invite.data)
+        token = invite.data["application_path"].split("token=", 1)[1]
+        self.client.force_authenticate(self.applicant)
+        draft = self.client.patch("/api/v1/pm-hub/onboarding/applications/my/", {
+            "token": token, "current_employer": "Example Service",
+            "current_residence_address": "5 Previous St", "preferred_move_in": "2027-04-01",
+        }, format="json")
+        self.assertEqual(draft.status_code, 200, draft.data)
+        self.assertEqual(draft.data["application_status"], "IN_PROGRESS")
+        resumed = self.client.get(
+            "/api/v1/pm-hub/onboarding/applications/my/", {"token": token},
+        )
+        self.assertEqual(resumed.status_code, 200, resumed.data)
+        self.assertEqual(resumed.data["application"]["current_employer"], "Example Service")
+        self.assertEqual(resumed.data["application"]["preferred_move_in"], "2027-04-01")
+        self.assertEqual(PMLedgerEntry.objects.count(), 0)
+        sent = self.client.post(
+            "/api/v1/pm-hub/onboarding/applications/my/",
+            {"token": token, "certifies_truth": True}, format="json",
+        )
+        self.assertEqual(sent.status_code, 200, sent.data)
+        denied = self.client.patch(
+            "/api/v1/pm-hub/onboarding/applications/my/",
+            {"token": token, "current_employer": "Not allowed"}, format="json",
+        )
+        self.assertEqual(denied.status_code, 409, denied.data)
+        self.assertEqual(PMLedgerEntry.objects.count(), 0)
+
     def test_applicant_certification_is_audit_note_not_screening_consent(self):
         invite = self.client.post(
             f"/api/v1/pm-hub/onboarding/leads/{self.lead.id}/invite/",
