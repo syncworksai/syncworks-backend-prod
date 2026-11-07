@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from urllib.parse import quote
 
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
+from django.utils.html import escape
 from typing import Optional, Dict, Any
 
 from django.contrib.auth import get_user_model
@@ -159,20 +160,42 @@ def invite_employee(
     sender = settings.DEFAULT_FROM_EMAIL
     if settings.EMAIL_BACKEND.endswith("console.EmailBackend"):
         raise RuntimeError("Email delivery is not configured. Set up the SyncWorks SMTP email backend before sending invites.")
-    sent_count = send_mail(
-        subject=f"{business.name} invited you to join their team on SyncWorks",
-        message=(
-            f"You have been invited by {business.name} to join their team on SyncWorks "
-            f"as {seat_role.replace('_', ' ').title()}.\\n\\n"
-            f"Accept your invitation: {link}\\n\\n"
-            "Sign in with your existing SyncWorks account or create one first. "
-            "Your existing login and password will not change. "
-            "If you did not expect this invitation, ignore this email.\\n"
-        ),
-        from_email=sender,
-        recipient_list=[email],
-        fail_silently=False,
+    subject = f"{business.name} invited you to join their team on SyncWorks"
+    body = (
+        f"{business.name} has invited you to join their team on SyncWorks.\n\n"
+        f"Your role: {seat_role.replace('_', ' ').title()}\n\n"
+        f"Accept your invitation:\n{link}\n\n"
+        "If you already have a SyncWorks account, sign in with the email address "
+        "that received this invitation. Otherwise, create your free Personal account "
+        "using that email and return to accept.\n\n"
+        "Your existing password will not change.\n"
+        "If you were not expecting this invitation, you can ignore this message.\n"
     )
+    safe_business = escape(str(business.name))
+    safe_role = escape(seat_role.replace("_", " ").title())
+    safe_link = escape(link)
+    html_body = (
+        '<div style="background:#050b16;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;color:#e5edf8">'
+        '<div style="max-width:560px;margin:auto;background:#0b1728;border:1px solid #24435f;'
+        'border-radius:18px;padding:32px">'
+        '<p style="color:#67e8f9;letter-spacing:3px;font-size:12px;font-weight:bold">SYNCWORKS</p>'
+        f'<h1 style="color:#fff;font-size:25px;line-height:1.3">You are invited to join {safe_business}</h1>'
+        f'<p style="line-height:1.6">{safe_business} invited you to join their team as '
+        f'<strong>{safe_role}</strong>.</p>'
+        f'<p><a href="{safe_link}" style="display:inline-block;background:#22d3ee;'
+        'color:#07111f;font-weight:bold;text-decoration:none;border-radius:10px;'
+        'padding:15px 22px">Accept invitation</a></p>'
+        '<p style="font-size:13px;color:#b6c7da;line-height:1.6">Already have a SyncWorks '
+        'account? Sign in with the invited email. New here? Create a free Personal account. '
+        'The invite will still be available afterward. Your existing password stays unchanged.</p>'
+        '<p style="font-size:12px;color:#8ea7bd">If you did not expect this, ignore this email.</p>'
+        '</div></div>'
+    )
+    message = EmailMultiAlternatives(
+        subject=subject, body=body, from_email=sender, to=[email]
+    )
+    message.attach_alternative(html_body, "text/html")
+    sent_count = message.send(fail_silently=False)
     if sent_count != 1:
         raise RuntimeError("SyncWorks could not confirm invitation email dispatch.")
     return InviteEmployeeResult(invite=invite)
