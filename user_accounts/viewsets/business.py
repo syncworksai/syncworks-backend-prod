@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import os
 import uuid
+import smtplib
+from django.core.mail import BadHeaderError
 from pathlib import Path
 
 from django.conf import settings
@@ -346,13 +348,19 @@ class BusinessTeamViewSet(viewsets.ViewSet):
         ser = EmployeeInviteCreateSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
 
-        res = invite_employee(
-            business=business,
-            invited_by=request.user,
-            email=ser.validated_data["email"],
-            seat_role=ser.validated_data["role"],
-            permissions=ser.validated_data.get("permissions") or None,
-        )
+        try:
+            res = invite_employee(
+                business=business,
+                invited_by=request.user,
+                email=ser.validated_data["email"],
+                seat_role=ser.validated_data["role"],
+                permissions=ser.validated_data.get("permissions") or None,
+            )
+        except (RuntimeError, OSError, smtplib.SMTPException, BadHeaderError):
+            return Response(
+                {"detail": "SyncWorks email delivery is unavailable. No invitation was sent; please retry later or contact support."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         return Response(
             {**EmployeeInviteResponseSerializer(res.invite).data, "email_sent": True},
