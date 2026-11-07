@@ -459,9 +459,12 @@ class EmployeeInviteAcceptViewSet(viewsets.ViewSet):
         ser = EmployeeInviteAcceptSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
 
-        out = accept_employee_invite(
-            code=ser.validated_data["code"],
-            accepting_user=request.user,
-        )
+        try:
+            out = accept_employee_invite(
+                code=ser.validated_data["code"],
+                accepting_user=request.user,
+            )
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
 
         return Response(out, status=status.HTTP_200_OK)
