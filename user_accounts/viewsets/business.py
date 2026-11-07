@@ -355,7 +355,7 @@ class BusinessTeamViewSet(viewsets.ViewSet):
         )
 
         return Response(
-            EmployeeInviteResponseSerializer(res.invite).data,
+            {**EmployeeInviteResponseSerializer(res.invite).data, "email_sent": True},
             status=status.HTTP_201_CREATED,
         )
 
@@ -444,7 +444,7 @@ class EmployeeInviteAcceptViewSet(viewsets.ViewSet):
       POST /auth/employee-invites/accept/
     """
 
-    permission_classes = []
+    permission_classes = [IsAuthenticated]
 
     @action(detail=False, methods=["post"], url_path="accept")
     def accept(self, request):
@@ -453,9 +453,7 @@ class EmployeeInviteAcceptViewSet(viewsets.ViewSet):
 
         out = accept_employee_invite(
             code=ser.validated_data["code"],
-            first_name=ser.validated_data.get("first_name", ""),
-            last_name=ser.validated_data.get("last_name", ""),
-            password=ser.validated_data["password"],
+            accepting_user=request.user,
         )
 
         return Response(out, status=status.HTTP_200_OK)
