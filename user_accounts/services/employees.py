@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import quote
+
+from django.conf import settings
+from django.core.mail import send_mail
 from typing import Optional, Dict, Any
 
 from django.contrib.auth import get_user_model
@@ -19,8 +23,8 @@ User = get_user_model()
 @dataclass
 class InviteEmployeeResult:
     invite: InviteCode
-    user: User
-    member: BusinessMember
+    user: Optional[User] = None
+    member: Optional[BusinessMember] = None
 
 
 def _coerce_employee_role(raw_role: str) -> str:
@@ -123,47 +127,6 @@ def invite_employee(
 
     seat_role = _coerce_employee_role(seat_role)
 
-    user, created = User.objects.get_or_create(
-        email=email,
-        defaults={
-            "role": "EMPLOYEE",
-            "username": email,
-        },
-    )
-
-    if created and not getattr(user, "username", ""):
-        user.username = email
-        user.save(update_fields=["username"])
-
-    # An invitation must never demote an existing account (including an owner
-    # or platform administrator) before that person accepts the invitation.
-    if created:
-        _set_employee_role(user)
-
-    member, _ = BusinessMember.objects.get_or_create(
-        business=business,
-        user=user,
-        defaults={"role": seat_role, "is_active": True},
-    )
-
-    member_changed = []
-    if getattr(member, "role", None) != seat_role:
-        member.role = seat_role
-        member_changed.append("role")
-
-    if not getattr(member, "is_active", False):
-        member.is_active = True
-        member_changed.append("is_active")
-
-    if hasattr(member, "terminated_at") and getattr(member, "terminated_at", None) is not None:
-        member.terminated_at = None
-        member_changed.append("terminated_at")
-
-    if member_changed:
-        member.save(update_fields=member_changed)
-
-    _apply_permissions_to_member(member, permissions)
-
     invite_fields: Dict[str, Any] = {
         "business": business,
         "created_by": invited_by,
@@ -188,18 +151,36 @@ def invite_employee(
     for key in allowed_invite_perm_fields:
         invite_fields[key] = bool((permissions or {}).get(key, False))
 
+    # No employee membership is granted until the invited address signs in
+    # and explicitly accepts. Do not create users or change account roles here.
     invite = InviteCode.objects.create(**invite_fields)
-
-    return InviteEmployeeResult(invite=invite, user=user, member=member)
+    site = getattr(settings, "SYNCWORKS_PUBLIC_URL", "https://www.syncworksapp.com").rstrip("/")
+    link = f"{site}/employee/invite?code={quote(invite.code, safe='')}"
+    sender = settings.DEFAULT_FROM_EMAIL
+    if settings.EMAIL_BACKEND.endswith("console.EmailBackend"):
+        raise RuntimeError("Email delivery is not configured. Set up the SyncWorks SMTP email backend before sending invites.")
+    send_mail(
+        subject=f"{business.name} invited you to join their team on SyncWorks",
+        message=(
+            f"You have been invited by {business.name} to join their team on SyncWorks "
+            f"as {seat_role.replace('_', ' ').title()}.\\n\\n"
+            f"Accept your invitation: {link}\\n\\n"
+            "Sign in with your existing SyncWorks account or create one first. "
+            "Your existing login and password will not change. "
+            "If you did not expect this invitation, ignore this email.\\n"
+        ),
+        from_email=sender,
+        recipient_list=[email],
+        fail_silently=False,
+    )
+    return InviteEmployeeResult(invite=invite)
 
 
 @transaction.atomic
 def accept_employee_invite(
     *,
     code: str,
-    first_name: str,
-    last_name: str,
-    password: str,
+    accepting_user: User,
 ) -> Dict[str, Any]:
     code = (code or "").strip()
     if not code:
@@ -207,96 +188,56 @@ def accept_employee_invite(
 
     invite = InviteCode.objects.select_for_update().get(code=code)
 
-    if getattr(invite, "used_at", None) is not None:
+    if invite.used_at is not None:
         raise ValueError("Invite already used")
-
-    if getattr(invite, "is_expired", False):
+    if invite.is_expired:
         raise ValueError("Invite expired")
 
-    email = (getattr(invite, "email", "") or "").strip().lower()
-    business = getattr(invite, "business", None)
-    seat_role = getattr(invite, "role", None)
+    email = (invite.email or "").strip().lower()
+    if not email or email != (accepting_user.email or "").strip().lower():
+        raise ValueError("Sign in with the email address that received the invitation.")
+    business = invite.business
+    if not business:
+        raise ValueError("Invite is missing a business.")
 
-    if not email or not business:
-        raise ValueError("Invite is missing required onboarding data")
-
-    user, _ = User.objects.get_or_create(
-        email=email,
-        defaults={
-            "role": "EMPLOYEE",
-            "username": email,
-        },
-    )
-
-    validate_password(password, user=user)
-
-    update_fields = []
-    if first_name is not None:
-        user.first_name = first_name or ""
-        update_fields.append("first_name")
-    if last_name is not None:
-        user.last_name = last_name or ""
-        update_fields.append("last_name")
-
-    user.set_password(password)
-    user.role = "EMPLOYEE"
-    update_fields.extend(["password", "role"])
-
-    if not getattr(user, "username", ""):
-        user.username = email
-        update_fields.append("username")
-
-    user.save(update_fields=list(dict.fromkeys(update_fields)))
-
+    # Existing Personal, Business, PM, and platform roles and credentials
+    # must stay untouched. Only a scoped business membership is added.
     member, _ = BusinessMember.objects.get_or_create(
         business=business,
-        user=user,
-        defaults={
-            "role": seat_role or BusinessMemberRole.TECHNICIAN,
-            "is_active": True,
-        },
+        user=accepting_user,
+        defaults={"role": invite.role or BusinessMemberRole.TECHNICIAN, "is_active": True},
     )
-
     member_fields = []
-    if seat_role and getattr(member, "role", None) != seat_role:
-        member.role = seat_role
+    if member.role != invite.role:
+        member.role = invite.role
         member_fields.append("role")
-
-    if not getattr(member, "is_active", False):
+    if not member.is_active:
         member.is_active = True
         member_fields.append("is_active")
-
-    if hasattr(member, "terminated_at") and getattr(member, "terminated_at", None) is not None:
-        member.terminated_at = None
-        member_fields.append("terminated_at")
-
     if member_fields:
         member.save(update_fields=member_fields)
 
     _copy_invite_permissions_to_member(invite, member)
-
     invite.used_at = timezone.now()
     if hasattr(invite, "accepted_by"):
-        invite.accepted_by = user
+        invite.accepted_by = accepting_user
         invite.save(update_fields=["used_at", "accepted_by"])
     else:
         invite.save(update_fields=["used_at"])
 
-    token, _ = Token.objects.get_or_create(user=user)
-
+    token, _ = Token.objects.get_or_create(user=accepting_user)
     return {
         "token": token.key,
         "user": {
-            "id": user.id,
-            "email": user.email,
-            "role": getattr(user, "role", None),
-            "first_name": user.first_name,
-            "last_name": user.last_name,
+            "id": accepting_user.id,
+            "email": accepting_user.email,
+            "role": getattr(accepting_user, "role", None),
+            "first_name": accepting_user.first_name,
+            "last_name": accepting_user.last_name,
         },
         "business_id": member.business_id,
         "business_member_id": member.id,
     }
-
 
 @transaction.atomic
 def terminate_member(*, member: BusinessMember, terminated_by: User) -> BusinessMember:
