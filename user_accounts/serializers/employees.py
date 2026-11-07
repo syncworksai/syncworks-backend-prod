@@ -91,6 +91,5 @@ class EmployeeInviteResponseSerializer(serializers.ModelSerializer):
 
 class EmployeeInviteAcceptSerializer(serializers.Serializer):
     code = serializers.CharField()
-    first_name = serializers.CharField(required=False, allow_blank=True)
-    last_name = serializers.CharField(required=False, allow_blank=True)
-    password = serializers.CharField(write_only=True, min_length=8)
+    # Existing or newly registered accounts accept while authenticated.
+    # No password or identity fields may be changed via an invitation.
