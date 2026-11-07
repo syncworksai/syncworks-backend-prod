@@ -35,6 +35,15 @@ class EmployeeInviteEmailTests(TestCase):
         self.assertEqual(message.to, ["employee@example.com"])
         self.assertIn("Example Contracting", message.subject)
         self.assertIn("/employee/invite?code=one-time-abc", message.body)
+        self.assertIn("Accept your invitation:\\nhttps://", message.body)
+        self.assertNotIn(r"\\n", message.body)
+        self.assertEqual(len(message.alternatives), 1)
+        html, mime_type = message.alternatives[0]
+        self.assertEqual(mime_type, "text/html")
+        self.assertIn("Accept invitation</a>", html)
+        self.assertIn("Example Contracting", html)
+        self.assertIn("/employee/invite?code=one-time-abc", html)
+
 
     @override_settings(EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend")
     @patch("user_accounts.services.employees.InviteCode.objects.create")

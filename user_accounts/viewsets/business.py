@@ -17,7 +17,7 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from user_accounts.models import Business, BusinessMember
+from user_accounts.models import Business, BusinessMember, InviteCode
 from user_accounts.serializers.business import BusinessMemberSerializer, BusinessSerializer
 from user_accounts.serializers.employees import (
     EmployeeInviteAcceptSerializer,
@@ -459,9 +459,14 @@ class EmployeeInviteAcceptViewSet(viewsets.ViewSet):
         ser = EmployeeInviteAcceptSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
 
-        out = accept_employee_invite(
-            code=ser.validated_data["code"],
-            accepting_user=request.user,
-        )
+        try:
+            out = accept_employee_invite(
+                code=ser.validated_data["code"],
+                accepting_user=request.user,
+            )
+        except ValueError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
+        except InviteCode.DoesNotExist as exc:
+            raise ValidationError({"detail": "This invitation link is invalid or no longer available."}) from exc
 
         return Response(out, status=status.HTTP_200_OK)
