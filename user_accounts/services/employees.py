@@ -159,7 +159,7 @@ def invite_employee(
     sender = settings.DEFAULT_FROM_EMAIL
     if settings.EMAIL_BACKEND.endswith("console.EmailBackend"):
         raise RuntimeError("Email delivery is not configured. Set up the SyncWorks SMTP email backend before sending invites.")
-    send_mail(
+    sent_count = send_mail(
         subject=f"{business.name} invited you to join their team on SyncWorks",
         message=(
             f"You have been invited by {business.name} to join their team on SyncWorks "
@@ -173,6 +173,8 @@ def invite_employee(
         recipient_list=[email],
         fail_silently=False,
     )
+    if sent_count != 1:
+        raise RuntimeError("SyncWorks could not confirm invitation email dispatch.")
     return InviteEmployeeResult(invite=invite)
 
 
