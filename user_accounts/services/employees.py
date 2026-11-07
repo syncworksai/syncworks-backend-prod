@@ -135,7 +135,10 @@ def invite_employee(
         user.username = email
         user.save(update_fields=["username"])
 
-    _set_employee_role(user)
+    # An invitation must never demote an existing account (including an owner
+    # or platform administrator) before that person accepts the invitation.
+    if created:
+        _set_employee_role(user)
 
     member, _ = BusinessMember.objects.get_or_create(
         business=business,
