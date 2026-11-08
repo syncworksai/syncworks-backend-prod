@@ -407,3 +407,48 @@ class CollectionPayment(models.Model):
         self.platform_fee_bps = 100
         self.platform_fee_cents = (int(self.gross_amount_cents or 0) * self.platform_fee_bps + 5000) // 10000
         super().save(*args, **kwargs)
+
+
+class CardPokerRoom(models.Model):
+    """Group-scoped poker lobby. Virtual chips only; no payments or wagering custody."""
+    class State(models.TextChoices):
+        WAITING = "WAITING", "Waiting"
+        DEALER = "DEALER", "Dealer choosing"
+        READY = "READY", "Ready to play"
+        CLOSED = "CLOSED", "Closed"
+
+    group = models.ForeignKey(SocialGroup, on_delete=models.CASCADE, related_name="card_rooms")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="created_card_rooms")
+    name = models.CharField(max_length=80)
+    capacity = models.PositiveSmallIntegerField(default=6)
+    virtual_buy_in_cents = models.PositiveIntegerField(default=2000)
+    state = models.CharField(max_length=12, choices=State.choices, default=State.WAITING)
+    dealer_position = models.PositiveSmallIntegerField(null=True, blank=True)
+    game_code = models.CharField(max_length=24, blank=True)
+    ante_cents = models.PositiveIntegerField(default=25)
+    pot_cap_cents = models.PositiveIntegerField(default=5000)
+    game_selection = models.CharField(max_length=8, default="DEALER")
+    hand_number = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-updated_at", "-id")
+        indexes = [models.Index(fields=("group", "state"), name="social_card_room_group_state")]
+
+
+class CardPokerSeat(models.Model):
+    room = models.ForeignKey(CardPokerRoom, on_delete=models.CASCADE, related_name="seats")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE, related_name="card_room_seats")
+    position = models.PositiveSmallIntegerField()
+    is_computer = models.BooleanField(default=False)
+    nickname = models.CharField(max_length=32, blank=True)
+    virtual_chips_cents = models.PositiveIntegerField(default=0)
+    joined_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("position", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("room", "position"), name="social_card_unique_position"),
+            models.UniqueConstraint(fields=("room", "user"), condition=Q(user__isnull=False), name="social_card_unique_user"),
+        ]
