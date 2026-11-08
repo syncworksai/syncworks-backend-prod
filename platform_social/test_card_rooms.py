@@ -71,14 +71,41 @@ class CardPokerRoomsTests(APITestCase):
         self.assertNotEqual(rotated.data["dealer_position"], started.data["dealer_position"])
         self.assertEqual(rotated.data["hand_number"], 2)
 
-    def test_computer_is_a_single_host_controlled_seat(self):
+    def test_host_can_fill_five_virtual_player_seats_without_exceeding_capacity(self):
         room = self.create_room()
         self.client.force_authenticate(self.member)
         self.assertEqual(self.action(room, "add-computer").status_code, 403)
         self.client.force_authenticate(self.owner)
-        self.assertEqual(self.action(room, "add-computer").status_code, 200)
+        for i in range(5):
+            response = self.action(room, "add-computer")
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(len(response.data["seats"]), i + 2)
+            self.assertEqual(
+                sorted(s["name"] for s in response.data["seats"] if s["is_computer"]),
+                [f"Virtual Player {n}" for n in range(1, i + 2)],
+            )
+            self.assertEqual(
+                sum(s["virtual_chips_cents"] for s in response.data["seats"]),
+                (i + 2) * 2000,
+            )
         self.assertEqual(self.action(room, "add-computer").status_code, 409)
-        self.assertEqual(CardPokerSeat.objects.filter(room_id=room, is_computer=True).count(), 1)
+        self.assertEqual(CardPokerSeat.objects.filter(room_id=room, is_computer=True).count(), 5)
+        self.assertEqual(CardPokerSeat.objects.filter(room_id=room).count(), 6)
+        # All six positions are unique and the full virtual table can select a dealer.
+        self.assertEqual(len(set(CardPokerSeat.objects.filter(room_id=room).values_list("position", flat=True))), 6)
+        started = self.action(room, "start")
+        self.assertEqual(started.status_code, 200, started.data)
+        self.assertIn(started.data["dealer_position"], range(6))
+
+    def test_virtual_players_share_capacity_with_real_members(self):
+        room = self.create_room()
+        self.client.force_authenticate(self.member)
+        self.assertEqual(self.action(room, "join").status_code, 200)
+        self.client.force_authenticate(self.owner)
+        for i in range(4):
+            self.assertEqual(self.action(room, "add-computer").status_code, 200)
+        self.assertEqual(self.action(room, "add-computer").status_code, 409)
+        self.assertEqual(CardPokerSeat.objects.filter(room_id=room, is_computer=True).count(), 4)
 
     def test_computer_seat_does_not_fail_when_user_is_null(self):
         room = self.create_room()
