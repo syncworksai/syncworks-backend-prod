@@ -38,6 +38,7 @@ class Migration(migrations.Migration):
                 ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
                 ("position", models.PositiveSmallIntegerField()),
                 ("is_computer", models.BooleanField(default=False)),
+                ("nickname", models.CharField(blank=True, max_length=32)),
                 ("virtual_chips_cents", models.PositiveIntegerField(default=0)),
                 ("joined_at", models.DateTimeField(auto_now_add=True)),
                 ("room", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="seats", to="platform_social.cardpokerroom")),
