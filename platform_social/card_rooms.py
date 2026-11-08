@@ -59,6 +59,7 @@ def _snapshot(room, user):
         "name": room.name,
         "capacity": room.capacity,
         "virtual_buy_in_cents": room.virtual_buy_in_cents,
+        "minimum_buy_in_cents": room.virtual_buy_in_cents,
         "state": room.state,
         "created_by": room.created_by_id,
         "host": room.created_by_id == user.pk,
@@ -145,7 +146,11 @@ def card_room_action(request, room_id, verb):
                 if len(seats) >= room.capacity:
                     return Response({"detail": "Table is full."}, status=409)
                 position = next(i for i in range(room.capacity) if i not in {s.position for s in seats})
-                CardPokerSeat.objects.create(room=room, user=request.user, position=position, virtual_chips_cents=room.virtual_buy_in_cents)
+                try:
+                    own_buyin = _parse_integer(request.data, "virtual_buy_in_cents", room.virtual_buy_in_cents, MAX_VIRTUAL_CENTS, room.virtual_buy_in_cents)
+                except ValueError:
+                    return Response({"detail": "Your virtual buy-in must meet the room minimum."}, status=400)
+                CardPokerSeat.objects.create(room=room, user=request.user, position=position, virtual_chips_cents=own_buyin)
         elif verb == "leave":
             if room.state != CardPokerRoom.State.WAITING:
                 return Response({"detail": "Wait for the host to close the game."}, status=409)
