@@ -27,4 +27,11 @@ router.register("event-responses", EventMemberResponseViewSet, basename="social-
 router.register("collections", CollectionViewSet, basename="social-collections")
 router.register("collection-shares", CollectionShareViewSet, basename="social-collection-shares")
 
-urlpatterns = router.urls
+from django.urls import path
+from .card_rooms import card_rooms, card_room_detail, card_room_action
+
+urlpatterns = [
+    path("card-rooms/", card_rooms, name="social-card-rooms"),
+    path("card-rooms/<int:room_id>/", card_room_detail, name="social-card-room-detail"),
+    path("card-rooms/<int:room_id>/<str:verb>/", card_room_action, name="social-card-room-action"),
+] + router.urls
