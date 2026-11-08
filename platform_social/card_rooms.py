@@ -166,10 +166,11 @@ def card_room_action(request, room_id, verb):
         elif verb == "add-computer":
             if not host or room.state != CardPokerRoom.State.WAITING:
                 return Response({"detail": "Only the host may add a computer before starting."}, status=403)
-            if len(seats) >= room.capacity or any(s.is_computer for s in seats):
-                return Response({"detail": "Only one computer seat is supported, within the room limit."}, status=409)
+            if len(seats) >= room.capacity:
+                return Response({"detail": "This table is full. A six-seat room supports up to five virtual players alongside the host."}, status=409)
             position = next(i for i in range(room.capacity) if i not in {s.position for s in seats})
-            CardPokerSeat.objects.create(room=room, is_computer=True, position=position, virtual_chips_cents=room.virtual_buy_in_cents)
+            virtual_number = 1 + sum(1 for seat in seats if seat.is_computer)
+            CardPokerSeat.objects.create(room=room, is_computer=True, nickname=f"Virtual Player {virtual_number}", position=position, virtual_chips_cents=room.virtual_buy_in_cents)
         elif verb == "start":
             if not host:
                 return Response({"detail": "Only the room creator can start the table."}, status=403)
