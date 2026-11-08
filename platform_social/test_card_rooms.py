@@ -41,6 +41,16 @@ class CardPokerRoomsTests(APITestCase):
         self.assertEqual(self.action(room, "join").status_code, 200)  # idempotent
         self.assertEqual(CardPokerSeat.objects.filter(room_id=room).count(), 2)
 
+    def test_each_member_selects_virtual_buy_in_above_minimum(self):
+        room = self.create_room()
+        self.client.force_authenticate(self.member)
+        low = self.action(room, "join", {"virtual_buy_in_cents": 1999})
+        self.assertEqual(low.status_code, 400)
+        self.assertFalse(CardPokerSeat.objects.filter(room_id=room, user=self.member).exists())
+        joined = self.action(room, "join", {"virtual_buy_in_cents": 4000})
+        self.assertEqual(joined.status_code, 200, joined.data)
+        self.assertEqual(CardPokerSeat.objects.get(room_id=room, user=self.member).virtual_chips_cents, 4000)
+
     def test_room_creator_controls_start_and_dealer_rotation(self):
         room = self.create_room()
         self.client.force_authenticate(self.member)
