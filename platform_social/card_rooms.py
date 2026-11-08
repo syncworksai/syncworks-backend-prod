@@ -41,9 +41,11 @@ def _seat_info(seat):
     )
     return {
         "id": seat.id,
+        "nickname": seat.nickname,
+        "avatar_url": "",
         "position": seat.position,
         "user_id": seat.user_id,
-        "name": label,
+        "name": seat.nickname or label,
         "is_computer": seat.is_computer,
         "virtual_chips_cents": seat.virtual_chips_cents,
     }
@@ -124,7 +126,7 @@ def card_room_detail(request, room_id):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def card_room_action(request, room_id, verb):
-    if verb not in {"join", "leave", "add-computer", "start", "configure", "next-dealer", "close"}:
+    if verb not in {"join", "leave", "nickname", "add-computer", "start", "configure", "next-dealer", "close"}:
         return Response({"detail": "Unknown room action."}, status=404)
     with transaction.atomic():
         room = CardPokerRoom.objects.select_for_update().select_related("group", "created_by").filter(pk=room_id).first()
@@ -146,6 +148,13 @@ def card_room_action(request, room_id, verb):
             if room.state != CardPokerRoom.State.WAITING:
                 return Response({"detail": "Wait for the host to close the game."}, status=409)
             room.seats.filter(user=request.user).delete()
+        elif verb == "nickname":
+            player_seat = next((s for s in seats if s.user_id == request.user.pk), None)
+            if player_seat is None:
+                return Response({"detail": "Join the room before editing your table name."}, status=403)
+            nickname = str(request.data.get("nickname") or "").strip()[:32]
+            player_seat.nickname = nickname
+            player_seat.save(update_fields=["nickname"])
         elif verb == "add-computer":
             if not host or room.state != CardPokerRoom.State.WAITING:
                 return Response({"detail": "Only the host may add a computer before starting."}, status=403)
