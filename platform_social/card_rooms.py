@@ -110,7 +110,9 @@ def card_rooms(request):
     name = str(request.data.get("name") or "Poker Table").strip()[:80]
     if not name:
         return Response({"detail": "Room name is required."}, status=400)
-    room = CardPokerRoom.objects.create(group_id=group_id, created_by=request.user, name=name, capacity=capacity, virtual_buy_in_cents=buyin)
+    with transaction.atomic():
+        room = CardPokerRoom.objects.create(group_id=group_id, created_by=request.user, name=name, capacity=capacity, virtual_buy_in_cents=buyin)
+        CardPokerSeat.objects.create(room=room, user=request.user, position=0, virtual_chips_cents=buyin)
     return Response(_snapshot(room, request.user), status=201)
 
 
