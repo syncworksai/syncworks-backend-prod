@@ -138,7 +138,8 @@ def card_room_action(request, room_id, verb):
         host = room.created_by_id == request.user.id
         if room.state == CardPokerRoom.State.CLOSED:
             return Response({"detail": "Room closed."}, status=409)
-        # Lock seats directly. Joining nullable user with SELECT FOR UPDATE triggers\n        # PostgreSQL NotSupportedError on the outer-joined user side.\n        seats = list(room.seats.select_for_update().order_by("position"))
+        # Lock seats directly; avoid SELECT FOR UPDATE on the nullable user join.
+        seats = list(room.seats.select_for_update().order_by("position"))
         if verb == "join":
             if room.state != CardPokerRoom.State.WAITING:
                 return Response({"detail": "This room is no longer seating players."}, status=409)
