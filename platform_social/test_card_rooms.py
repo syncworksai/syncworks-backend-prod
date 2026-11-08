@@ -80,6 +80,18 @@ class CardPokerRoomsTests(APITestCase):
         self.assertEqual(self.action(room, "add-computer").status_code, 409)
         self.assertEqual(CardPokerSeat.objects.filter(room_id=room, is_computer=True).count(), 1)
 
+    def test_computer_seat_does_not_fail_when_user_is_null(self):
+        room = self.create_room()
+        self.client.force_authenticate(self.owner)
+        added = self.action(room, "add-computer")
+        self.assertEqual(added.status_code, 200, added.data)
+        self.assertTrue(any(seat["is_computer"] and seat["user_id"] is None for seat in added.data["seats"]))
+        # This action used to raise PostgreSQL NotSupportedError because a nullable
+        # user was joined while locking the seats with SELECT FOR UPDATE.
+        started = self.action(room, "start")
+        self.assertEqual(started.status_code, 200, started.data)
+        self.assertEqual(started.data["state"], "DEALER")
+
     def test_member_can_edit_only_own_nickname(self):
         room = self.create_room()
         self.client.force_authenticate(self.member)
