@@ -139,3 +139,39 @@ class CardPokerRoomsTests(APITestCase):
         self.action(room, "start")
         invalid = self.action(room, "configure", {"game_code": "bozo", "ante_cents": -1})
         self.assertEqual(invalid.status_code, 400)
+
+    def test_admissions_can_close_and_reopen_without_ending_the_room(self):
+        room=self.create_room()
+        self.assertFalse(self.action(room,"admission",{"open":False}).data["admission_open"])\n        self.client.force_authenticate(self.member)\n        self.assertEqual(self.action(room,"join").status_code,409)\n        self.assertEqual(self.action(room,"admission",{"open":True}).status_code,403)\n        self.client.force_authenticate(self.owner)\n        self.assertTrue(self.action(room,"admission",{"open":True}).data["admission_open"])\n        self.client.force_authenticate(self.member)\n        self.assertEqual(self.action(room,"join").status_code,200)
+
+    def test_late_member_may_join_and_leave_after_dealer_is_selected(self):
+        room=self.create_room()
+        self.client.force_authenticate(self.owner)
+        self.assertEqual(self.action(room,"add-computer").status_code,200)
+        self.assertEqual(self.action(room,"start").status_code,200)
+        self.client.force_authenticate(self.member)
+        joined=self.action(room,"join")
+        self.assertEqual(joined.status_code,200,joined.data)
+        self.assertTrue(joined.data["practice_mode"])
+        self.assertEqual(joined.data["stats_category"],"PRACTICE")
+        left=self.action(room,"leave")
+        self.assertEqual(left.status_code,200,left.data)
+        self.assertFalse(CardPokerSeat.objects.filter(room_id=room,user=self.member).exists())
+
+    def test_active_hand_blocks_seat_changes_and_table_close(self):
+        room=self.create_room()
+        CardPokerRoom.objects.filter(pk=room).update(hand_active=True)
+        self.client.force_authenticate(self.member)
+        self.assertEqual(self.action(room,"join").status_code,409)
+        self.client.force_authenticate(self.owner)
+        self.assertEqual(self.action(room,"leave").status_code,409)
+        self.assertEqual(self.action(room,"close").status_code,409)
+
+    def test_human_only_table_is_separate_from_any_ai_table(self):
+        room=self.create_room()
+        self.client.force_authenticate(self.member)
+        joined=self.action(room,"join")
+        self.assertEqual(joined.data["stats_category"],"HUMAN_ONLINE")
+        self.client.force_authenticate(self.owner)
+        # Existing room state is still waiting, so adding an AI marks practice.
+        self.assertEqual(self.action(room,"add-computer").data["stats_category"],"PRACTICE")
