@@ -428,6 +428,8 @@ class CardPokerRoom(models.Model):
     ante_cents = models.PositiveIntegerField(default=25)
     pot_cap_cents = models.PositiveIntegerField(default=5000)
     game_selection = models.CharField(max_length=8, default="DEALER")
+    admission_open = models.BooleanField(default=True, help_text="Whether approved club members can join between hands.")
+    hand_active = models.BooleanField(default=False, help_text="Reserved for the authoritative multiplayer hand engine; seat changes are blocked while active.")
     hand_number = models.PositiveIntegerField(default=0)
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
