@@ -61,6 +61,10 @@ def _snapshot(room, user):
         "virtual_buy_in_cents": room.virtual_buy_in_cents,
         "minimum_buy_in_cents": room.virtual_buy_in_cents,
         "state": room.state,
+        "admission_open": room.admission_open,
+        "hand_active": room.hand_active,
+        "practice_mode": seats and any(seat.is_computer for seat in seats) or False,
+        "stats_category": "PRACTICE" if any(seat.is_computer for seat in seats) else "HUMAN_ONLINE",
         "created_by": room.created_by_id,
         "host": room.created_by_id == user.pk,
         "dealer_position": room.dealer_position,
@@ -129,7 +133,7 @@ def card_room_detail(request, room_id):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def card_room_action(request, room_id, verb):
-    if verb not in {"join", "leave", "nickname", "add-computer", "start", "configure", "next-dealer", "close"}:
+    if verb not in {"join", "leave", "nickname", "add-computer", "start", "configure", "next-dealer", "admission", "close"}:
         return Response({"detail": "Unknown room action."}, status=404)
     with transaction.atomic():
         room = CardPokerRoom.objects.select_for_update().select_related("group", "created_by").filter(pk=room_id).first()
@@ -141,8 +145,10 @@ def card_room_action(request, room_id, verb):
         # Lock seats directly; avoid SELECT FOR UPDATE on the nullable user join.
         seats = list(room.seats.select_for_update().order_by("position"))
         if verb == "join":
-            if room.state != CardPokerRoom.State.WAITING:
-                return Response({"detail": "This room is no longer seating players."}, status=409)
+            if not room.admission_open:
+                return Response({"detail": "This table is closed to new players."}, status=409)
+            if room.hand_active:
+                return Response({"detail": "A hand is active. Join between hands."}, status=409)
             if not any(s.user_id == request.user.id for s in seats):
                 if len(seats) >= room.capacity:
                     return Response({"detail": "Table is full."}, status=409)
@@ -153,9 +159,17 @@ def card_room_action(request, room_id, verb):
                     return Response({"detail": "Your virtual buy-in must meet the room minimum."}, status=400)
                 CardPokerSeat.objects.create(room=room, user=request.user, position=position, virtual_chips_cents=own_buyin)
         elif verb == "leave":
-            if room.state != CardPokerRoom.State.WAITING:
-                return Response({"detail": "Wait for the host to close the game."}, status=409)
+            if room.hand_active:
+                return Response({"detail": "Finish or fold the active hand before leaving the table."}, status=409)
             room.seats.filter(user=request.user).delete()
+        elif verb == "admission":
+            if not host and not _manager(request.user, room.group_id):
+                return Response({"detail": "Only the host or a club manager can change admissions."}, status=403)
+            setting = request.data.get("open")
+            if not isinstance(setting, bool):
+                return Response({"detail": "Provide open as true or false."}, status=400)
+            room.admission_open = setting
+            room.save(update_fields=["admission_open", "updated_at"])
         elif verb == "nickname":
             player_seat = next((s for s in seats if s.user_id == request.user.pk), None)
             if player_seat is None:
@@ -213,7 +227,10 @@ def card_room_action(request, room_id, verb):
         elif verb == "close":
             if not host:
                 return Response({"detail": "Only the room creator can close the room."}, status=403)
+            if room.hand_active:
+                return Response({"detail": "Finish the active hand before ending this table."}, status=409)
             room.state = CardPokerRoom.State.CLOSED
-            room.save(update_fields=["state", "updated_at"])
+            room.admission_open = False
+            room.save(update_fields=["state", "admission_open", "updated_at"])
         room.refresh_from_db()
         return Response(_snapshot(room, request.user))
