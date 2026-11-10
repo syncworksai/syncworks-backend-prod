@@ -114,7 +114,7 @@ def _public(room, user):
         "players": [
             {"position": seat.position, "name": seat.nickname or (seat.user.get_full_name() or seat.user.email),
              "chips_cents": seat.virtual_chips_cents,
-             "decision": game.get("actions", {}).get(str(seat.position)),
+             "decision": ("ready" if game.get("actions", {}).get(str(seat.position)) else None) if phase == "choosing" and seat.position != (own.position if own else None) else game.get("actions", {}).get(str(seat.position)),
              "strikes": game.get("strikes", {}).get(str(seat.position), 0),
              "eligible": str(seat.position) in game.get("eligible", [])}
             for seat in seats
