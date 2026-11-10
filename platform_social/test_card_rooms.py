@@ -17,10 +17,10 @@ class CardPokerRoomsTests(APITestCase):
         GroupMembership.objects.create(group=self.group, user=self.member, role="MEMBER", status="ACTIVE")
         self.list_url = reverse("social-card-rooms")
 
-    def create_room(self):
+    def create_room(self, capacity=4):
         self.client.force_authenticate(self.owner)
         response = self.client.post(self.list_url, {
-            "group": self.group.id, "name": "Poker Night", "capacity": 4,
+            "group": self.group.id, "name": "Poker Night", "capacity": capacity,
             "virtual_buy_in_cents": 2000,
         })
         self.assertEqual(response.status_code, 201, response.data)
@@ -29,7 +29,7 @@ class CardPokerRoomsTests(APITestCase):
         return response.data["id"]
 
     def action(self, room, verb, payload=None):
-        return self.client.post(reverse("social-card-room-action", kwargs={"room_id": room, "verb": verb}), payload or {})
+        return self.client.post(reverse("social-card-room-action", kwargs={"room_id": room, "verb": verb}), payload or {}, format="json")
 
     def test_group_members_join_their_own_seats_and_outsiders_are_blocked(self):
         room = self.create_room()
@@ -72,7 +72,7 @@ class CardPokerRoomsTests(APITestCase):
         self.assertEqual(rotated.data["hand_number"], 2)
 
     def test_host_can_fill_five_virtual_player_seats_without_exceeding_capacity(self):
-        room = self.create_room()
+        room = self.create_room(capacity=6)
         self.client.force_authenticate(self.member)
         self.assertEqual(self.action(room, "add-computer").status_code, 403)
         self.client.force_authenticate(self.owner)
@@ -98,7 +98,7 @@ class CardPokerRoomsTests(APITestCase):
         self.assertIn(started.data["dealer_position"], range(6))
 
     def test_virtual_players_share_capacity_with_real_members(self):
-        room = self.create_room()
+        room = self.create_room(capacity=6)
         self.client.force_authenticate(self.member)
         self.assertEqual(self.action(room, "join").status_code, 200)
         self.client.force_authenticate(self.owner)
@@ -142,7 +142,14 @@ class CardPokerRoomsTests(APITestCase):
 
     def test_admissions_can_close_and_reopen_without_ending_the_room(self):
         room=self.create_room()
-        self.assertFalse(self.action(room,"admission",{"open":False}).data["admission_open"])\n        self.client.force_authenticate(self.member)\n        self.assertEqual(self.action(room,"join").status_code,409)\n        self.assertEqual(self.action(room,"admission",{"open":True}).status_code,403)\n        self.client.force_authenticate(self.owner)\n        self.assertTrue(self.action(room,"admission",{"open":True}).data["admission_open"])\n        self.client.force_authenticate(self.member)\n        self.assertEqual(self.action(room,"join").status_code,200)
+        self.assertFalse(self.action(room,"admission",{"open":False}).data["admission_open"])
+        self.client.force_authenticate(self.member)
+        self.assertEqual(self.action(room,"join").status_code,409)
+        self.assertEqual(self.action(room,"admission",{"open":True}).status_code,403)
+        self.client.force_authenticate(self.owner)
+        self.assertTrue(self.action(room,"admission",{"open":True}).data["admission_open"])
+        self.client.force_authenticate(self.member)
+        self.assertEqual(self.action(room,"join").status_code,200)
 
     def test_late_member_may_join_and_leave_after_dealer_is_selected(self):
         room=self.create_room()

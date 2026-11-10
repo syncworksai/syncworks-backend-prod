@@ -110,6 +110,8 @@ def card_rooms(request):
         buyin = _parse_integer(request.data, "virtual_buy_in_cents", 0, MAX_VIRTUAL_CENTS, 2000)
     except ValueError as exc:
         return Response({"detail": f"Invalid field: {exc}"}, status=400)
+    if buyin % 25:
+        return Response({"detail": "Virtual buy-ins must be in 25-cent increments."}, status=400)
     if not _member(request.user, group_id):
         return Response({"detail": "Join this group before creating a room."}, status=403)
     name = str(request.data.get("name") or "Poker Table").strip()[:80]
@@ -157,6 +159,8 @@ def card_room_action(request, room_id, verb):
                     own_buyin = _parse_integer(request.data, "virtual_buy_in_cents", room.virtual_buy_in_cents, MAX_VIRTUAL_CENTS, room.virtual_buy_in_cents)
                 except ValueError:
                     return Response({"detail": "Your virtual buy-in must meet the room minimum."}, status=400)
+                if own_buyin % 25:
+                    return Response({"detail": "Virtual buy-ins must be in 25-cent increments."}, status=400)
                 CardPokerSeat.objects.create(room=room, user=request.user, position=position, virtual_chips_cents=own_buyin)
         elif verb == "leave":
             if room.hand_active:
@@ -211,11 +215,13 @@ def card_room_action(request, room_id, verb):
                 cap = _parse_integer(request.data, "pot_cap_cents", 1, MAX_VIRTUAL_CENTS, 5000) if game != "fyb" else 0
             except ValueError as exc:
                 return Response({"detail": f"Invalid field: {exc}"}, status=400)
+            if ante % 25 or (game != "fyb" and cap % 25):
+                return Response({"detail": "Ante and pot cap must use 25-cent virtual chips."}, status=400)
             room.game_code, room.game_selection, room.ante_cents, room.pot_cap_cents = game, choice, ante, cap
             room.state = CardPokerRoom.State.READY
             room.save(update_fields=["game_code", "game_selection", "ante_cents", "pot_cap_cents", "state", "updated_at"])
         elif verb == "next-dealer":
-            if not host or room.state not in (CardPokerRoom.State.DEALER, CardPokerRoom.State.READY):
+            if not host or room.hand_active or room.state not in (CardPokerRoom.State.DEALER, CardPokerRoom.State.READY):
                 return Response({"detail": "Only the room creator can advance dealer."}, status=403)
             positions = [s.position for s in seats]
             next_pos = next((p for p in positions if p > room.dealer_position), positions[0])

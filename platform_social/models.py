@@ -431,6 +431,7 @@ class CardPokerRoom(models.Model):
     admission_open = models.BooleanField(default=True, help_text="Whether approved club members can join between hands.")
     hand_active = models.BooleanField(default=False, help_text="Reserved for the authoritative multiplayer hand engine; seat changes are blocked while active.")
     hand_number = models.PositiveIntegerField(default=0)
+    game_state = models.JSONField(default=dict, blank=True, help_text="Server-private authoritative game state; never serialized to clients.")
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -445,7 +446,7 @@ class CardPokerSeat(models.Model):
     position = models.PositiveSmallIntegerField()
     is_computer = models.BooleanField(default=False)
     nickname = models.CharField(max_length=32, blank=True)
-    virtual_chips_cents = models.PositiveIntegerField(default=0)
+    virtual_chips_cents = models.IntegerField(default=0)  # virtual settlement debts may be negative
     joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
