@@ -135,7 +135,8 @@ def _save(room, game, *, end=False):
     room.hand_active = not end
     if end:
         room.state = CardPokerRoom.State.DEALER
-        room.dealer_position = (room.dealer_position + 1) % room.capacity
+        occupied = list(room.seats.order_by("position").values_list("position", flat=True))
+        room.dealer_position = next((p for p in occupied if p > (room.dealer_position or 0)), occupied[0] if occupied else None)
     room.save(update_fields=["game_state", "hand_active", "state", "dealer_position", "updated_at"])
 
 
