@@ -75,7 +75,7 @@ def _score(cards, street):
         wild_count = len(subset) - len(regular)
         naturals = [c["rank"] for c in regular]
         if count == 3:
-            for replacements in itertools.product(range(2, 15), repeat=wild_count):
+            for replacements in itertools.combinations_with_replacement(range(2, 15), wild_count):
                 ranks = naturals + list(replacements)
                 groups = sorted(Counter(ranks).items(), key=lambda x: (x[1], x[0]), reverse=True)
                 ordered = tuple([groups[0][1], groups[0][0]] + sorted(ranks, reverse=True))
@@ -84,7 +84,7 @@ def _score(cards, street):
                     best = (ordered, label)
         else:
             flush_possible = len({c["suit"] for c in regular}) <= 1
-            for replacements in itertools.product(range(2, 15), repeat=wild_count):
+            for replacements in itertools.combinations_with_replacement(range(2, 15), wild_count):
                 rank, label = _five_natural(naturals + list(replacements), flush_possible)
                 if best is None or rank > best[0]:
                     best = (rank, label)
