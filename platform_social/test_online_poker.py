@@ -1,4 +1,5 @@
 from unittest.mock import patch
+import time
 
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -96,11 +97,12 @@ class OnlinePokerTests(APITestCase):
         self.start()
         self.game(self.owner, "drop")
         self.game(self.friend, "hold")
-        with patch("platform_social.online_poker.time.time", return_value=123456.0):
+        now = time.time()
+        with patch("platform_social.online_poker.time.time", return_value=now):
             continued = self.game(self.friend, "continue")
         self.assertEqual(continued.data["phase"], "continue")
-        self.assertEqual(continued.data["continue_deadline"], 123466.0)
-        with patch("platform_social.online_poker.time.time", return_value=123467.0):
+        self.assertAlmostEqual(continued.data["continue_deadline"], now + 10)
+        with patch("platform_social.online_poker.time.time", return_value=now + 11):
             guest = self.game(self.friend).data
         self.assertEqual(guest["street"], 1)
         self.assertEqual(guest["phase"], "choosing")
