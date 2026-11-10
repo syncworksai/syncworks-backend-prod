@@ -246,7 +246,8 @@ def online_poker_game(request, room_id):
         room = CardPokerRoom.objects.select_for_update().select_related("group").filter(pk=room_id).first()
         if room is None or not room.group.is_active or not _member(request.user, room.group_id):
             return Response({"detail": "Room unavailable."}, status=404)
-        seats = list(room.seats.select_for_update().select_related("user").order_by("position"))
+        # Do not lock a nullable user LEFT JOIN (Postgres forbids FOR UPDATE on it).
+        seats = list(room.seats.select_for_update().order_by("position"))
         own = next((s for s in seats if s.user_id == request.user.id), None)
         if own is None:
             return Response({"detail": "Join a seat before playing."}, status=403)
