@@ -29,9 +29,11 @@ router.register("collection-shares", CollectionShareViewSet, basename="social-co
 
 from django.urls import path
 from .card_rooms import card_rooms, card_room_detail, card_room_action
+from .online_poker import online_poker_game
 
 urlpatterns = [
     path("card-rooms/", card_rooms, name="social-card-rooms"),
     path("card-rooms/<int:room_id>/", card_room_detail, name="social-card-room-detail"),
+    path("card-rooms/<int:room_id>/game/", online_poker_game, name="social-card-room-game"),
     path("card-rooms/<int:room_id>/<str:verb>/", card_room_action, name="social-card-room-action"),
 ] + router.urls
