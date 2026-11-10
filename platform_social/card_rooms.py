@@ -215,7 +215,7 @@ def card_room_action(request, room_id, verb):
             room.state = CardPokerRoom.State.READY
             room.save(update_fields=["game_code", "game_selection", "ante_cents", "pot_cap_cents", "state", "updated_at"])
         elif verb == "next-dealer":
-            if not host or room.state not in (CardPokerRoom.State.DEALER, CardPokerRoom.State.READY):
+            if not host or room.hand_active or room.state not in (CardPokerRoom.State.DEALER, CardPokerRoom.State.READY):
                 return Response({"detail": "Only the room creator can advance dealer."}, status=403)
             positions = [s.position for s in seats]
             next_pos = next((p for p in positions if p > room.dealer_position), positions[0])
