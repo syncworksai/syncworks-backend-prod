@@ -69,6 +69,19 @@ class OnlinePokerTests(APITestCase):
         self.assertEqual(host["pot_cents"], 50)
         self.assertEqual(self.game(self.outsider).status_code, 404)
 
+    def test_live_decisions_are_private_until_both_players_commit(self):
+        self.start()
+        owner = self.game(self.owner, "hold").data
+        guest = self.game(self.friend).data
+        self.assertEqual(owner["players"][0]["decision"], "hold")
+        self.assertEqual(guest["players"][0]["decision"], "ready")
+        self.assertEqual(guest["players"][1]["decision"], None)
+        self.assertEqual(guest["revealed_holders"], {})
+        self.game(self.friend, "drop")
+        result = self.game(self.friend).data
+        self.assertEqual(result["players"][0]["decision"], "hold")
+        self.assertEqual(result["players"][1]["decision"], "drop")
+
     def test_reveal_only_to_holders_after_server_settlement(self):
         host = self.start()
         self.assertEqual(self.game(self.owner, "hold").status_code, 200)
