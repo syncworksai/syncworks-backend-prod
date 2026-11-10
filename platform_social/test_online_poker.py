@@ -133,6 +133,14 @@ class OnlinePokerTests(APITestCase):
         self.client.force_authenticate(self.owner)
         self.assertTrue(CardPokerRoom.objects.get(pk=self.room).hand_active)
 
+    def test_active_hand_cannot_rotate_dealer(self):
+        self.start()
+        self.client.force_authenticate(self.owner)
+        url = reverse("social-card-room-action", kwargs={"room_id": self.room, "verb": "next-dealer"})
+        response = self.client.post(url, {})
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(CardPokerRoom.objects.get(pk=self.room).hand_active)
+
     def test_3_card_wild_hand_rank_and_5_card_rank(self):
         self.assertEqual(_score([c(3), c(14), c(14)], 0)[1], "Three of a kind")
         self.assertEqual(_score([c(5), c(10), c(10, "H"), c(10, "D"), c(2)], 1)[1], "Four of a kind")
