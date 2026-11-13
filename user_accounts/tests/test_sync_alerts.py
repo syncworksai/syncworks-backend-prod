@@ -32,8 +32,9 @@ class SyncAlertEngineTests(APITestCase):
         )
 
     @patch("user_accounts.services.sync_alerts._email_alert", return_value=True)
+    @patch("user_accounts.services.sync_alerts._quiet_hours_active", return_value=False)
     @patch("user_accounts.services.sync_alerts.collect_personal_alert_candidates")
-    def test_high_priority_alert_is_deduped_and_emailed_once(self, collect, email):
+    def test_high_priority_alert_is_deduped_and_emailed_once(self, collect, quiet, email):
         collect.return_value = [self.candidate()]
         first = sync_alerts_for_user(self.user)
         second = sync_alerts_for_user(self.user)
