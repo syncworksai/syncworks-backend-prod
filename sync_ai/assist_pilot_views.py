@@ -58,7 +58,7 @@ def _snapshot(user):
         "pilot": True,
         "execution_enabled": False,
         "background_worker_enabled": False,
-        "last_discovery_scan": {"at": last_scan.created_at.isoformat(), "found": last_scan.metadata.get("found", 0), "created": last_scan.metadata.get("created", 0)} if last_scan else None,
+        "last_discovery_scan": {"at": last_scan.created_at.isoformat(), "found": last_scan.metadata.get("found", 0), "created": last_scan.metadata.get("created", 0), "checked": last_scan.metadata.get("checked", {})} if last_scan else None,
         "customer_messaging_enabled": False,
         "tasks": ordered,
         "counts": {

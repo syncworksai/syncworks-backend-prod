@@ -36,3 +36,30 @@ class SyncAssistDiscoveryTests(TestCase):
         self.assertEqual(AuditLog.objects.filter(actor=self.owner, action="sync_assist.pilot.task_approved").count(), 0)
         ticket.refresh_from_db()
         self.assertEqual(ticket.status, Ticket.Status.AWAITING_APPROVAL)
+
+    def test_pm_work_order_and_overdue_rent_charge_are_owner_scoped(self):
+        from datetime import timedelta
+        from decimal import Decimal
+        from user_accounts.models import PMProperty, PMUnit, PMTenant, PMRentCharge, PMWorkOrder
+        prop = PMProperty.objects.create(business=self.business, name="Test rental")
+        unit = PMUnit.objects.create(business=self.business, property=prop, label="1")
+        tenant = PMTenant.objects.create(business=self.business, property=prop, unit=unit, first_name="Test")
+        PMWorkOrder.objects.create(
+            business=self.business, property=prop,
+            title="Smoke detector repair", priority=PMWorkOrder.Priority.URGENT,
+            status=PMWorkOrder.Status.OPEN,
+        )
+        PMRentCharge.objects.create(
+            business_id=self.business.id, property=prop, unit=unit, tenant=tenant,
+            due_date=timezone.localdate() - timedelta(days=3),
+            charge_type=PMRentCharge.ChargeType.RENT,
+            amount=Decimal("100.00"), balance=Decimal("75.00"),
+            status=PMRentCharge.Status.PARTIAL,
+        )
+        result = discover_pilot_tasks()
+        self.assertEqual(result["checked"]["pm_work_orders"], 1)
+        self.assertEqual(result["checked"]["pm_rent_charges"], 1)
+        self.assertEqual(result["created"], 2)
+        self.assertEqual(discover_pilot_tasks()["created"], 0)
+        self.assertEqual(PMWorkOrder.objects.filter(business=self.business, status=PMWorkOrder.Status.OPEN).count(), 1)
+        self.assertEqual(PMRentCharge.objects.filter(business_id=self.business.id, status=PMRentCharge.Status.PARTIAL).count(), 1)
