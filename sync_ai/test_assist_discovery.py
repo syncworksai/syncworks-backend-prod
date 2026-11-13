@@ -42,8 +42,8 @@ class SyncAssistDiscoveryTests(TestCase):
         from decimal import Decimal
         from user_accounts.models import PMProperty, PMUnit, PMTenant, PMRentCharge, PMWorkOrder
         prop = PMProperty.objects.create(business=self.business, name="Test rental")
-        unit = PMUnit.objects.create(business=self.business, property=prop, unit_number="1")
-        tenant = PMTenant.objects.create(business=self.business, property=prop, unit=unit)
+        unit = PMUnit.objects.create(business=self.business, property=prop, label="1")
+        tenant = PMTenant.objects.create(business=self.business, property=prop, unit=unit, first_name="Test")
         PMWorkOrder.objects.create(
             business=self.business, property=prop,
             title="Smoke detector repair", priority=PMWorkOrder.Priority.URGENT,
