@@ -54,11 +54,22 @@ def _snapshot(user):
             tasks[key]["decided_at"] = item.created_at.isoformat()
     ordered = list(reversed(list(tasks.values())))[:MAX_ITEMS]
     last_scan = AuditLog.objects.filter(actor=user, action="sync_assist.pilot.discovery_scan").order_by("-id").first()
+    # A scheduled worker is proven by recorded scheduled runs, not by UI readiness.
+    recent_scheduled = list(AuditLog.objects.filter(
+        actor=user,
+        action="sync_assist.pilot.discovery_scan",
+        created_at__gte=timezone.now() - timedelta(hours=2),
+        metadata__run_source="scheduled",
+    ).order_by("-id")[:2])
+    scheduler_observed = len(recent_scheduled) >= 2
+
     return {
         "pilot": True,
         "execution_enabled": False,
-        "background_worker_enabled": False,
-        "last_discovery_scan": {"at": last_scan.created_at.isoformat(), "found": last_scan.metadata.get("found", 0), "created": last_scan.metadata.get("created", 0), "checked": last_scan.metadata.get("checked", {})} if last_scan else None,
+        "background_worker_enabled": scheduler_observed,
+        "scheduler_status": "observed_recently" if scheduler_observed else "not_verified",
+        "last_scheduled_run": recent_scheduled[0].created_at.isoformat() if recent_scheduled else None,
+        "last_discovery_scan": {"at": last_scan.created_at.isoformat(), "found": last_scan.metadata.get("found", 0), "created": last_scan.metadata.get("created", 0), "checked": last_scan.metadata.get("checked", {}), "run_source": last_scan.metadata.get("run_source", "manual")} if last_scan else None,
         "customer_messaging_enabled": False,
         "tasks": ordered,
         "counts": {

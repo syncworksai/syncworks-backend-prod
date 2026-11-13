@@ -105,7 +105,9 @@ def _candidates(user):
     return rows, counts
 
 
-def discover_pilot_tasks(*, dry_run=False):
+def discover_pilot_tasks(*, dry_run=False, run_source="manual"):
+    if run_source not in {"manual", "scheduled"}:
+        raise ValueError("Unsupported scan source")
     user = get_user_model().objects.filter(email__iexact=PILOT_EMAIL, is_active=True).first()
     if not user:
         return {"pilot_found": False, "created": 0, "reason": "Pilot account absent"}
@@ -132,5 +134,6 @@ def discover_pilot_tasks(*, dry_run=False):
             created += 1
         AuditLog.objects.create(actor=user, action=SCAN, metadata={
             "found": len(candidates), "checked": counts, "created": created, "read_only": True, "external_actions": 0,
+            "run_source": run_source,
         })
-    return {"pilot_found": True, "candidates": len(candidates), "checked": counts, "created": created, "read_only": True}
+    return {"pilot_found": True, "candidates": len(candidates), "checked": counts, "created": created, "read_only": True, "run_source": run_source}

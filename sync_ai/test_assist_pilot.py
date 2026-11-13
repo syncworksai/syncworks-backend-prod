@@ -63,3 +63,22 @@ class SyncAssistPilotTests(APITestCase):
         self.assertEqual(result.data["counts"]["pending"], 1)
         self.assertEqual(self.client.post(BASE + "scan/").status_code, 429)
         self.assertFalse(result.data["background_worker_enabled"])
+
+    def test_scheduled_scans_require_explicit_opt_in_and_have_distinct_status(self):
+        from io import StringIO
+        from unittest.mock import patch
+        from django.core.management import call_command, CommandError
+        self.client.force_authenticate(self.owner)
+        self.assertEqual(self.client.get(BASE).data["scheduler_status"], "not_verified")
+        with patch.dict("os.environ", {"SYNC_ASSIST_SCHEDULED_SCAN_ENABLED": "false"}):
+            with self.assertRaises(CommandError):
+                call_command("sync_assist_discover", "--scheduled", stdout=StringIO())
+        self.assertEqual(self.client.get(BASE).data["scheduler_status"], "not_verified")
+        with patch.dict("os.environ", {"SYNC_ASSIST_SCHEDULED_SCAN_ENABLED": "true"}):
+            call_command("sync_assist_discover", "--scheduled", stdout=StringIO())
+            call_command("sync_assist_discover", "--scheduled", stdout=StringIO())
+        data = self.client.get(BASE).data
+        self.assertEqual(data["scheduler_status"], "observed_recently")
+        self.assertTrue(data["background_worker_enabled"])
+        self.assertEqual(data["last_discovery_scan"]["run_source"], "scheduled")
+        self.assertFalse(data["execution_enabled"])
