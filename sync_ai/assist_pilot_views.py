@@ -51,10 +51,12 @@ def _snapshot(user):
             tasks[key]["status"] = "APPROVED" if item.action == APPROVED else "REJECTED"
             tasks[key]["decided_at"] = item.created_at.isoformat()
     ordered = list(reversed(list(tasks.values())))[:MAX_ITEMS]
+    last_scan = AuditLog.objects.filter(actor=user, action="sync_assist.pilot.discovery_scan").order_by("-id").first()
     return {
         "pilot": True,
         "execution_enabled": False,
         "background_worker_enabled": False,
+        "last_discovery_scan": {"at": last_scan.created_at.isoformat(), "found": last_scan.metadata.get("found", 0), "created": last_scan.metadata.get("created", 0)} if last_scan else None,
         "customer_messaging_enabled": False,
         "tasks": ordered,
         "counts": {
