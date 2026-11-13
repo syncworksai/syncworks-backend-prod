@@ -11,7 +11,6 @@ from uuid import UUID, uuid4
 from django.db import transaction
 from datetime import timedelta
 from django.utils import timezone
-from .assist_discovery import discover_pilot_tasks
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -142,6 +141,7 @@ class SyncAssistPilotScanView(APIView):
         since = timezone.now() - timedelta(minutes=5)
         if AuditLog.objects.filter(actor=request.user, action="sync_assist.pilot.discovery_scan", created_at__gte=since).exists():
             return Response({"detail": "Last scan was within five minutes. Try again later."}, status=429)
+        from .assist_discovery import discover_pilot_tasks
         result = discover_pilot_tasks()
         payload = _snapshot(request.user)
         payload["scan_result"] = result
