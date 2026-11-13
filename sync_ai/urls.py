@@ -1,5 +1,5 @@
 from django.urls import path
-from .assist_pilot_views import SyncAssistPilotControlView, SyncAssistPilotDecisionView
+from .assist_pilot_views import SyncAssistPilotControlView, SyncAssistPilotDecisionView, SyncAssistPilotScanView
 
 from user_accounts.viewsets.invoice_experience import (
     BusinessInvoiceActionView,
@@ -30,6 +30,7 @@ from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
     path("assist/pilot/", SyncAssistPilotControlView.as_view(), name="sync-assist-pilot-control"),
+    path("assist/pilot/scan/", SyncAssistPilotScanView.as_view(), name="sync-assist-pilot-scan"),
     path("assist/pilot/tasks/<str:task_id>/decision/", SyncAssistPilotDecisionView.as_view(), name="sync-assist-pilot-decision"),
     path("status/", SyncAIStatusView.as_view(), name="sync-ai-status"),
     path("health/live/", LivenessView.as_view(), name="sync-health-live"),
