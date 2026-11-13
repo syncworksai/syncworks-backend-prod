@@ -49,3 +49,17 @@ class SyncAssistPilotTests(APITestCase):
         self.client.force_authenticate(self.owner)
         self.assertEqual(self.client.post(BASE, {"title": " ", "kind": "GENERAL"}).status_code, 400)
         self.assertEqual(self.client.post(BASE, {"title": "Valid", "kind": "PAYMENT"}).status_code, 400)
+
+    def test_manual_scan_is_pilot_only_and_rate_limited(self):
+        from user_accounts.models import Business, ServiceRequest
+        self.client.force_authenticate(self.other)
+        self.assertEqual(self.client.post(BASE + "scan/").status_code, 403)
+        self.client.force_authenticate(self.owner)
+        business = Business.objects.create(name="Pilot Scan", owner=self.owner)
+        ServiceRequest.objects.create(customer=self.other, target_business=business, title="New job")
+        result = self.client.post(BASE + "scan/")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.data["scan_result"]["created"], 1)
+        self.assertEqual(result.data["counts"]["pending"], 1)
+        self.assertEqual(self.client.post(BASE + "scan/").status_code, 429)
+        self.assertFalse(result.data["background_worker_enabled"])
