@@ -9,6 +9,8 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 from django.db import transaction
+from datetime import timedelta
+from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -128,3 +130,19 @@ class SyncAssistPilotDecisionView(APIView):
                 metadata={"task_id": key, "execution": "NOT_ENABLED"},
             )
         return Response(_snapshot(request.user))
+
+class SyncAssistPilotScanView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not _pilot(request.user):
+            return Response({"detail": "Private pilot only."}, status=403)
+        # Avoid excessive manual scans and prevent duplicate task floods.
+        since = timezone.now() - timedelta(minutes=5)
+        if AuditLog.objects.filter(actor=request.user, action="sync_assist.pilot.discovery_scan", created_at__gte=since).exists():
+            return Response({"detail": "Last scan was within five minutes. Try again later."}, status=429)
+        from .assist_discovery import discover_pilot_tasks
+        result = discover_pilot_tasks()
+        payload = _snapshot(request.user)
+        payload["scan_result"] = result
+        return Response(payload)
