@@ -12,6 +12,7 @@ from platform_affiliates.services.cash_fee_commission_service import (
 from user_accounts.models import Business, BusinessMember, CashFeeInvoice
 from user_accounts.serializers.cash_fee_invoice import CashFeeInvoiceSerializer
 from user_accounts.services.cash_fee_billing import generate_monthly_cash_fee_invoices
+from user_accounts.services.cash_fee_unlock import unlock_settled_cash_fees
 from user_accounts.services.cash_fee_collection import (
     charge_cash_fee_invoice,
     collect_open_cash_fee_invoices,
@@ -156,6 +157,7 @@ class CashFeeInvoiceViewSet(viewsets.ModelViewSet):
         inv.save(update_fields=["status", "paid_at", "updated_at"])
 
         record_cash_fee_invoice_commission(inv)
+        unlock_settled_cash_fees()
 
         return Response(
             self.get_serializer(inv).data,
@@ -173,6 +175,7 @@ class CashFeeInvoiceViewSet(viewsets.ModelViewSet):
         inv: CashFeeInvoice = self.get_object()
         inv.status = CashFeeInvoice.Status.VOID
         inv.save(update_fields=["status", "updated_at"])
+        unlock_settled_cash_fees()
 
         return Response(
             self.get_serializer(inv).data,
@@ -217,6 +220,9 @@ class CashFeeInvoiceViewSet(viewsets.ModelViewSet):
             due_days = int(due_days)
         except Exception:
             due_days = 7
+
+        if fee_bps != 100:
+            return Response({"detail": "Beta platform fee is fixed at 1%."}, status=400)
 
         res = generate_monthly_cash_fee_invoices(
             fee_bps=fee_bps,
