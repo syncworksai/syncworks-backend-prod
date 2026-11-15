@@ -1,5 +1,6 @@
 from django.urls import path
 from .assist_pilot_views import SyncAssistPilotControlView, SyncAssistPilotDecisionView, SyncAssistPilotScanView
+from .assist_communications_views import SyncAssistCommunicationsView, SyncAssistWhatsAppInboundView
 
 from user_accounts.viewsets.invoice_experience import (
     BusinessInvoiceActionView,
@@ -29,6 +30,8 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path("assist/pilot/communications/", SyncAssistCommunicationsView.as_view(), name="sync-assist-communications"),
+    path("assist/pilot/whatsapp/inbound/", SyncAssistWhatsAppInboundView.as_view(), name="sync-assist-whatsapp-inbound"),
     path("assist/pilot/", SyncAssistPilotControlView.as_view(), name="sync-assist-pilot-control"),
     path("assist/pilot/scan/", SyncAssistPilotScanView.as_view(), name="sync-assist-pilot-scan"),
     path("assist/pilot/tasks/<str:task_id>/decision/", SyncAssistPilotDecisionView.as_view(), name="sync-assist-pilot-decision"),
