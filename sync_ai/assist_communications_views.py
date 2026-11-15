@@ -8,7 +8,6 @@ import base64
 import hashlib
 import hmac
 import os
-from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -91,9 +90,9 @@ class SyncAssistWhatsAppInboundView(APIView):
             return Response({"detail": "Channel inactive"}, status=503)
         if request.content_type != "application/x-www-form-urlencoded":
             return Response({"detail": "Unsupported content type"}, status=415)
-        raw_form = request.POST
-        if len(request.body) > 16_384:
+        if len(request._request.body) > 16_384:
             return Response({"detail": "Payload too large"}, status=413)
+        raw_form = request._request.POST
         if not _signature_valid(
             request.build_absolute_uri(), raw_form,
             request.headers.get("X-Twilio-Signature", ""),
