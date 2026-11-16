@@ -5,6 +5,7 @@ from .assist_internal_connections import SyncAssistInternalConnectionsView
 from .assist_growth_prospects import SyncAssistGrowthProspectsView, SyncAssistGrowthProspectStageView
 from .assist_growth_operations_views import SyncAssistGrowthCampaignView, SyncAssistOperationsBriefView
 from .assist_daily_views import SyncAssistDailyView, SyncAssistDailyItemView
+from .assist_chief_views import JarvisCasesView, JarvisCaseDecisionView, JarvisChiefBriefingView
 from .assist_outlook_views import OutlookStatus, OutlookConnect, OutlookCallback, OutlookInbox, OutlookDraft, OutlookSend, OutlookDisconnect
 from .assist_email_intelligence import JarvisWritingPreferencesView, JarvisOutlookSuggestView, JarvisOutlookBriefView
 
@@ -36,6 +37,9 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path("assist/pilot/chief/brief/", JarvisChiefBriefingView.as_view(), name="assist-chief-brief"),
+    path("assist/pilot/chief/cases/", JarvisCasesView.as_view(), name="assist-chief-cases"),
+    path("assist/pilot/chief/cases/<str:case_id>/decision/", JarvisCaseDecisionView.as_view(), name="assist-chief-case-decision"),
     path("assist/pilot/chief-of-staff/preferences/", JarvisWritingPreferencesView.as_view(), name="assist-chief-preferences"),
     path("assist/pilot/outlook/suggest/", JarvisOutlookSuggestView.as_view(), name="assist-outlook-suggest"),
     path("assist/pilot/outlook/brief/", JarvisOutlookBriefView.as_view(), name="assist-outlook-brief"),
