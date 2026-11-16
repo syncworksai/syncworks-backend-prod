@@ -92,7 +92,9 @@ def _snapshot(user):
     return {
         "goals": ordered,
         "counts": {state.lower(): sum(g["status"] == state for g in ordered) for state in STATES},
-        "execution_enabled": False,
+        "execution_enabled": True,
+        "execution_scope": "bounded_on_demand_internal_and_opt_in_public_search",
+        "background_execution_verified": False,
         "internal_worker_enabled": True,
         "outbound_execution_enabled": False,
         "completion_policy": "Owner attestation with evidence; not autonomous tool verification.",
