@@ -151,3 +151,33 @@ class WorkdayPilotTests(APITestCase):
             blocked = self.client.post(BASE + goal["id"] + "/run/")
         self.assertEqual(blocked.status_code, 200)
         self.assertEqual(blocked.data["last_execution"]["status"], "BLOCKED")
+
+    def test_public_search_receipt_preserves_provider_sources_without_sending(self):
+        from unittest.mock import Mock, patch
+        self.client.force_authenticate(self.owner)
+        payload = {
+            "goal": "Research publicly listed businesses",
+            "steps": [{"role": "RESEARCH_ANALYST", "task": "Collect public references"}],
+            "source_mode": "PUBLIC_SEARCH",
+            "public_search_query": "commercial property managers Alabama",
+            "allow_external_search": True,
+        }
+        goal = self.client.post(BASE, payload, format="json").data["goals"][0]
+        provider_response = Mock()
+        provider_response.json.return_value = {"organic": [
+            {"title": "Example Property Manager",
+             "link": "https://example.org/",
+             "snippet": "A publicly indexed business listing"},
+        ]}
+        with patch.dict("os.environ", {
+            "SYNC_ASSIST_LIVE_RESEARCH_ENABLED": "true",
+            "SERPER_API_KEY": "placeholder-for-test",
+        }), patch("sync_ai.assist_public_search.requests.post", return_value=provider_response):
+            run = self.client.post(BASE + goal["id"] + "/run/")
+        self.assertEqual(run.status_code, 200)
+        receipt = run.data["last_execution"]
+        self.assertEqual(receipt["status"], "AWAITING_APPROVAL")
+        self.assertEqual(receipt["sources"][0]["url"], "https://example.org/")
+        self.assertFalse(receipt["output"][0]["qualified"])
+        self.assertEqual(receipt["messages_sent"], 0)
+        self.assertEqual(receipt["external_actions"], 0)
