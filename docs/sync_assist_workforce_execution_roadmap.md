@@ -90,3 +90,19 @@ idempotency keys at the external integration boundary, a managed queue,
 timeouts, cost budgets, tool permissions, provider receipts, alerting, and
 isolated worker infrastructure. No claim of production-ready autonomous
 execution should be made from this slice alone.
+
+## Optional public research adapter
+
+- Enabled **only** if the owner creates a goal with `source_mode=PUBLIC_SEARCH`,
+  a separate 4–120-character `public_search_query`, and
+  `allow_external_search=true`.
+- Server environment must also contain `SYNC_ASSIST_LIVE_RESEARCH_ENABLED=true`
+  and `SERPER_API_KEY`. These are server secrets; never put them in the frontend.
+- The configured provider request is limited to a single bounded search and at
+  most eight organic listings, with short timeouts and no URL crawling.
+- Retrieved titles/snippets are treated as untrusted, unverified evidence,
+  not verified leads, and cannot trigger external customer contact.
+- No search query is derived automatically from a user's private business goal.
+- Search provider costs are not currently metered in USD; model cost is reported
+  as zero because no LLM is called. Before wider rollout, add provider quotas,
+  spend limits, and billing metrics.
