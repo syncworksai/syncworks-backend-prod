@@ -13,4 +13,4 @@ def is_god_mode(user) -> bool:
     if not user or not getattr(user, "is_authenticated", False):
         return False
     email = str(getattr(user, "email", "") or "").strip().lower()
-    return email == FOUNDER_GOD_MODE_EMAIL
+    return (\n        email == FOUNDER_GOD_MODE_EMAIL\n        and bool(getattr(user, "is_active", False))\n        and not bool(getattr(user, "is_test_account", False))\n    )
