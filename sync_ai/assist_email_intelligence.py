@@ -105,7 +105,13 @@ class JarvisOutlookSuggestView(APIView):
                     "$select":"id,subject,from,replyTo,body,receivedDateTime",
                 })
                 body=str((original.get("body") or {}).get("content") or "")[:5000]
-                sender=str((original.get("from") or {}).get("emailAddress",{}).get("address") or "")[:200]
+                reply_to=original.get("replyTo") or []
+                if len(reply_to)>1:
+                    return Response({"detail":"Multiple reply-to recipients require manual review."},status=400)
+                sender=(
+                    ((reply_to[0].get("emailAddress") or {}).get("address") if reply_to else "")
+                    or (original.get("from") or {}).get("emailAddress",{}).get("address") or ""
+                )[:200]
                 subject=str(original.get("subject") or "")[:250]
             else:
                 body=""
