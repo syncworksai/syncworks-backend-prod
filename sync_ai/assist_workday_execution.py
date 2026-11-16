@@ -46,7 +46,22 @@ def _latest_prospects(user):
     ][:MAX_PROSPECTS]
 
 
-def _research(user, _goal, _step):
+def _research(user, goal, _step):
+    if goal.get("source_mode") == "PUBLIC_SEARCH":
+        from .assist_public_search import ResearchDisabled, public_search
+        try:
+            found = public_search(goal.get("public_search_query", ""))
+        except ResearchDisabled as exc:
+            return {"status": "BLOCKED", "message": str(exc), "output": [], "sources": []}
+        if not found:
+            return {"status": "BLOCKED", "message": "No usable public results. Refine the explicit query.", "output": [], "sources": []}
+        return {
+            "status": "AWAITING_APPROVAL",
+            "message": "Collected public search listings with source links. Business identities and contact details remain unverified.",
+            "output": found,
+            "sources": [{"type": "public_search_result", "url": item["website"], "provider": "serper",
+                         "verification": "search_snippet_only"} for item in found],
+        }
     prospects = _latest_prospects(user)
     if not prospects:
         return {
@@ -103,6 +118,24 @@ def _sales(user, goal, _step):
          "channel": "OWNER_REVIEW_ONLY", "sent": False}
         for p in current if p["draft"]
     ]
+    # Public search listings are not automatically qualified, imported, or contacted.
+    # Draft without assuming that a search title represents a verified company.
+    for entry in source.get("output", []):
+        if not isinstance(entry, dict) or entry.get("provenance") != "public_search_result_unverified":
+            continue
+        link = entry.get("website", "")
+        if not isinstance(link, str) or not link.startswith("https://"):
+            continue
+        drafts.append({
+            "company": str(entry.get("title") or "")[:180],
+            "source_url": link,
+            "draft": ("Hello, I'm reaching out from SyncWorks. We're building tools that help "
+                      "service businesses coordinate customers, scheduling and operations. "
+                      "If your team is interested, would you be open to a brief introduction?"),
+            "channel": "OWNER_REVIEW_ONLY", "sent": False,
+            "needs_business_identity_verification": True,
+        })
+    drafts = drafts[:MAX_PROSPECTS]
     if not drafts:
         return {"status": "BLOCKED", "message": "No currently eligible outreach drafts.", "output": [], "sources": []}
     return {
@@ -178,6 +211,7 @@ def execute_one(user, goal_id):
             "output": result["output"], "sources": result["sources"],
             "external_actions": 0, "messages_sent": 0,
             "model_calls": 0, "reported_model_cost_usd": "0.00",
+            "provider_requests": 1 if candidate["role"] == "RESEARCH_ANALYST" and goal.get("source_mode") == "PUBLIC_SEARCH" and result["status"] == "AWAITING_APPROVAL" else 0,
             "execution_type": "deterministic_internal_read_or_draft",
         }
         AuditLog.objects.create(actor=user, action=WORKED, metadata=receipt)
