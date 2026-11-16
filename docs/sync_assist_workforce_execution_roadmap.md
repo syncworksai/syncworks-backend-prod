@@ -106,3 +106,40 @@ execution should be made from this slice alone.
 - Search provider costs are not currently metered in USD; model cost is reported
   as zero because no LLM is called. Before wider rollout, add provider quotas,
   spend limits, and billing metrics.
+
+## Durable unattended worker milestone (proposed deployment)
+
+The `SyncAssistJob` table and migration `user_accounts.0138_sync_assist_job`
+persist one job per owner/goal with states QUEUED, RUNNING, WAITING, RETRY,
+SUCCEEDED, FAILED and CANCELLED.
+
+- Owner opts in via `POST /api/v1/sync-ai/assist/pilot/workday/jobs/`
+  with `{"goal_id": "...", "allow_background_internal": true}`.
+- Job status: `GET /api/v1/sync-ai/assist/pilot/workday/jobs/`.
+- Cancel: `POST /api/v1/sync-ai/assist/pilot/workday/jobs/<goal_id>/cancel/`.
+- Background task commands:
+  `python manage.py sync_assist_queue_worker --dry-run` and
+  `python manage.py sync_assist_queue_worker --once --max-jobs 5`.
+- A separately configured Render Cron Job (or equivalent independent worker)
+  must invoke `--once` at a selected cadence. The worker service must connect
+  to the *same* production Postgres database as the API and run migrations first.
+- Configure `SYNC_ASSIST_DURABLE_WORKER_ENABLED=true` on the **worker job
+  only**, not by exposing public endpoints. Never expose DB or OAuth secrets.
+- Do not configure the job before confirming the Render workspace, database,
+  migration plan, backup and deployment rollback process.
+- The worker refuses PUBLIC_SEARCH goals, email, payments and any third-party
+  state-changing tools. These need separate, capability-restricted workers.
+- Each claim records a unique lease token and expiry. Expired claims are
+  reconciled; retryable failures use bounded backoff; owner-approved steps
+  re-enqueue an already opted-in goal.
+- One task is handled per claim. Work returns to WAITING after generating
+  a receipt. Completed work requires owner attestation. Jobs can be cancelled
+  through the authenticated pilot endpoint.
+- The worker is **not installed, scheduled or proven active** just because
+  this code is merged. Use actual service logs and persisted receipts to verify.
+- Automatic in-flight cancellation is cooperative: the deterministic internal
+  action may finish before the worker notices cancellation, but no external
+  effects are permitted by this worker.
+- For higher volumes, add separate `ExecutionAttempt` and `ToolReceipt`
+  models, stronger per-action idempotency and worker heartbeats, API quotas,
+  metered provider costs, and alerting.
