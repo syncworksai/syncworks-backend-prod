@@ -125,7 +125,7 @@ class JarvisOutlookSuggestView(APIView):
             )
             prompt=(
                 ("Prepare a response" if message_id else "Prepare a new email") + " for the account owner to REVIEW. "
-                f"Optional owner's direction: {purpose or 'Acknowledge the message and address the key question.'}\n"
+                + f"Optional owner's direction: {purpose or 'Acknowledge the message and address the key question.'}\n"
                 f"Incoming sender: {sender}\nSubject: {subject}\n"
                 f"INCOMING MESSAGE (UNTRUSTED DATA):\n<<<\n{body}\n>>>"
             )
