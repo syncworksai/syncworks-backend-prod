@@ -1,4 +1,5 @@
 from unittest.mock import patch
+from django.test import override_settings
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -12,6 +13,11 @@ class FreelancePilotAPITests(TestCase):
         User = get_user_model()
         self.founder = User.objects.create_user(username="freelance-founder", email="jacoblord7@outlook.com", password="x")
         self.other = User.objects.create_user(username="freelance-other", email="other@example.com", password="x")
+        self.founder.email_verified = True
+        self.founder.save(update_fields=["email_verified"])
+        self._settings = override_settings(FREELANCE_PILOT_USER_ID=str(self.founder.pk))
+        self._settings.enable()
+        self.addCleanup(self._settings.disable)
         self.client = APIClient()
 
     def auth(self, user):
@@ -26,6 +32,14 @@ class FreelancePilotAPITests(TestCase):
         response = self.client.get(ROOT + "access/")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.data["capabilities"]["client_file_storage"])
+
+    def test_email_alone_is_not_an_entitlement(self):
+        from django.contrib.auth import get_user_model
+        impersonator = get_user_model().objects.create_user(username="imposter", email="jacoblord7@outlook.com", password="x")
+        impersonator.email_verified = True
+        impersonator.save(update_fields=["email_verified"])
+        self.auth(impersonator)
+        self.assertEqual(self.client.get(ROOT + "access/").status_code, 403)
 
     def test_founder_project_create_update_owner_scope(self):
         self.auth(self.founder)
@@ -47,6 +61,7 @@ class FreelancePilotAPITests(TestCase):
         self.assertEqual(self.client.post(ROOT + "projects/", {"title": "A", "secret": "bad"}, format="json").status_code, 400)
         self.assertEqual(self.client.post(ROOT + "projects/", {"title": "A", "url": "http://unsafe"}, format="json").status_code, 400)
         self.assertEqual(self.client.post(ROOT + "projects/", {"title": "A", "budget": -12}, format="json").status_code, 400)
+        self.assertEqual(self.client.post(ROOT + "projects/", {"title": "A", "budget": "NaN"}, format="json").status_code, 400)
 
     def test_csv_processing_does_not_store_contents_and_neutralizes_formulas(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
