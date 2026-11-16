@@ -118,3 +118,16 @@ class DurableWorkdayTests(APITestCase):
         self.assertIsNone(claim_one())
         self.assertEqual(run_claimed(*claimed), "WAITING")
         self.assertEqual(SyncAssistJob.objects.get(goal_id=goal_id).state, "WAITING")
+
+    def test_worker_health_requires_recorded_runs(self):
+        from io import StringIO
+        from unittest.mock import patch
+        from django.core.management import call_command
+        self.assertEqual(self.client.get(BASE + "jobs/").data["worker_status"], "not_verified")
+        with patch.dict("os.environ", {"SYNC_ASSIST_DURABLE_WORKER_ENABLED": "true"}):
+            call_command("sync_assist_queue_worker", "--once", stdout=StringIO())
+            call_command("sync_assist_queue_worker", "--once", stdout=StringIO())
+        status = self.client.get(BASE + "jobs/").data
+        self.assertTrue(status["worker_deployed"])
+        self.assertEqual(status["worker_status"], "recent_runs_observed")
+        self.assertIsNotNone(status["last_worker_run"])
