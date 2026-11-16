@@ -221,11 +221,12 @@ class OutlookInbox(APIView):
         try:
             data=_graph(request.user,cfg,"GET","/me/mailFolders/inbox/messages",params={
                 "$top":20,"$orderby":"receivedDateTime desc",
-                "$select":"id,subject,from,receivedDateTime,bodyPreview,isRead,importance,conversationId",
+                "$select":"id,subject,from,replyTo,receivedDateTime,bodyPreview,isRead,importance,conversationId",
             })
             return Response({"messages":[{
                 "id":m.get("id"),"subject":m.get("subject") or "(No subject)",
                 "from":m.get("from",{}).get("emailAddress",{}).get("address") or "",
+                "reply_to": ((m.get("replyTo") or [{}])[0].get("emailAddress",{}).get("address") or "") if len(m.get("replyTo") or [])==1 else "",
                 "received_at":m.get("receivedDateTime"),"preview":(m.get("bodyPreview") or "")[:300],
                 "is_read":m.get("isRead"),"importance":m.get("importance"),
             } for m in data.get("value",[])],"automatic_morning_scan":False})
@@ -252,18 +253,21 @@ class OutlookDraft(APIView):
         try:
             if reply_id:
                 # The original must be visible within the authorized mailbox.
-                original=_graph(request.user,cfg,"GET","/me/messages/"+requests.utils.quote(reply_id,safe=""),params={"$select":"id,subject,from"})
-                actual=(original.get("from") or {}).get("emailAddress",{}).get("address") or ""
+                original=_graph(request.user,cfg,"GET","/me/messages/"+requests.utils.quote(reply_id,safe=""),params={"$select":"id,subject,from,replyTo"})
+                reply_to=original.get("replyTo") or []
+                if len(reply_to)>1:
+                    return Response({"detail":"Multi-recipient reply-to is not supported in the private pilot."},status=400)
+                actual=((reply_to[0].get("emailAddress") or {}).get("address") if reply_to else "") or (original.get("from") or {}).get("emailAddress",{}).get("address") or ""
                 if not actual or (recipient and recipient.casefold()!=actual.casefold()):
                     return Response({"detail":"Reply recipient must match the original sender."},status=400)
                 recipient=actual
-                draft=_graph(request.user,cfg,"POST","/me/messages/"+requests.utils.quote(reply_id,safe="")+"/createReply",payload={})
+                draft=_graph(request.user,cfg,"POST","/me/messages/"+requests.utils.quote(reply_id,safe="")+"/createReply")
                 did=draft.get("id")
                 if not did:raise IntegrationError("Draft was not returned by Outlook.")
                 _graph(request.user,cfg,"PATCH","/me/messages/"+requests.utils.quote(did,safe=""),payload={
                     "body":{"contentType":"Text","content":body},
                 })
-                subject=original.get("subject") or subject
+                subject=draft.get("subject") or original.get("subject") or subject
             else:
                 draft=_graph(request.user,cfg,"POST","/me/messages",payload={
                     "subject":subject,"body":{"contentType":"Text","content":body},
@@ -306,9 +310,11 @@ class OutlookSend(APIView):
                 if not current.get("isDraft"):return Response({"detail":"This message is not an unsent draft."},status=409)
                 actual_to=[v.get("emailAddress",{}).get("address","").lower() for v in current.get("toRecipients",[])]
                 actual_body=(current.get("body") or {}).get("content") or ""
-                if len(actual_to)!=1 or actual_to[0]!=record.metadata["recipient"].lower() or hashlib.sha256(actual_body.strip().encode()).hexdigest()!=record.metadata["body_sha256"]:
+                if (len(actual_to)!=1 or actual_to[0]!=record.metadata["recipient"].lower()
+                    or str(current.get("subject") or "")!=str(record.metadata.get("subject") or "")
+                    or hashlib.sha256(actual_body.strip().encode()).hexdigest()!=record.metadata["body_sha256"]):
                     return Response({"detail":"Draft changed after review. Create a new reviewed draft before sending."},status=409)
-                _graph(request.user,cfg,"POST","/me/messages/"+requests.utils.quote(did,safe="")+"/send",payload={})
+                _graph(request.user,cfg,"POST","/me/messages/"+requests.utils.quote(did,safe="")+"/send")
                 AuditLog.objects.create(actor=request.user,action=SENT_EVENT,metadata={"draft_id":did,"recipient":record.metadata["recipient"],"manual_confirmation":True})
             return Response({"sent":True,"draft_id":did,"recipient":record.metadata["recipient"]})
         except (IntegrationError,requests.RequestException) as e:
