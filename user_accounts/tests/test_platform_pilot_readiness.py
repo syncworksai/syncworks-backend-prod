@@ -91,3 +91,28 @@ class FounderPilotReadinessTests(TestCase):
         r = self.client.get(URL)
         self.assertEqual(r.data["summary"]["failed"], 1)
         self.assertFalse(r.data["launch_ready"])
+
+    def test_test_lab_is_specification_not_created_accounts(self):
+        self.client.force_authenticate(self.founder)
+        result = self.client.get(URL)
+        self.assertEqual(result.status_code, 200)
+        lab = result.data["test_lab"]
+        self.assertFalse(lab["accounts_provisioned"])
+        self.assertFalse(lab["test_email_delivery_enabled"])
+        self.assertGreaterEqual(len(lab["personas"]), 8)
+        self.assertIn("tenant_security", [x["id"] for x in result.data["gates"]])
+        self.assertIn("ai_worker_fail_safe", [x["id"] for x in result.data["gates"]])
+
+    def test_test_identity_cannot_use_god_mode(self):
+        from user_accounts.services.god_mode import is_god_mode
+        self.founder.is_test_account = True
+        self.founder.save(update_fields=["is_test_account"])
+        self.assertFalse(is_god_mode(self.founder))
+        self.client.force_authenticate(self.founder)
+        self.assertEqual(self.client.get(URL).status_code, 403)
+
+    def test_inactive_founder_cannot_use_god_mode(self):
+        from user_accounts.services.god_mode import is_god_mode
+        self.founder.is_active = False
+        self.founder.save(update_fields=["is_active"])
+        self.assertFalse(is_god_mode(self.founder))
