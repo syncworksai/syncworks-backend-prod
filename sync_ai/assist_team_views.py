@@ -23,7 +23,7 @@ SLOTS = {
 }
 MAX_NAME_LENGTH = 32
 # These roles presently have bounded, auditable internal task handlers.
-EXECUTABLE_ROLES = {"CHIEF_OF_STAFF", "RESEARCH_ANALYST", "SALES_MANAGER"}
+EXECUTABLE_ROLES = {"CHIEF_OF_STAFF", "RESEARCH_ANALYST", "SALES_MANAGER", "MARKETING_MANAGER", "EXECUTIVE_ASSISTANT"}
 
 
 def team_snapshot(user):
