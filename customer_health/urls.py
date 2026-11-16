@@ -17,6 +17,7 @@ from .voice_views import (
     HealthVoiceOptionsView,
     HealthVoiceSpeakView,
 )
+from .forge_voice_views import ForgeVoiceSpeakView
 from .workout_views import (
     HealthActiveWorkoutView,
     HealthWorkoutSessionsView,
@@ -25,6 +26,7 @@ from .workout_views import (
 app_name = "customer_health"
 
 urlpatterns = [
+    path("forge/voice/speak/", ForgeVoiceSpeakView.as_view(), name="forge-voice-speak"),
     path(
         "beta-feedback/",
         HealthBetaFeedbackView.as_view(),
