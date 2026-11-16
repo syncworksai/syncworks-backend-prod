@@ -2,6 +2,7 @@ from django.urls import path
 from .assist_pilot_views import SyncAssistPilotControlView, SyncAssistPilotDecisionView, SyncAssistPilotScanView
 from .assist_workday_views import SyncAssistWorkdayView, SyncAssistWorkdayProgressView, SyncAssistWorkdayRunView
 from .assist_job_views import SyncAssistJobView, SyncAssistJobCancelView
+from .assist_team_views import SyncAssistTeamView
 from .assist_communications_views import SyncAssistCommunicationsView, SyncAssistWhatsAppInboundView
 from .assist_internal_connections import SyncAssistInternalConnectionsView
 from .assist_growth_prospects import SyncAssistGrowthProspectsView, SyncAssistGrowthProspectStageView
@@ -39,6 +40,7 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path("assist/pilot/team/", SyncAssistTeamView.as_view(), name="sync-assist-team-config"),
     path("assist/pilot/workday/<str:goal_id>/run/", SyncAssistWorkdayRunView.as_view(), name="sync-assist-workday-run"),
     path("assist/pilot/workday/jobs/", SyncAssistJobView.as_view(), name="sync-assist-background-jobs"),
     path("assist/pilot/workday/jobs/<str:goal_id>/cancel/", SyncAssistJobCancelView.as_view(), name="sync-assist-job-cancel"),
