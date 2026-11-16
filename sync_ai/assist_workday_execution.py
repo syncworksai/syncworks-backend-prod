@@ -20,7 +20,7 @@ WORKED = "sync_assist.workday.worker_receipt"
 MAX_PROSPECTS = 15
 MAX_ATTEMPTS = 3
 MAX_PUBLIC_REQUESTS_PER_DAY = 10
-SUPPORTED = {"RESEARCH_ANALYST", "SALES_MANAGER", "CHIEF_OF_STAFF"}
+SUPPORTED = {"RESEARCH_ANALYST", "SALES_MANAGER", "MARKETING_MANAGER", "CHIEF_OF_STAFF", "EXECUTIVE_ASSISTANT"}
 WORKFLOW_VERSION = "internal-prospect-v1"
 
 
@@ -155,7 +155,7 @@ def _sales(user, goal, _step):
 def _chief(user, goal, _step):
     receipts = [
         s["worker_receipt"] for s in goal["steps"]
-        if s["role"] in {"RESEARCH_ANALYST", "SALES_MANAGER"} and s["status"] == "COMPLETED"
+        if s["role"] in {"RESEARCH_ANALYST", "SALES_MANAGER", "MARKETING_MANAGER"} and s["status"] == "COMPLETED"
         and s.get("verified_by") == "owner" and s.get("worker_receipt")
     ]
     if not receipts:
@@ -175,7 +175,63 @@ def _chief(user, goal, _step):
     }
 
 
-HANDLERS = {"RESEARCH_ANALYST": _research, "SALES_MANAGER": _sales, "CHIEF_OF_STAFF": _chief}
+def _marketing(user, goal, _step):
+    """Prepare an unsent campaign outline from approved in-goal research."""
+    source = _source_output(user, goal, "RESEARCH_ANALYST")
+    if not source:
+        return {"status": "BLOCKED", "message": "Owner-approved Research Analyst results are required before a campaign draft.",
+                "output": [], "sources": []}
+    companies = [
+        {"company": str(item.get("company") or item.get("title") or "")[:160],
+         "source_url": str(item.get("website") or "")[:300]}
+        for item in source.get("output", []) if isinstance(item, dict)
+    ][:MAX_PROSPECTS]
+    if not companies:
+        return {"status": "BLOCKED", "message": "The approved research contains no usable company records.",
+                "output": [], "sources": []}
+    return {
+        "status": "AWAITING_APPROVAL",
+        "message": "Prepared a review-only marketing outline from owner-approved prospect research. No campaign was published.",
+        "output": [
+            {"title": "Internal campaign draft", "channel": "OWNER_REVIEW_ONLY", "sent": False,
+             "draft": "Proposed theme: explain SyncWorks scheduling, service coordination, and business operations. "
+                      "Verify company suitability, claims, and consent before any outreach.",
+             "records": len(companies), "companies": companies}
+        ],
+        "sources": [{"type": "approved_workday_receipt", "receipt_id": source["receipt_id"]}],
+    }
+
+
+def _executive_assistant(user, goal, _step):
+    """Organize only previously owner-attested results from this goal."""
+    prior = [
+        step for step in goal["steps"]
+        if step["role"] != "EXECUTIVE_ASSISTANT" and step["status"] == "COMPLETED"
+        and step.get("verified_by") == "owner" and step.get("worker_receipt")
+    ]
+    if not prior:
+        return {"status": "BLOCKED", "message": "At least one verified specialist result is required for the executive briefing.",
+                "output": [], "sources": []}
+    return {
+        "status": "AWAITING_APPROVAL",
+        "message": "Organized owner-attested work into an internal briefing; no calendar events or emails were created.",
+        "output": [
+            {"employee": step["role"], "result": step["worker_receipt"].get("message", ""),
+             "source_receipt_id": step["worker_receipt"]["receipt_id"]}
+            for step in prior[:MAX_PROSPECTS]
+        ],
+        "sources": [
+            {"type": "approved_workday_receipt", "receipt_id": step["worker_receipt"]["receipt_id"]}
+            for step in prior[:MAX_PROSPECTS]
+        ],
+    }
+
+
+HANDLERS = {
+    "RESEARCH_ANALYST": _research, "SALES_MANAGER": _sales,
+    "MARKETING_MANAGER": _marketing, "CHIEF_OF_STAFF": _chief,
+    "EXECUTIVE_ASSISTANT": _executive_assistant,
+}
 
 
 def execute_one(user, goal_id):
@@ -200,13 +256,19 @@ def execute_one(user, goal_id):
             if attempts >= MAX_ATTEMPTS:
                 continue
             # Do not consume retries for work that needs the owner's review.
-            if item["role"] == "SALES_MANAGER" and not _source_output(
+            if item["role"] in {"SALES_MANAGER", "MARKETING_MANAGER"} and not _source_output(
                 user, goal, "RESEARCH_ANALYST"
+            ):
+                continue
+            if item["role"] == "EXECUTIVE_ASSISTANT" and not any(
+                step["role"] != "EXECUTIVE_ASSISTANT" and step["status"] == "COMPLETED"
+                and step.get("verified_by") == "owner" and step.get("worker_receipt")
+                for step in goal["steps"]
             ):
                 continue
             if item["role"] == "CHIEF_OF_STAFF" and not any(
                 _source_output(user, goal, role)
-                for role in ("RESEARCH_ANALYST", "SALES_MANAGER")
+                for role in ("RESEARCH_ANALYST", "SALES_MANAGER", "MARKETING_MANAGER")
             ):
                 continue
             candidate = item

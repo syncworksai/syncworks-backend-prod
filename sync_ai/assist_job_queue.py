@@ -48,7 +48,7 @@ def enqueue_goal(owner, goal_id):
                 existing.last_error = ""
                 existing.save(update_fields=["state", "lease_token", "lease_expires_at", "last_error", "updated_at"])
             return existing, "goal_already_completed"
-        if not any(s["role"] in {"RESEARCH_ANALYST", "SALES_MANAGER", "CHIEF_OF_STAFF"} for s in goal["steps"]):
+        if not any(s["role"] in {"RESEARCH_ANALYST", "SALES_MANAGER", "MARKETING_MANAGER", "CHIEF_OF_STAFF", "EXECUTIVE_ASSISTANT"} for s in goal["steps"]):
             return None, "no_supported_employee"
         job, created = SyncAssistJob.objects.select_for_update().get_or_create(
             owner=owner, goal_id=goal_id,

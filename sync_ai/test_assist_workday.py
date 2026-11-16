@@ -183,3 +183,72 @@ class WorkdayPilotTests(APITestCase):
         self.assertFalse(receipt["output"][0]["qualified"])
         self.assertEqual(receipt["messages_sent"], 0)
         self.assertEqual(receipt["external_actions"], 0)
+
+    def test_marketing_and_executive_assistant_require_real_approved_research(self):
+        self.client.force_authenticate(self.owner)
+        self.assertEqual(self.client.post(
+            "/api/v1/sync-ai/assist/pilot/growth/prospects/",
+            {"company": "Example Workshop", "niche": "home_services",
+             "website": "https://example.org", "channel": "EMAIL"},
+            format="json",
+        ).status_code, 201)
+        created = self.client.post(BASE, {
+            "goal": "Safe specialist coordination",
+            "steps": [
+                {"role": "RESEARCH_ANALYST", "task": "Compile owned records"},
+                {"role": "MARKETING_MANAGER", "task": "Prepare an unsent campaign outline"},
+                {"role": "EXECUTIVE_ASSISTANT", "task": "Summarize approved work"},
+            ],
+        }, format="json")
+        self.assertEqual(created.status_code, 201)
+        goal = created.data["goals"][0]
+        run_url = BASE + goal["id"] + "/run/"
+
+        research = self.client.post(run_url)
+        self.assertEqual(research.status_code, 200)
+        self.assertEqual(research.data["last_execution"]["role"], "RESEARCH_ANALYST")
+        # Both downstream roles must not execute without owner source review.
+        self.assertEqual(self.client.post(run_url).status_code, 409)
+        research_step = goal["steps"][0]
+        attested = self.client.post(
+            BASE + goal["id"] + "/steps/" + research_step["id"] + "/",
+            {"status": "COMPLETED", "owner_attested": True,
+             "evidence": "I independently checked these owner-entered records."}, format="json")
+        self.assertEqual(attested.status_code, 200)
+
+        marketing = self.client.post(run_url)
+        self.assertEqual(marketing.status_code, 200)
+        draft = marketing.data["last_execution"]
+        self.assertEqual(draft["role"], "MARKETING_MANAGER")
+        self.assertEqual(draft["status"], "AWAITING_APPROVAL")
+        self.assertEqual(draft["external_actions"], 0)
+        self.assertEqual(draft["messages_sent"], 0)
+        self.assertFalse(draft["output"][0]["sent"])
+        self.assertEqual(draft["sources"][0]["receipt_id"], research.data["last_execution"]["receipt_id"])
+
+        # Executive Assistant must still stop until marketing is attested.
+        self.assertEqual(self.client.post(run_url).status_code, 200)
+        # Research was already approved, so Executive Assistant may compile that
+        # evidence without requiring marketing approval or claiming a delivery.
+        executive = self.client.get(BASE).data["goals"][0]["steps"][2]["worker_receipt"]
+        self.assertEqual(executive["status"], "AWAITING_APPROVAL")
+        self.assertEqual(executive["messages_sent"], 0)
+        self.assertEqual(executive["external_actions"], 0)
+        self.assertGreaterEqual(len(executive["sources"]), 1)
+
+        self.assertEqual(
+            AuditLog.objects.filter(actor=self.owner, action="sync_assist.workday.worker_receipt").count(), 3
+        )
+
+    def test_marketing_only_goal_does_not_fabricate_approved_source(self):
+        self.client.force_authenticate(self.owner)
+        created = self.client.post(BASE, {
+            "goal": "Marketing launch planning without a research receipt",
+            "steps": [{"role": "MARKETING_MANAGER", "task": "Draft a campaign"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201)
+        goal = created.data["goals"][0]
+        self.assertEqual(self.client.post(BASE + goal["id"] + "/run/").status_code, 409)
+        self.assertFalse(
+            AuditLog.objects.filter(actor=self.owner, action="sync_assist.workday.worker_receipt").exists()
+        )
