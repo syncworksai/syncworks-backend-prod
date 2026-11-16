@@ -6,7 +6,11 @@ One bounded action runs per invocation. Scheduled execution is opt-in.
 """
 from __future__ import annotations
 
+import os
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from django.db import transaction
 from user_accounts.models import AuditLog
 from .assist_growth_prospects import CREATE as PROSPECT_CREATED, UPDATE as PROSPECT_UPDATED
@@ -15,6 +19,7 @@ from .assist_workday_views import CREATED, PROGRESS, _snapshot
 WORKED = "sync_assist.workday.worker_receipt"
 MAX_PROSPECTS = 15
 MAX_ATTEMPTS = 3
+MAX_PUBLIC_REQUESTS_PER_DAY = 10
 SUPPORTED = {"RESEARCH_ANALYST", "SALES_MANAGER", "CHIEF_OF_STAFF"}
 WORKFLOW_VERSION = "internal-prospect-v1"
 
@@ -196,6 +201,20 @@ def execute_one(user, goal_id):
         ).count()
         if attempts >= MAX_ATTEMPTS:
             return {"code": "attempt_limit", "detail": "Internal action retry limit reached."}
+        public_attempt = (
+            candidate["role"] == "RESEARCH_ANALYST"
+            and goal.get("source_mode") == "PUBLIC_SEARCH"
+            and os.environ.get("SYNC_ASSIST_LIVE_RESEARCH_ENABLED") == "true"
+            and bool(os.environ.get("SERPER_API_KEY", "").strip())
+        )
+        if public_attempt:
+            used_today = AuditLog.objects.filter(
+                actor=user, action=WORKED,
+                metadata__provider_requests=1,
+                created_at__gte=timezone.now() - timedelta(days=1),
+            ).count()
+            if used_today >= MAX_PUBLIC_REQUESTS_PER_DAY:
+                return {"code": "budget_exhausted", "detail": "Daily public research request budget reached."}
         try:
             result = HANDLERS[candidate["role"]](user, goal, candidate)
         except Exception:
@@ -211,7 +230,7 @@ def execute_one(user, goal_id):
             "output": result["output"], "sources": result["sources"],
             "external_actions": 0, "messages_sent": 0,
             "model_calls": 0, "reported_model_cost_usd": "0.00",
-            "provider_requests": 1 if candidate["role"] == "RESEARCH_ANALYST" and goal.get("source_mode") == "PUBLIC_SEARCH" and result["status"] == "AWAITING_APPROVAL" else 0,
+            "provider_requests": 1 if public_attempt else 0,
             "execution_type": "deterministic_internal_read_or_draft",
         }
         AuditLog.objects.create(actor=user, action=WORKED, metadata=receipt)
