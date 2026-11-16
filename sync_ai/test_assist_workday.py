@@ -105,7 +105,7 @@ class WorkdayPilotTests(APITestCase):
         self.assertEqual(receipt["output"][0]["provenance"], "owner_entered_unverified")
         self.assertEqual(receipt["sources"][0]["type"], "syncworks_audit_event")
         # No duplicate run while research awaits owner review.
-        self.assertEqual(self.client.post(url).status_code, 200)  # sales is blocked
+        self.assertEqual(self.client.post(url).status_code, 409)  # sales waits for approved research
         research_id = goal["steps"][0]["id"]
         confirmation = self.client.post(BASE + goal["id"] + "/steps/" + research_id + "/", {
             "status": "COMPLETED", "owner_attested": True,
@@ -118,7 +118,7 @@ class WorkdayPilotTests(APITestCase):
         self.assertFalse(sales.data["last_execution"]["output"][0]["sent"])
         self.assertEqual(sales.data["last_execution"]["messages_sent"], 0)
         self.assertEqual(
-            AuditLog.objects.filter(actor=self.owner, action="sync_assist.workday.worker_receipt").count(), 3
+            AuditLog.objects.filter(actor=self.owner, action="sync_assist.workday.worker_receipt").count(), 2
         )
 
     def test_internal_execution_requires_pilot_and_source_evidence(self):
