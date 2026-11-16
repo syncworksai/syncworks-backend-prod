@@ -29,4 +29,14 @@ class Command(BaseCommand):
         if not options["once"]:
             raise CommandError("Use --once with an independently configured scheduler. This command never runs a hidden loop.")
         results = run_batch(limit=limit)
+        from django.contrib.auth import get_user_model
+        from user_accounts.models import AuditLog
+        from sync_ai.assist_pilot_views import PILOT_EMAIL
+        owner = get_user_model().objects.filter(email__iexact=PILOT_EMAIL, is_active=True).first()
+        if owner:
+            AuditLog.objects.create(
+                actor=owner, action="sync_assist.queue.worker_tick",
+                metadata={"run_source": "independent_worker", "processed": len(results),
+                          "states": results[:20], "external_actions": 0},
+            )
         self.stdout.write(f"Processed {len(results)} job(s): {results}")
