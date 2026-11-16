@@ -134,3 +134,68 @@ class DurableWorkdayTests(APITestCase):
         self.assertTrue(status["worker_deployed"])
         self.assertEqual(status["worker_status"], "recent_runs_observed")
         self.assertIsNotNone(status["last_worker_run"])
+
+    def test_scheduled_command_processes_one_real_job_and_emits_receipt(self):
+        """Exercise the management-command entrypoint, not just the helper."""
+        from io import StringIO
+        from unittest.mock import patch
+        from django.core.management import call_command
+        from user_accounts.models import AuditLog
+        goal_id = self.make_goal()
+        self.assertEqual(self.enroll(goal_id).status_code, 201)
+
+        flags = {
+            "SYNC_ASSIST_DURABLE_WORKER_ENABLED": "true",
+            "SYNC_ASSIST_DURABLE_SCHEDULED_ENABLED": "true",
+        }
+        with patch.dict("os.environ", flags):
+            output = StringIO()
+            call_command("sync_assist_queue_worker", "--once", "--scheduled",
+                         "--max-jobs", "1", stdout=output)
+            self.assertIn("Processed 1 job(s):", output.getvalue())
+
+        job = SyncAssistJob.objects.get(owner=self.owner, goal_id=goal_id)
+        self.assertEqual(job.state, SyncAssistJob.State.WAITING)
+        self.assertIsNotNone(job.last_receipt_id)
+        receipts = AuditLog.objects.filter(actor=self.owner, action="sync_assist.workday.worker_receipt")
+        self.assertEqual(receipts.count(), 1)
+        self.assertEqual(str(job.last_receipt_id), receipts.first().metadata["receipt_id"])
+        self.assertEqual(receipts.first().metadata["external_actions"], 0)
+        self.assertEqual(receipts.first().metadata["messages_sent"], 0)
+        self.assertEqual(receipts.first().metadata["provider_requests"], 0)
+        self.assertEqual(
+            AuditLog.objects.filter(actor=self.owner, action="sync_assist.queue.worker_tick").count(), 1
+        )
+
+        # Idempotency: a second scheduled run cannot generate a second receipt.
+        with patch.dict("os.environ", flags):
+            output = StringIO()
+            call_command("sync_assist_queue_worker", "--once", "--scheduled",
+                         "--max-jobs", "1", stdout=output)
+            self.assertIn("Processed 0 job(s): []", output.getvalue())
+        self.assertEqual(receipts.count(), 1)
+
+        # Owner must still attest the result; scheduling never self-approves.
+        step = next(g for g in self.client.get(BASE).data["goals"] if g["id"] == goal_id)["steps"][0]
+        self.assertEqual(step["status"], "BLOCKED")
+        self.assertEqual(step["worker_receipt"]["status"], "BLOCKED")
+        self.assertEqual(self.client.get(BASE + "jobs/").data["jobs"][0]["state"], "WAITING")
+
+    def test_scheduled_worker_refuses_unapproved_public_research(self):
+        from io import StringIO
+        from unittest.mock import patch
+        from django.core.management import call_command
+        from user_accounts.models import AuditLog
+        external_id = self.make_goal("PUBLIC_SEARCH")
+        self.assertEqual(self.enroll(external_id).status_code, 400)
+        with patch.dict("os.environ", {
+            "SYNC_ASSIST_DURABLE_WORKER_ENABLED": "true",
+            "SYNC_ASSIST_DURABLE_SCHEDULED_ENABLED": "true",
+            "SYNC_ASSIST_LIVE_RESEARCH_ENABLED": "true",
+        }):
+            call_command("sync_assist_queue_worker", "--once", "--scheduled",
+                         stdout=StringIO())
+        self.assertFalse(SyncAssistJob.objects.filter(owner=self.owner).exists())
+        self.assertFalse(AuditLog.objects.filter(
+            actor=self.owner, action="sync_assist.workday.worker_receipt"
+        ).exists())
