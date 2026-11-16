@@ -1,11 +1,14 @@
 """Private-pilot API for explicit durable-worker enrollment and cancellation."""
 from uuid import UUID
+from datetime import timedelta
+
+from django.utils import timezone
 
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from user_accounts.models import SyncAssistJob
+from user_accounts.models import SyncAssistJob, AuditLog
 from .assist_pilot_views import _pilot
 from .assist_job_queue import cancel_goal_job, enqueue_goal, serialize_job
 
@@ -17,12 +20,20 @@ class SyncAssistJobView(APIView):
         if not _pilot(request.user):
             return Response({"detail": "Private pilot only."}, status=403)
         jobs = SyncAssistJob.objects.filter(owner=request.user).order_by("-created_at")[:100]
+        ticks = list(AuditLog.objects.filter(
+            actor=request.user, action="sync_assist.queue.worker_tick",
+            created_at__gte=timezone.now() - timedelta(minutes=30),
+            metadata__run_source="independent_worker",
+        ).order_by("-id")[:2])
+        observed = len(ticks) >= 2
         return Response({
             "jobs": [serialize_job(job) for job in jobs],
-            "worker_deployed": False,
-            "scheduling_enabled": False,
+            "worker_deployed": observed,
+            "worker_status": "recent_runs_observed" if observed else "not_verified",
+            "last_worker_run": ticks[0].created_at.isoformat() if ticks else None,
+            "scheduling_enabled": observed,
             "external_actions_enabled": False,
-            "notice": "Jobs persist in the database. A separate opted-in worker process is required to run them unattended.",
+            "notice": "Worker status is derived from recorded runs, not the deployment configuration. Two independent runs in 30 minutes are required for a recent activity indicator.",
         })
 
     def post(self, request):
