@@ -11,6 +11,7 @@ class Command(BaseCommand):
         parser.add_argument("--once", action="store_true", help="Process up to --max-jobs and exit.")
         parser.add_argument("--max-jobs", type=int, default=5)
         parser.add_argument("--dry-run", action="store_true")
+        parser.add_argument("--scheduled", action="store_true", help="Attest external scheduler invocation.")
 
     def handle(self, *args, **options):
         limit = options["max_jobs"]
@@ -28,12 +29,14 @@ class Command(BaseCommand):
             raise CommandError("Durable worker is disabled; explicit deployment opt-in required.")
         if not options["once"]:
             raise CommandError("Use --once with an independently configured scheduler. This command never runs a hidden loop.")
+        if options["scheduled"] and os.environ.get("SYNC_ASSIST_DURABLE_SCHEDULED_ENABLED") != "true":
+            raise CommandError("Scheduled execution requires separate explicit opt-in.")
         results = run_batch(limit=limit)
         from django.contrib.auth import get_user_model
         from user_accounts.models import AuditLog
         from sync_ai.assist_pilot_views import PILOT_EMAIL
         owner = get_user_model().objects.filter(email__iexact=PILOT_EMAIL, is_active=True).first()
-        if owner:
+        if owner and options["scheduled"]:
             AuditLog.objects.create(
                 actor=owner, action="sync_assist.queue.worker_tick",
                 metadata={"run_source": "independent_worker", "processed": len(results),
