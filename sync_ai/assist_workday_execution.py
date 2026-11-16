@@ -189,18 +189,30 @@ def execute_one(user, goal_id):
         goal = next((g for g in _snapshot(user)["goals"] if g["id"] == goal_id), None)
         if not goal:
             return {"code": "not_found", "detail": "Goal not found."}
-        candidate = next((
-            s for s in goal["steps"]
-            if s["role"] in SUPPORTED and s["status"] in {"PLANNED", "BLOCKED"}
-        ), None)
+        candidate = None
+        for item in goal["steps"]:
+            if item["role"] not in SUPPORTED or item["status"] not in {"PLANNED", "BLOCKED"}:
+                continue
+            attempts = AuditLog.objects.filter(
+                actor=user, action=WORKED,
+                metadata__goal_id=goal_id, metadata__step_id=item["id"],
+            ).count()
+            if attempts >= MAX_ATTEMPTS:
+                continue
+            # Do not consume retries for work that needs the owner's review.
+            if item["role"] == "SALES_MANAGER" and not _source_output(
+                user, goal, "RESEARCH_ANALYST"
+            ):
+                continue
+            if item["role"] == "CHIEF_OF_STAFF" and not any(
+                _source_output(user, goal, role)
+                for role in ("RESEARCH_ANALYST", "SALES_MANAGER")
+            ):
+                continue
+            candidate = item
+            break
         if candidate is None:
-            return {"code": "no_action", "detail": "No eligible internal action. Review completed or awaiting-approval steps first."}
-        attempts = AuditLog.objects.filter(
-            actor=user, action=WORKED,
-            metadata__goal_id=goal_id, metadata__step_id=candidate["id"],
-        ).count()
-        if attempts >= MAX_ATTEMPTS:
-            return {"code": "attempt_limit", "detail": "Internal action retry limit reached."}
+            return {"code": "no_action", "detail": "No runnable step. Check source records, approvals or retry limits."}
         public_attempt = (
             candidate["role"] == "RESEARCH_ANALYST"
             and goal.get("source_mode") == "PUBLIC_SEARCH"
