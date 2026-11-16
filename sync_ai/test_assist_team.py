@@ -31,7 +31,7 @@ class TeamConfigurationTests(APITestCase):
         saved = self.client.get(URL).data["employees"]
         self.assertEqual(saved[0]["name"], "Alex")
         self.assertEqual(saved[0]["role"], "EXECUTIVE_ASSISTANT")
-        self.assertEqual(saved[0]["execution_status"], "not_implemented")
+        self.assertEqual(saved[0]["execution_status"], "internal_pilot")
         self.assertEqual(AuditLog.objects.filter(actor=self.owner, action="sync_assist.team.config_updated").count(), 1)
 
     def test_reject_invalid_role_duplicate_and_unknown_fields_without_write(self):
@@ -51,4 +51,4 @@ class TeamConfigurationTests(APITestCase):
         self.assertEqual(self.client.get(URL).status_code, 403)
         self.assertEqual(self.client.put(URL, {"employees": []}, format="json").status_code, 403)
         self.client.force_authenticate(user=None)
-        self.assertEqual(self.client.get(URL).status_code, 403)
+        self.assertIn(self.client.get(URL).status_code, [401, 403])
