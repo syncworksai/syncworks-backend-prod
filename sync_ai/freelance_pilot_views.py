@@ -13,9 +13,12 @@ import csv
 import hashlib
 import io
 import json
+import math
+import os
 from uuid import UUID, uuid4
 
 from django.db import transaction
+from django.conf import settings
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
@@ -42,9 +45,15 @@ ALLOWED_STATUSES = {
 }
 
 
+def _founder_authorized(user):
+    # Fail closed until operators pin the verified founder's immutable user id.
+    configured = str(getattr(settings, 'FREELANCE_PILOT_USER_ID', '') or os.getenv('FREELANCE_PILOT_USER_ID', '')).strip()
+    return bool(configured and _pilot(user) and user.email_verified and str(user.pk) == configured)
+
+
 class FounderFreelancePermission(BasePermission):
     def has_permission(self, request, view):
-        return _pilot(request.user)
+        return _founder_authorized(request.user)
 
 
 class FreelanceThrottle(UserRateThrottle):
@@ -101,7 +110,7 @@ def _fields(data, *, partial=False):
                 val = round(float(value), 2)
             except (ValueError, TypeError):
                 raise ValidationError({"budget": "Expected a numeric amount."})
-            if val < 0 or val > 100000:
+            if not math.isfinite(val) or val < 0 or val > 100000:
                 raise ValidationError({"budget": "Value out of range."})
             fields[field] = val
             continue
