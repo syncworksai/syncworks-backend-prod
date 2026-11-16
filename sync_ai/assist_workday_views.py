@@ -18,6 +18,7 @@ from .assist_pilot_views import _pilot
 
 CREATED = "sync_assist.workday.goal_created"
 PROGRESS = "sync_assist.workday.progress_recorded"
+WORKED = "sync_assist.workday.worker_receipt"
 ROLES = {
     "CHIEF_OF_STAFF", "EXECUTIVE_ASSISTANT", "RESEARCH_ANALYST",
     "SALES_MANAGER", "MARKETING_MANAGER", "BUSINESS_MANAGER",
@@ -31,7 +32,7 @@ MAX_STEPS = 8
 
 def _snapshot(user):
     goals = {}
-    events = AuditLog.objects.filter(actor=user, action__in=[CREATED, PROGRESS]).order_by("id")
+    events = AuditLog.objects.filter(actor=user, action__in=[CREATED, PROGRESS, WORKED]).order_by("id")
     for event in events:
         data = event.metadata or {}
         identifier = str(data.get("goal_id") or "")
@@ -47,7 +48,8 @@ def _snapshot(user):
                 "updated_at": event.created_at.isoformat(),
                 "steps": [
                     {"id": step["id"], "role": step["role"], "task": step["task"],
-                     "status": "PLANNED", "evidence": "", "verified_by": None}
+                     "status": "PLANNED", "evidence": "", "verified_by": None,
+                     "worker_receipt": None}
                     for step in steps if isinstance(step, dict) and all(k in step for k in ("id", "role", "task"))
                 ],
             }
@@ -55,9 +57,24 @@ def _snapshot(user):
             target = next((step for step in goals[identifier]["steps"] if step["id"] == data.get("step_id")), None)
             if target is None or data.get("status") not in STATES:
                 continue
-            target["status"] = data["status"]
-            target["evidence"] = data.get("evidence", "")
-            target["verified_by"] = "owner" if data["status"] == "COMPLETED" else None
+            if event.action == WORKED:
+                if target["status"] == "COMPLETED":
+                    continue
+                target["worker_receipt"] = {
+                    "receipt_id": data.get("receipt_id"), "step_id": data.get("step_id"),
+                    "role": data.get("role"), "workflow_version": data.get("workflow_version"),
+                    "status": data.get("status"), "message": data.get("message"),
+                    "output": data.get("output", []), "sources": data.get("sources", []),
+                    "external_actions": data.get("external_actions", 0),
+                    "messages_sent": data.get("messages_sent", 0),
+                    "model_calls": data.get("model_calls", 0),
+                    "reported_model_cost_usd": data.get("reported_model_cost_usd", "0.00"),
+                }
+                target["status"] = data["status"]
+            else:
+                target["status"] = data["status"]
+                target["evidence"] = data.get("evidence", "")
+                target["verified_by"] = "owner" if data["status"] == "COMPLETED" else None
             goals[identifier]["updated_at"] = event.created_at.isoformat()
     for goal in goals.values():
         statuses = [step["status"] for step in goal["steps"]]
@@ -74,8 +91,10 @@ def _snapshot(user):
         "goals": ordered,
         "counts": {state.lower(): sum(g["status"] == state for g in ordered) for state in STATES},
         "execution_enabled": False,
+        "internal_worker_enabled": True,
+        "outbound_execution_enabled": False,
         "completion_policy": "Owner attestation with evidence; not autonomous tool verification.",
-        "notice": "These are owner-defined assignments. No employee has performed an external action through this endpoint.",
+        "notice": "Internal research, draft and reporting actions produce receipts. No network search, email sending, payments or third-party writes.",
     }
 
 
@@ -153,3 +172,23 @@ class SyncAssistWorkdayProgressView(APIView):
                           "evidence": evidence.strip(), "owner_attested": attested},
             )
         return Response(_snapshot(request.user))
+
+class SyncAssistWorkdayRunView(APIView):
+    """Execute one authorized internal step per request; no external side effects."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, goal_id):
+        if not _pilot(request.user):
+            return Response({"detail": "Private pilot only."}, status=403)
+        try:
+            key = str(UUID(str(goal_id)))
+        except (TypeError, ValueError, AttributeError):
+            return Response({"detail": "Invalid goal ID."}, status=400)
+        from .assist_workday_execution import execute_one
+        result = execute_one(request.user, key)
+        if result["code"] != "executed":
+            status = 404 if result["code"] == "not_found" else 409
+            return Response({"detail": result["detail"], "reason": result["code"]}, status=status)
+        snapshot = _snapshot(request.user)
+        snapshot["last_execution"] = result["receipt"]
+        return Response(snapshot)
