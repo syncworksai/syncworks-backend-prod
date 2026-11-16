@@ -124,9 +124,12 @@ class DurableWorkdayTests(APITestCase):
         from unittest.mock import patch
         from django.core.management import call_command
         self.assertEqual(self.client.get(BASE + "jobs/").data["worker_status"], "not_verified")
-        with patch.dict("os.environ", {"SYNC_ASSIST_DURABLE_WORKER_ENABLED": "true"}):
+        with patch.dict("os.environ", {"SYNC_ASSIST_DURABLE_WORKER_ENABLED": "true",
+                         "SYNC_ASSIST_DURABLE_SCHEDULED_ENABLED": "true"}):
             call_command("sync_assist_queue_worker", "--once", stdout=StringIO())
-            call_command("sync_assist_queue_worker", "--once", stdout=StringIO())
+            self.assertEqual(self.client.get(BASE + "jobs/").data["worker_status"], "not_verified")
+            call_command("sync_assist_queue_worker", "--once", "--scheduled", stdout=StringIO())
+            call_command("sync_assist_queue_worker", "--once", "--scheduled", stdout=StringIO())
         status = self.client.get(BASE + "jobs/").data
         self.assertTrue(status["worker_deployed"])
         self.assertEqual(status["worker_status"], "recent_runs_observed")
