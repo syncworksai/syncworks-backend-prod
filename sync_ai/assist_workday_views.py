@@ -120,7 +120,7 @@ class SyncAssistWorkdayView(APIView):
         source_mode = request.data.get("source_mode", "INTERNAL_ONLY")
         public_query = request.data.get("public_search_query", "")
         external_consent = request.data.get("allow_external_search") is True
-        if source_mode not in {"INTERNAL_ONLY", "PUBLIC_SEARCH"}:
+        if not isinstance(source_mode, str) or source_mode not in {"INTERNAL_ONLY", "PUBLIC_SEARCH"}:
             return Response({"detail": "Invalid research mode."}, status=400)
         if source_mode == "PUBLIC_SEARCH" and (
             not external_consent or not isinstance(public_query, str)
