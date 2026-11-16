@@ -57,3 +57,36 @@ The audit-event workday prototype is deliberately narrow and should be replaced
 by relational storage before scaling. Owner-attested completion is not the same as
 a worker-verified outcome. Do not claim autonomy until an authorized worker has
 executed tools and produced verifiable receipts.
+
+## Implemented on this branch: internal execution slice
+
+- `POST /api/v1/sync-ai/assist/pilot/workday/<goal_uuid>/run/` executes **one**
+  eligible internal action per request, using role-bound deterministic handlers.
+- Research Analyst assembles up to 15 owner-entered prospects from the existing
+  Growth Center audit events. Every record is explicitly `owner_entered_unverified`;
+  this is NOT external research or live verification.
+- Sales Manager can reuse only Research Analyst output that the owner has attested
+  as completed. It surfaces existing unsent outreach drafts without messaging.
+- Chief of Staff summarizes owner-attested specialist receipts.
+- Each execution stores an append-only receipt containing role, step, source
+  references, reported model cost, draft/output, and zero external actions.
+- Blocked actions record why they could not complete; retries capped at three.
+  Execution cannot mark assignments completed without an owner decision.
+- `python manage.py sync_assist_workday --dry-run` previews eligible internal work.
+  Actual command execution requires
+  `SYNC_ASSIST_WORKDAY_INTERNAL_EXECUTION_ENABLED=true`.
+  `--scheduled` also requires `SYNC_ASSIST_WORKDAY_SCHEDULER_ENABLED=true`.
+  **No scheduler is provisioned by this branch.**
+- The on-demand authenticated API has a bounded internal run action; it does
+  not authorize network, customer messaging, purchases or payment processing.
+
+### Important limits and follow-on engineering work
+
+This slice uses an append-only audit log rather than a durable job queue, and
+does not yet support cancellation of an in-flight distributed job, metered
+model tokens, real web discovery, autonomous scheduling or SMTP delivery.
+Production-scale execution still requires relational job models,
+idempotency keys at the external integration boundary, a managed queue,
+timeouts, cost budgets, tool permissions, provider receipts, alerting, and
+isolated worker infrastructure. No claim of production-ready autonomous
+execution should be made from this slice alone.
