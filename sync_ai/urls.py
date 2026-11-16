@@ -1,6 +1,7 @@
 from django.urls import path
 from .assist_pilot_views import SyncAssistPilotControlView, SyncAssistPilotDecisionView, SyncAssistPilotScanView
 from .assist_workday_views import SyncAssistWorkdayView, SyncAssistWorkdayProgressView, SyncAssistWorkdayRunView
+from .assist_job_views import SyncAssistJobView, SyncAssistJobCancelView
 from .assist_communications_views import SyncAssistCommunicationsView, SyncAssistWhatsAppInboundView
 from .assist_internal_connections import SyncAssistInternalConnectionsView
 from .assist_growth_prospects import SyncAssistGrowthProspectsView, SyncAssistGrowthProspectStageView
@@ -39,6 +40,8 @@ from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
     path("assist/pilot/workday/<str:goal_id>/run/", SyncAssistWorkdayRunView.as_view(), name="sync-assist-workday-run"),
+    path("assist/pilot/workday/jobs/", SyncAssistJobView.as_view(), name="sync-assist-background-jobs"),
+    path("assist/pilot/workday/jobs/<str:goal_id>/cancel/", SyncAssistJobCancelView.as_view(), name="sync-assist-job-cancel"),
     path("assist/pilot/workday/", SyncAssistWorkdayView.as_view(), name="sync-assist-workday"),
     path("assist/pilot/workday/<str:goal_id>/steps/<str:step_id>/", SyncAssistWorkdayProgressView.as_view(), name="sync-assist-workday-progress"),
     path("assist/pilot/chief/brief/", JarvisChiefBriefingView.as_view(), name="assist-chief-brief"),
