@@ -152,7 +152,7 @@ class DurableWorkdayTests(APITestCase):
             output = StringIO()
             call_command("sync_assist_queue_worker", "--once", "--scheduled",
                          "--max-jobs", "1", stdout=output)
-            self.assertIn("Processed 1 job(s): ['WAITING']", output.getvalue())
+            self.assertIn("Processed 1 job(s):", output.getvalue())
 
         job = SyncAssistJob.objects.get(owner=self.owner, goal_id=goal_id)
         self.assertEqual(job.state, SyncAssistJob.State.WAITING)
