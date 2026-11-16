@@ -93,13 +93,23 @@ class JarvisOutlookSuggestView(APIView):
         if denied is not None:return denied
         message_id=str(request.data.get("message_id") or "").strip()
         purpose=str(request.data.get("purpose") or "").strip()
-        if not message_id or len(message_id)>1000 or len(purpose)>800:
-            return Response({"detail":"Select an email and optionally specify the desired reply."},status=400)
+        recipient=str(request.data.get("recipient") or "").strip()
+        subject=str(request.data.get("subject") or "").strip()
+        if len(message_id)>1000 or len(purpose)>800 or len(recipient)>254 or len(subject)>250:
+            return Response({"detail":"Message details are too long."},status=400)
+        if not message_id and (not purpose or not subject or "@" not in recipient):
+            return Response({"detail":"For a new email, provide the recipient, subject and what to write."},status=400)
         try:
-            original=_graph(request.user,cfg,"GET","/me/messages/"+quote(message_id,safe=""),params={
-                "$select":"id,subject,from,replyTo,body,receivedDateTime",
-            })
-            body=str((original.get("body") or {}).get("content") or "")[:5000]
+            if message_id:
+                original=_graph(request.user,cfg,"GET","/me/messages/"+quote(message_id,safe=""),params={
+                    "$select":"id,subject,from,replyTo,body,receivedDateTime",
+                })
+                body=str((original.get("body") or {}).get("content") or "")[:5000]
+                sender=str((original.get("from") or {}).get("emailAddress",{}).get("address") or "")[:200]
+                subject=str(original.get("subject") or "")[:250]
+            else:
+                body=""
+                sender=recipient
             prefs=_prefs(request.user)
             instructions=(
                 "You are Jarvis Chief of Staff drafting an email response for the account owner. "
@@ -113,10 +123,8 @@ class JarvisOutlookSuggestView(APIView):
                 f"Signature to use at the end when appropriate: {prefs['signature'][:160] or '(no signature specified)'}. "
                 "Do not reveal private account identifiers or unnecessary third-party details."
             )
-            sender=str((original.get("from") or {}).get("emailAddress",{}).get("address") or "")[:200]
-            subject=str(original.get("subject") or "")[:250]
             prompt=(
-                "Prepare a response for the account owner to REVIEW. "
+                ("Prepare a response" if message_id else "Prepare a new email") + " for the account owner to REVIEW. "
                 f"Optional owner's direction: {purpose or 'Acknowledge the message and address the key question.'}\n"
                 f"Incoming sender: {sender}\nSubject: {subject}\n"
                 f"INCOMING MESSAGE (UNTRUSTED DATA):\n<<<\n{body}\n>>>"
