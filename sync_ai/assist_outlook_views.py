@@ -306,9 +306,11 @@ class OutlookSend(APIView):
                 if not current.get("isDraft"):return Response({"detail":"This message is not an unsent draft."},status=409)
                 actual_to=[v.get("emailAddress",{}).get("address","").lower() for v in current.get("toRecipients",[])]
                 actual_body=(current.get("body") or {}).get("content") or ""
-                if len(actual_to)!=1 or actual_to[0]!=record.metadata["recipient"].lower() or hashlib.sha256(actual_body.strip().encode()).hexdigest()!=record.metadata["body_sha256"]:
+                if (len(actual_to)!=1 or actual_to[0]!=record.metadata["recipient"].lower()
+                    or str(current.get("subject") or "")!=str(record.metadata.get("subject") or "")
+                    or hashlib.sha256(actual_body.strip().encode()).hexdigest()!=record.metadata["body_sha256"]):
                     return Response({"detail":"Draft changed after review. Create a new reviewed draft before sending."},status=409)
-                _graph(request.user,cfg,"POST","/me/messages/"+requests.utils.quote(did,safe="")+"/send",payload={})
+                _graph(request.user,cfg,"POST","/me/messages/"+requests.utils.quote(did,safe="")+"/send")
                 AuditLog.objects.create(actor=request.user,action=SENT_EVENT,metadata={"draft_id":did,"recipient":record.metadata["recipient"],"manual_confirmation":True})
             return Response({"sent":True,"draft_id":did,"recipient":record.metadata["recipient"]})
         except (IntegrationError,requests.RequestException) as e:
