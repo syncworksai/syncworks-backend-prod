@@ -199,3 +199,46 @@ class DurableWorkdayTests(APITestCase):
         self.assertFalse(AuditLog.objects.filter(
             actor=self.owner, action="sync_assist.workday.worker_receipt"
         ).exists())
+
+    def test_multi_employee_background_handoff_requires_owner_approval_each_step(self):
+        from sync_ai.assist_job_queue import run_batch
+        from user_accounts.models import AuditLog
+        self.assertEqual(self.client.post(
+            "/api/v1/sync-ai/assist/pilot/growth/prospects/",
+            {"company": "Safe Demo Company", "niche": "home_services",
+             "website": "https://example.org", "channel": "EMAIL"}, format="json"
+        ).status_code, 201)
+        created = self.client.post(BASE, {
+            "goal": "Safe sequential team handoff",
+            "steps": [
+                {"role": "RESEARCH_ANALYST", "task": "Research owner-entered prospects"},
+                {"role": "MARKETING_MANAGER", "task": "Draft unsent internal campaign"},
+                {"role": "EXECUTIVE_ASSISTANT", "task": "Report reviewed outputs"},
+            ],
+        }, format="json")
+        self.assertEqual(created.status_code, 201)
+        goal_id = created.data["created_goal_id"]
+        goal = next(g for g in created.data["goals"] if g["id"] == goal_id)
+        self.assertEqual(self.enroll(goal_id).status_code, 201)
+
+        for index, role in enumerate(["RESEARCH_ANALYST", "MARKETING_MANAGER", "EXECUTIVE_ASSISTANT"]):
+            self.assertEqual(run_batch(limit=1), ["WAITING"])
+            step = next(s for s in self.client.get(BASE).data["goals"] if s["id"] == goal_id)["steps"][index]
+            self.assertEqual(step["worker_receipt"]["role"], role)
+            self.assertEqual(step["worker_receipt"]["status"], "AWAITING_APPROVAL")
+            self.assertEqual(step["worker_receipt"]["external_actions"], 0)
+            self.assertEqual(step["worker_receipt"]["messages_sent"], 0)
+            self.assertEqual(run_batch(limit=1), [])
+            attestation = self.client.post(
+                BASE + goal_id + "/steps/" + goal["steps"][index]["id"] + "/",
+                {"status": "COMPLETED", "owner_attested": True,
+                 "evidence": "I verified the result and its source receipts."}, format="json",
+            )
+            self.assertEqual(attestation.status_code, 200)
+
+        job = SyncAssistJob.objects.get(owner=self.owner, goal_id=goal_id)
+        self.assertEqual(job.state, SyncAssistJob.State.SUCCEEDED)
+        self.assertEqual(
+            AuditLog.objects.filter(actor=self.owner, action="sync_assist.workday.worker_receipt").count(), 3
+        )
+        self.assertEqual(run_batch(limit=1), [])
