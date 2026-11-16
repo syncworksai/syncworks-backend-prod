@@ -6,6 +6,7 @@ from .assist_growth_prospects import SyncAssistGrowthProspectsView, SyncAssistGr
 from .assist_growth_operations_views import SyncAssistGrowthCampaignView, SyncAssistOperationsBriefView
 from .assist_daily_views import SyncAssistDailyView, SyncAssistDailyItemView
 from .assist_outlook_views import OutlookStatus, OutlookConnect, OutlookCallback, OutlookInbox, OutlookDraft, OutlookSend, OutlookDisconnect
+from .assist_email_intelligence import JarvisWritingPreferencesView, JarvisOutlookSuggestView, JarvisOutlookBriefView
 
 from user_accounts.viewsets.invoice_experience import (
     BusinessInvoiceActionView,
@@ -35,6 +36,9 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path("assist/pilot/chief-of-staff/preferences/", JarvisWritingPreferencesView.as_view(), name="assist-chief-preferences"),
+    path("assist/pilot/outlook/suggest/", JarvisOutlookSuggestView.as_view(), name="assist-outlook-suggest"),
+    path("assist/pilot/outlook/brief/", JarvisOutlookBriefView.as_view(), name="assist-outlook-brief"),
     path("assist/pilot/outlook/status/", OutlookStatus.as_view(), name="assist-outlook-status"),
     path("assist/pilot/outlook/connect/", OutlookConnect.as_view(), name="assist-outlook-connect"),
     path("assist/pilot/outlook/callback/", OutlookCallback.as_view(), name="assist-outlook-callback"),
