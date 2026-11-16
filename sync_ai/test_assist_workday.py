@@ -37,7 +37,9 @@ class WorkdayPilotTests(APITestCase):
         self.client.force_authenticate(self.owner)
         response = self._create()
         self.assertEqual(response.status_code, 201)
-        self.assertFalse(response.data["execution_enabled"])
+        self.assertTrue(response.data["execution_enabled"])
+        self.assertFalse(response.data["background_execution_verified"])
+        self.assertFalse(response.data["outbound_execution_enabled"])
         self.assertEqual(response.data["counts"]["planned"], 1)
         self.assertEqual(len(response.data["goals"][0]["steps"]), 2)
         self.assertEqual(
