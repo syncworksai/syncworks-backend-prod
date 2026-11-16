@@ -47,12 +47,50 @@ GATES = (
      "Verify customer charge, fee allocation, failures, refund and disputes in test mode only."),
     ("bank_reconciliation", "Payments", "Receiving account and ledger reconciliation",
      "Verify transfer, deposit, receipt and reconciliation in the receiving legal entity's sandbox."),
+    ("sandbox_accounts", "Test Lab", "Isolated role-based test accounts",
+     "Use synthetic Personal, Business, Employee, PM, Tenant, and Owner accounts in staging; verify they have no production data or God Mode access."),
+    ("test_entitlements", "Test Lab", "No-charge test entitlements",
+     "Test every subscription and add-on without live charges. Verify server-side grants are staging-scoped, audited, and expire or revoke cleanly."),
+    ("cross_device_sessions", "Test Lab", "Cross-device and session behavior",
+     "Sign in on desktop and mobile simultaneously, then verify refresh, log out, expired sessions, and account-switch boundaries."),
+    ("email_delivery_loop", "Communications", "Controlled two-way email test",
+     "Send invitations and approved test messages only to controlled mailboxes; verify delivery, reply capture, opt-out, and message isolation."),
+    ("notification_delivery_loop", "Communications", "Device notification round trip",
+     "Test device enrollment, delivery, duplicate prevention, quiet hours, and revocation across iOS/web devices."),
+    ("ai_execution_receipts", "AI Workforce", "Durable worker end-to-end evidence",
+     "Confirm scheduled worker processes a synthetic task unattended, generates a receipt, awaits owner approval and resumes safely after authorization."),
+    ("ai_worker_fail_safe", "AI Workforce", "Autonomous worker fail-safe",
+     "Test duplicate claims, retries, lease expiry, cancellation, provider outage, budgets, and no unapproved external actions."),
+    ("tenant_security", "Security", "Tenant-to-tenant isolation",
+     "Verify direct API requests cannot expose other businesses, employees, tenant ledgers, documents, invoices, or AI memory."),
+    ("admin_security", "Security", "God Mode and tester privilege boundaries",
+     "Confirm tester accounts cannot access platform administration, impersonate owners, activate God Mode, or modify live entitlements."),
+    ("api_security", "Security", "Application and integration security",
+     "Validate MFA for admins, rate limiting, CSRF/session protections, secret redaction, webhook signatures, token rotation and dependency checks."),
+    ("restore_failure_drill", "Security", "Backup and incident recovery drill",
+     "Prove a staging restore, audit history retention, ability to disable workers, rollback strategy and incident response contact."),
     ("rollback", "Release", "Recovery and rollback",
      "Confirm error reporting, recovery steps, rollback target and support escalation."),
 )
 GATE_BY_ID = {item[0]: item for item in GATES}
 MAX_NOTE_LENGTH = 1200
 MAX_HISTORY = 150
+
+# Specifications, not real accounts. No mailbox, token, password or customer data
+# is ever created or returned by this readiness API.
+TEST_PERSONAS = (
+    ("personal_basic", "Personal", "Personal free tier; request creator; receives notifications"),
+    ("personal_premium", "Personal + Assist", "Trial and purchased-add-on coverage with no real money"),
+    ("business_owner", "Business owner", "CRM, leads, employees, scheduling, invoices and marketplace"),
+    ("business_employee", "Employee", "Least-privilege assignment, schedule, and ticket access"),
+    ("property_manager", "Property manager", "PM portfolio, leases, rent and Section 8 test fixtures"),
+    ("tenant", "Tenant", "Maintenance requests, messages, and scoped rent ledger"),
+    ("property_owner", "Property owner", "Owner-only property access and reporting"),
+    ("sales_operator", "Sales OS", "Prospect pipeline and authorized outreach draft review"),
+    ("growth_operator", "Growth OS", "Marketing drafts and publishing permission boundaries"),
+    ("ai_workforce_owner", "Sync Assist", "Private pilot executor, approvals, costs, and receipts"),
+)
+
 
 
 def _serialize(record):
@@ -87,7 +125,16 @@ class PilotReadinessAPIView(APIView):
 
     def get(self, request):
         state = ProductionReadinessState.objects.filter(key=RECORD_KEY).first()
-        return Response(_serialize(state))
+        payload = _serialize(state)
+        payload["test_lab"] = {
+            "personas": [{"id": key, "role": role, "scenario": scenario}
+                         for key, role, scenario in TEST_PERSONAS],
+            "accounts_provisioned": False,
+            "test_email_delivery_enabled": False,
+            "environment_requirement": "Dedicated staging and synthetic test data only.",
+            "notice": "This is a role-based test specification, not proof that accounts or devices are connected.",
+        }
+        return Response(payload)
 
     def patch(self, request):
         gate_id = str(request.data.get("gate_id") or "").strip()
