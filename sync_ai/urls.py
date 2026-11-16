@@ -5,6 +5,7 @@ from .assist_internal_connections import SyncAssistInternalConnectionsView
 from .assist_growth_prospects import SyncAssistGrowthProspectsView, SyncAssistGrowthProspectStageView
 from .assist_growth_operations_views import SyncAssistGrowthCampaignView, SyncAssistOperationsBriefView
 from .assist_daily_views import SyncAssistDailyView, SyncAssistDailyItemView
+from .assist_outlook_views import OutlookStatus, OutlookConnect, OutlookCallback, OutlookInbox, OutlookDraft, OutlookSend, OutlookDisconnect
 
 from user_accounts.viewsets.invoice_experience import (
     BusinessInvoiceActionView,
@@ -34,6 +35,13 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path("assist/pilot/outlook/status/", OutlookStatus.as_view(), name="assist-outlook-status"),
+    path("assist/pilot/outlook/connect/", OutlookConnect.as_view(), name="assist-outlook-connect"),
+    path("assist/pilot/outlook/callback/", OutlookCallback.as_view(), name="assist-outlook-callback"),
+    path("assist/pilot/outlook/inbox/", OutlookInbox.as_view(), name="assist-outlook-inbox"),
+    path("assist/pilot/outlook/draft/", OutlookDraft.as_view(), name="assist-outlook-draft"),
+    path("assist/pilot/outlook/send/", OutlookSend.as_view(), name="assist-outlook-send"),
+    path("assist/pilot/outlook/disconnect/", OutlookDisconnect.as_view(), name="assist-outlook-disconnect"),
     path("assist/pilot/daily/", SyncAssistDailyView.as_view(), name="assist-daily"),
     path("assist/pilot/daily/item/", SyncAssistDailyItemView.as_view(), name="assist-daily-item"),
     path("assist/pilot/growth/campaign/", SyncAssistGrowthCampaignView.as_view(), name="assist-growth-campaign"),
