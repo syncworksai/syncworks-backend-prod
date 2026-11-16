@@ -77,3 +77,57 @@ class WorkdayPilotTests(APITestCase):
             self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["goals"][0]["status"], "COMPLETED")
         self.assertEqual(response.data["counts"]["completed"], 1)
+
+    def test_internal_execution_produces_scoped_evidence_and_no_send(self):
+        self.client.force_authenticate(self.owner)
+        prospect = self.client.post("/api/v1/sync-ai/assist/pilot/growth/prospects/", {
+            "company": "Local Example Services", "niche": "home_services",
+            "website": "https://example.org", "observation": "A public service website.",
+            "channel": "EMAIL",
+        }, format="json")
+        self.assertEqual(prospect.status_code, 201)
+        goal = self.client.post(BASE, {
+            "goal": "Research and draft outreach",
+            "steps": [
+                {"role": "RESEARCH_ANALYST", "task": "Report on explicitly entered companies"},
+                {"role": "SALES_MANAGER", "task": "Prepare reviewed drafts"},
+                {"role": "CHIEF_OF_STAFF", "task": "Summarize confirmed work"},
+            ],
+        }, format="json").data["goals"][0]
+        url = BASE + goal["id"] + "/run/"
+        first = self.client.post(url)
+        self.assertEqual(first.status_code, 200)
+        receipt = first.data["last_execution"]
+        self.assertEqual(receipt["role"], "RESEARCH_ANALYST")
+        self.assertEqual(receipt["status"], "AWAITING_APPROVAL")
+        self.assertEqual(receipt["external_actions"], 0)
+        self.assertEqual(receipt["model_calls"], 0)
+        self.assertEqual(receipt["output"][0]["provenance"], "owner_entered_unverified")
+        self.assertEqual(receipt["sources"][0]["type"], "syncworks_audit_event")
+        # No duplicate run while research awaits owner review.
+        self.assertEqual(self.client.post(url).status_code, 200)  # sales is blocked
+        research_id = goal["steps"][0]["id"]
+        confirmation = self.client.post(BASE + goal["id"] + "/steps/" + research_id + "/", {
+            "status": "COMPLETED", "owner_attested": True,
+            "evidence": "I checked this prospect report against my own records.",
+        }, format="json")
+        self.assertEqual(confirmation.status_code, 200)
+        sales = self.client.post(url)
+        self.assertEqual(sales.status_code, 200)
+        self.assertEqual(sales.data["last_execution"]["role"], "SALES_MANAGER")
+        self.assertFalse(sales.data["last_execution"]["output"][0]["sent"])
+        self.assertEqual(sales.data["last_execution"]["messages_sent"], 0)
+        self.assertEqual(
+            AuditLog.objects.filter(actor=self.owner, action="sync_assist.workday.worker_receipt").count(), 3
+        )
+
+    def test_internal_execution_requires_pilot_and_source_evidence(self):
+        self.client.force_authenticate(self.owner)
+        goal = self._create().data["goals"][0]
+        url = BASE + goal["id"] + "/run/"
+        blocked = self.client.post(url)
+        self.assertEqual(blocked.status_code, 200)
+        self.assertEqual(blocked.data["last_execution"]["status"], "BLOCKED")
+        self.assertEqual(blocked.data["last_execution"]["output"], [])
+        self.client.force_authenticate(self.other)
+        self.assertEqual(self.client.post(url).status_code, 403)
