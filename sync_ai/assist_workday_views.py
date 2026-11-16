@@ -101,7 +101,7 @@ class SyncAssistWorkdayView(APIView):
             if not isinstance(step, dict):
                 return Response({"detail": "Each assignment must be an object."}, status=400)
             role, task = step.get("role"), step.get("task")
-            if role not in ROLES or not isinstance(task, str) or not task.strip() or len(task.strip()) > 500:
+            if not isinstance(role, str) or role not in ROLES or not isinstance(task, str) or not task.strip() or len(task.strip()) > 500:
                 return Response({"detail": "Each assignment needs a supported role and task (1–500 characters)."}, status=400)
             prepared.append({"id": str(uuid4()), "role": role, "task": task.strip()})
         with transaction.atomic():
@@ -133,7 +133,7 @@ class SyncAssistWorkdayProgressView(APIView):
         status = request.data.get("status")
         evidence = request.data.get("evidence", "")
         attested = request.data.get("owner_attested") is True
-        if status not in STATES or not isinstance(evidence, str) or len(evidence) > 2000:
+        if not isinstance(status, str) or status not in STATES or not isinstance(evidence, str) or len(evidence) > 2000:
             return Response({"detail": "Invalid status or evidence."}, status=400)
         if status == "COMPLETED" and (not attested or len(evidence.strip()) < 15):
             return Response({"detail": "Completion requires owner attestation and at least 15 characters of evidence."}, status=400)
