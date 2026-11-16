@@ -131,3 +131,23 @@ class WorkdayPilotTests(APITestCase):
         self.assertEqual(blocked.data["last_execution"]["output"], [])
         self.client.force_authenticate(self.other)
         self.assertEqual(self.client.post(url).status_code, 403)
+
+    def test_public_search_is_opt_in_and_disabled_by_default(self):
+        from unittest.mock import patch
+        self.client.force_authenticate(self.owner)
+        payload = {
+            "goal": "Find listed service companies",
+            "steps": [{"role": "RESEARCH_ANALYST", "task": "Find public references"}],
+            "source_mode": "PUBLIC_SEARCH",
+            "public_search_query": "property management companies Alabama",
+        }
+        self.assertEqual(self.client.post(BASE, payload, format="json").status_code, 400)
+        payload["allow_external_search"] = True
+        created = self.client.post(BASE, payload, format="json")
+        self.assertEqual(created.status_code, 201)
+        goal = created.data["goals"][0]
+        self.assertEqual(goal["source_mode"], "PUBLIC_SEARCH")
+        with patch.dict("os.environ", {"SYNC_ASSIST_LIVE_RESEARCH_ENABLED": "false"}):
+            blocked = self.client.post(BASE + goal["id"] + "/run/")
+        self.assertEqual(blocked.status_code, 200)
+        self.assertEqual(blocked.data["last_execution"]["status"], "BLOCKED")
