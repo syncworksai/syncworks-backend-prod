@@ -4,6 +4,7 @@ from .assist_communications_views import SyncAssistCommunicationsView, SyncAssis
 from .assist_internal_connections import SyncAssistInternalConnectionsView
 from .assist_growth_prospects import SyncAssistGrowthProspectsView, SyncAssistGrowthProspectStageView
 from .assist_growth_operations_views import SyncAssistGrowthCampaignView, SyncAssistOperationsBriefView
+from .assist_daily_views import SyncAssistDailyView, SyncAssistDailyItemView
 
 from user_accounts.viewsets.invoice_experience import (
     BusinessInvoiceActionView,
@@ -33,6 +34,8 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path("assist/pilot/daily/", SyncAssistDailyView.as_view(), name="assist-daily"),
+    path("assist/pilot/daily/item/", SyncAssistDailyItemView.as_view(), name="assist-daily-item"),
     path("assist/pilot/growth/campaign/", SyncAssistGrowthCampaignView.as_view(), name="assist-growth-campaign"),
     path("assist/pilot/operations/brief/", SyncAssistOperationsBriefView.as_view(), name="assist-operations-brief"),
     path("assist/pilot/growth/prospects/", SyncAssistGrowthProspectsView.as_view(), name="assist-growth-prospects"),
