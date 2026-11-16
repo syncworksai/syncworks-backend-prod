@@ -43,6 +43,8 @@ def _snapshot(user):
             goals[identifier] = {
                 "id": identifier,
                 "goal": data.get("goal", ""),
+                "source_mode": data.get("source_mode", "INTERNAL_ONLY"),
+                "public_search_query": data.get("public_search_query", ""),
                 "status": "PLANNED",
                 "created_at": event.created_at.isoformat(),
                 "updated_at": event.created_at.isoformat(),
@@ -115,6 +117,19 @@ class SyncAssistWorkdayView(APIView):
             return Response({"detail": "Goal must be 1–500 characters."}, status=400)
         if not isinstance(steps, list) or not 1 <= len(steps) <= MAX_STEPS:
             return Response({"detail": "Provide 1–8 employee assignments."}, status=400)
+        source_mode = request.data.get("source_mode", "INTERNAL_ONLY")
+        public_query = request.data.get("public_search_query", "")
+        external_consent = request.data.get("allow_external_search") is True
+        if source_mode not in {"INTERNAL_ONLY", "PUBLIC_SEARCH"}:
+            return Response({"detail": "Invalid research mode."}, status=400)
+        if source_mode == "PUBLIC_SEARCH" and (
+            not external_consent or not isinstance(public_query, str)
+            or not 4 <= len(public_query.strip()) <= 120
+            or not any(isinstance(s, dict) and s.get("role") == "RESEARCH_ANALYST" for s in steps)
+        ):
+            return Response({"detail": "Public search requires a Research Analyst, a 4–120 character query and explicit consent."}, status=400)
+        if source_mode == "INTERNAL_ONLY":
+            public_query = ""
         prepared = []
         for step in steps:
             if not isinstance(step, dict):
@@ -132,7 +147,8 @@ class SyncAssistWorkdayView(APIView):
             identifier = str(uuid4())
             AuditLog.objects.create(
                 actor=request.user, action=CREATED,
-                metadata={"goal_id": identifier, "goal": goal.strip(), "steps": prepared},
+                metadata={"goal_id": identifier, "goal": goal.strip(), "steps": prepared,
+                          "source_mode": source_mode, "public_search_query": public_query.strip()},
             )
         response = _snapshot(request.user)
         response["created_goal_id"] = identifier
