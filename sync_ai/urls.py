@@ -1,4 +1,5 @@
 from django.urls import path
+from .freelance_pilot_views import FreelancePilotAccessView, FreelanceProjectsView, FreelanceProjectDetailView, FreelanceCSVProcessView, FreelanceJarvisPlanView
 from .assist_pilot_views import SyncAssistPilotControlView, SyncAssistPilotDecisionView, SyncAssistPilotScanView
 from .assist_communications_views import SyncAssistCommunicationsView, SyncAssistWhatsAppInboundView
 from .assist_internal_connections import SyncAssistInternalConnectionsView
@@ -37,6 +38,11 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path('freelance/pilot/access/', FreelancePilotAccessView.as_view(), name='freelance-pilot-access'),
+    path('freelance/pilot/projects/', FreelanceProjectsView.as_view(), name='freelance-pilot-projects'),
+    path('freelance/pilot/projects/<uuid:project_id>/', FreelanceProjectDetailView.as_view(), name='freelance-pilot-project-detail'),
+    path('freelance/pilot/process-csv/', FreelanceCSVProcessView.as_view(), name='freelance-pilot-process-csv'),
+    path('freelance/pilot/jarvis-plan/', FreelanceJarvisPlanView.as_view(), name='freelance-pilot-jarvis-plan'),
     path("assist/pilot/chief/brief/", JarvisChiefBriefingView.as_view(), name="assist-chief-brief"),
     path("assist/pilot/chief/cases/", JarvisCasesView.as_view(), name="assist-chief-cases"),
     path("assist/pilot/chief/cases/<str:case_id>/decision/", JarvisCaseDecisionView.as_view(), name="assist-chief-case-decision"),
