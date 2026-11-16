@@ -143,3 +143,12 @@ SUCCEEDED, FAILED and CANCELLED.
 - For higher volumes, add separate `ExecutionAttempt` and `ToolReceipt`
   models, stronger per-action idempotency and worker heartbeats, API quotas,
   metered provider costs, and alerting.
+
+### Verified-scheduler signal
+
+Scheduled runs require both `SYNC_ASSIST_DURABLE_WORKER_ENABLED=true`
+and `SYNC_ASSIST_DURABLE_SCHEDULED_ENABLED=true` plus the explicit
+`--scheduled` command option. Only scheduled-marked executions write
+`sync_assist.queue.worker_tick` heartbeat events. The UI requires two
+such events in the last 30 minutes before reporting recent worker activity.
+Manual `--once` executions never count as proof of a scheduler.
