@@ -11,7 +11,7 @@ from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from user_accounts.models import AuditLog
+from user_accounts.models import AuditLog, Business, BusinessMember, PMProperty
 from .assist_pilot_views import _pilot, _snapshot as pilot_snapshot
 from .assist_discovery import _candidates
 
@@ -38,6 +38,12 @@ def _priority(kind, source):
 def _build(user):
     now = timezone.localtime()
     internal, scanned = _candidates(user)
+    owned_ids = list(Business.objects.filter(owner=user, is_active=True, is_demo=False).values_list("id", flat=True))
+    managed_count = BusinessMember.objects.filter(
+        user=user, is_active=True, role__in=["OWNER", "MANAGER"],
+        business__is_active=True, business__is_demo=False,
+    ).exclude(business_id__in=owned_ids).count()
+    owned_property_count = PMProperty.objects.filter(business_id__in=owned_ids).count()
     items = {}
     for row in internal:
         priority, category = _priority(row["kind"], row["source_key"])
@@ -85,6 +91,20 @@ def _build(user):
         },
         "items": visible,
         "internal_counts": scanned,
+        "data_diagnostics": {
+            "owned_businesses": len(owned_ids),
+            "managed_businesses_not_in_owner_scan": managed_count,
+            "owned_properties": owned_property_count,
+            "internal_candidates_found": len(internal),
+            "scan_limit": "Owner-linked active non-demo businesses, specific outstanding statuses; recent requests and tickets limited to 30 days",
+            "empty_reason": (
+                "No eligible owned business is linked to this account."
+                if not owned_ids else
+                "Owner-linked businesses exist, but no outstanding records currently match the scanner scope."
+                if not internal else None
+            ),
+            "permission_note": "Manager-access businesses are not scanned for financial or tenant information without separate authorization.",
+        },
         "connections": {
             "syncworks_internal": "live_read_only",
             "outlook_in_syncworks": "not_connected",
