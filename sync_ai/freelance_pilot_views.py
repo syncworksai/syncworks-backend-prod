@@ -95,7 +95,7 @@ def _snapshot(user):
 
 
 def _fields(data, *, partial=False):
-    allowed = {"title", "status", "budget", "platform", "type", "url", "deadline"}
+    allowed = {"title", "status", "budget", "platform", "type", "url", "deadline", "project_checks"}
     if not isinstance(data, dict):
         raise ValidationError("Project details must be an object.")
     if set(data.keys()) - allowed:
@@ -105,6 +105,11 @@ def _fields(data, *, partial=False):
         if field not in data:
             continue
         value = data[field]
+        if field == "project_checks":
+            if not isinstance(value, list) or len(value) > 6 or any(type(i) is not int or i < 0 or i > 5 for i in value) or len(set(value)) != len(value):
+                raise ValidationError({"project_checks": "Use unique checklist step indices from 0 to 5."})
+            fields[field] = value
+            continue
         if field == "budget":
             try:
                 val = round(float(value), 2)
