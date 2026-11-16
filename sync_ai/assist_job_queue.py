@@ -40,7 +40,14 @@ def enqueue_goal(owner, goal_id):
         if goal["source_mode"] != "INTERNAL_ONLY":
             return None, "external_research_not_approved_for_unattended_use"
         if goal["status"] == "COMPLETED":
-            return None, "goal_already_completed"
+            existing = SyncAssistJob.objects.select_for_update().filter(owner=owner, goal_id=goal_id).first()
+            if existing and existing.state != SyncAssistJob.State.CANCELLED:
+                existing.state = SyncAssistJob.State.SUCCEEDED
+                existing.lease_token = None
+                existing.lease_expires_at = None
+                existing.last_error = ""
+                existing.save(update_fields=["state", "lease_token", "lease_expires_at", "last_error", "updated_at"])
+            return existing, "goal_already_completed"
         if not any(s["role"] in {"RESEARCH_ANALYST", "SALES_MANAGER", "CHIEF_OF_STAFF"} for s in goal["steps"]):
             return None, "no_supported_employee"
         job, created = SyncAssistJob.objects.select_for_update().get_or_create(
