@@ -189,6 +189,13 @@ class SyncAssistWorkdayProgressView(APIView):
                 metadata={"goal_id": goal_id, "step_id": step_id, "status": status,
                           "evidence": evidence.strip(), "owner_attested": attested},
             )
+        # Existing explicit background enrollment resumes only after owner review.
+        from user_accounts.models import SyncAssistJob
+        if status == "COMPLETED" and SyncAssistJob.objects.filter(
+            owner=request.user, goal_id=goal_id, state=SyncAssistJob.State.WAITING
+        ).exists():
+            from .assist_job_queue import enqueue_goal
+            enqueue_goal(request.user, goal_id)
         return Response(_snapshot(request.user))
 
 class SyncAssistWorkdayRunView(APIView):
