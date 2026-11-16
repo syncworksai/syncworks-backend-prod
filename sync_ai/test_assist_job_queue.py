@@ -177,7 +177,7 @@ class DurableWorkdayTests(APITestCase):
 
         # Owner must still attest the result; scheduling never self-approves.
         step = next(g for g in self.client.get(BASE).data["goals"] if g["id"] == goal_id)["steps"][0]
-        self.assertEqual(step["status"], "PLANNED")
+        self.assertEqual(step["status"], "BLOCKED")
         self.assertEqual(step["worker_receipt"]["status"], "BLOCKED")
         self.assertEqual(self.client.get(BASE + "jobs/").data["jobs"][0]["state"], "WAITING")
 
