@@ -1,4 +1,5 @@
 from django.urls import path
+from .ai_employee_views import AIEmployeeRosterView, AIEmployeeActivationView, AIEmployeeAssignmentsView
 from .assist_pilot_views import SyncAssistPilotControlView, SyncAssistPilotDecisionView, SyncAssistPilotScanView
 from .assist_communications_views import SyncAssistCommunicationsView, SyncAssistWhatsAppInboundView
 from .assist_internal_connections import SyncAssistInternalConnectionsView
@@ -37,6 +38,9 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path("assist/employees/", AIEmployeeRosterView.as_view(), name="assist-ai-employees"),
+    path("assist/employees/<slug:employee_id>/activation/", AIEmployeeActivationView.as_view(), name="assist-ai-employee-activation"),
+    path("assist/employees/assignments/", AIEmployeeAssignmentsView.as_view(), name="assist-ai-employee-assignments"),
     path("assist/pilot/chief/brief/", JarvisChiefBriefingView.as_view(), name="assist-chief-brief"),
     path("assist/pilot/chief/cases/", JarvisCasesView.as_view(), name="assist-chief-cases"),
     path("assist/pilot/chief/cases/<str:case_id>/decision/", JarvisCaseDecisionView.as_view(), name="assist-chief-case-decision"),
