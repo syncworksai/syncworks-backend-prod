@@ -85,3 +85,36 @@ class DurableWorkdayTests(APITestCase):
         with patch.dict("os.environ", {"SYNC_ASSIST_DURABLE_WORKER_ENABLED": "false"}):
             with self.assertRaises(CommandError):
                 call_command("sync_assist_queue_worker", "--once", stdout=StringIO())
+
+    def test_owner_attestation_finishes_persisted_job(self):
+        from sync_ai.assist_job_queue import run_batch
+        prospect = self.client.post("/api/v1/sync-ai/assist/pilot/growth/prospects/", {
+            "company": "Sample Mechanical", "niche": "home_services",
+            "website": "https://example.org", "channel": "EMAIL",
+        }, format="json")
+        self.assertEqual(prospect.status_code, 201)
+        goal_id = self.make_goal()
+        self.enroll(goal_id)
+        self.assertEqual(run_batch(limit=1), ["WAITING"])
+        goal = next(g for g in self.client.get(BASE).data["goals"] if g["id"] == goal_id)
+        step = goal["steps"][0]
+        self.assertEqual(step["worker_receipt"]["status"], "AWAITING_APPROVAL")
+        confirmed = self.client.post(BASE + goal_id + "/steps/" + step["id"] + "/", {
+            "status": "COMPLETED",
+            "owner_attested": True,
+            "evidence": "I reviewed the prospect source and the report output.",
+        }, format="json")
+        self.assertEqual(confirmed.status_code, 200)
+        job = SyncAssistJob.objects.get(owner=self.owner, goal_id=goal_id)
+        self.assertEqual(job.state, SyncAssistJob.State.SUCCEEDED)
+        self.assertEqual(run_batch(limit=1), [])
+
+    def test_exclusive_claim_and_retry_state(self):
+        from sync_ai.assist_job_queue import claim_one, run_claimed
+        goal_id = self.make_goal()
+        self.enroll(goal_id)
+        claimed = claim_one()
+        self.assertIsNotNone(claimed)
+        self.assertIsNone(claim_one())
+        self.assertEqual(run_claimed(*claimed), "WAITING")
+        self.assertEqual(SyncAssistJob.objects.get(goal_id=goal_id).state, "WAITING")
