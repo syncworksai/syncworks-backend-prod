@@ -18,6 +18,7 @@ from .voice_views import (
     HealthVoiceSpeakView,
 )
 from .forge_voice_views import ForgeVoiceSpeakView
+from .workout_progression import HealthWorkoutProgressionView
 from .workout_views import (
     HealthActiveWorkoutView,
     HealthWorkoutSessionsView,
@@ -82,6 +83,7 @@ urlpatterns = [
         HealthVoiceSpeakView.as_view(),
         name="voice-speak",
     ),
+    path("workout-sessions/progression/", HealthWorkoutProgressionView.as_view(), name="workout-progression"),
     path(
         "workout-sessions/",
         HealthWorkoutSessionsView.as_view(),
