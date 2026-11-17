@@ -1,3 +1,4 @@
+from .freelance_synthetic_views import FreelanceSyntheticJobsView, FreelanceSyntheticJobView, FreelanceSyntheticDownloadView
 from django.urls import path
 from .freelance_pilot_views import FreelancePilotAccessView, FreelanceProjectsView, FreelanceProjectDetailView, FreelanceCSVProcessView, FreelanceJarvisPlanView
 from .assist_pilot_views import SyncAssistPilotControlView, SyncAssistPilotDecisionView, SyncAssistPilotScanView
@@ -38,6 +39,9 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path("freelance/pilot/synthetic-jobs/", FreelanceSyntheticJobsView.as_view(), name="freelance-synthetic-jobs"),
+    path("freelance/pilot/synthetic-jobs/<uuid:job_id>/", FreelanceSyntheticJobView.as_view(), name="freelance-synthetic-job"),
+    path("freelance/pilot/synthetic-jobs/<uuid:job_id>/download/", FreelanceSyntheticDownloadView.as_view(), name="freelance-synthetic-download"),
     path('freelance/pilot/access/', FreelancePilotAccessView.as_view(), name='freelance-pilot-access'),
     path('freelance/pilot/projects/', FreelanceProjectsView.as_view(), name='freelance-pilot-projects'),
     path('freelance/pilot/projects/<uuid:project_id>/', FreelanceProjectDetailView.as_view(), name='freelance-pilot-project-detail'),
