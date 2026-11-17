@@ -10,7 +10,7 @@ from .assist_pilot_budget import PilotBudgetExceeded, reserve_paid_tool, snapsho
 class SharedPilotBudgetTests(TestCase):
     def setUp(self):
         model = get_user_model()
-        self.owner = model.objects.create_user(email="pilot-budget-test@example.com", password="pass1234")
+        self.owner = model.objects.create_user(username="pilot-budget-test", email="pilot-budget-test@example.com", password="pass1234")
 
     def test_default_budget_includes_all_roles_and_untracked_hosting_warning(self):
         data = snapshot(self.owner)
@@ -51,6 +51,6 @@ class SharedPilotBudgetTests(TestCase):
             reserve_paid_tool(self.owner, role="UNKNOWN", provider="fake-test", operation_key="unknown-001", max_usd=Decimal("1.00"))
 
     def test_budget_is_isolated_by_owner(self):
-        other = get_user_model().objects.create_user(email="separate-budget@example.com", password="pass1234")
+        other = get_user_model().objects.create_user(username="separate-budget", email="separate-budget@example.com", password="pass1234")
         reserve_paid_tool(self.owner, role="RESEARCH_ANALYST", provider="fake-test", operation_key="owner-001", max_usd="10.00")
         self.assertEqual(snapshot(other)["remaining_usd"], "10.00")
