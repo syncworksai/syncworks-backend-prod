@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 from user_accounts.models import SyncAssistJob, AuditLog
 from .assist_pilot_views import _pilot
 from .assist_job_queue import cancel_goal_job, enqueue_goal, serialize_job
+from .assist_pilot_budget import snapshot as budget_snapshot
 
 
 class SyncAssistJobView(APIView):
@@ -33,6 +34,7 @@ class SyncAssistJobView(APIView):
             "last_worker_run": ticks[0].created_at.isoformat() if ticks else None,
             "scheduling_enabled": observed,
             "external_actions_enabled": False,
+            "pilot_budget": budget_snapshot(request.user),
             "notice": "Worker status is derived from recorded runs, not the deployment configuration. Two independent runs in 30 minutes are required for a recent activity indicator.",
         })
 
