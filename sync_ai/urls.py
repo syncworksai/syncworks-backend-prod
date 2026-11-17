@@ -5,6 +5,7 @@ from .assist_pilot_views import SyncAssistPilotControlView, SyncAssistPilotDecis
 from .assist_workday_views import SyncAssistWorkdayView, SyncAssistWorkdayProgressView, SyncAssistWorkdayRunView
 from .assist_job_views import SyncAssistJobView, SyncAssistJobCancelView
 from .assist_budget_views import SyncAssistBudgetView
+from .assist_delegation_views import SyncAssistDelegationView
 from .assist_team_views import SyncAssistTeamView
 from .assist_work_history import SyncAssistWorkHistoryView
 from .assist_communications_views import SyncAssistCommunicationsView, SyncAssistWhatsAppInboundView
@@ -44,6 +45,7 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path('assist/pilot/delegate/', SyncAssistDelegationView.as_view(), name='sync-assist-delegate'),
     path('assist/pilot/budget/', SyncAssistBudgetView.as_view(), name='sync-assist-pilot-budget'),
     path('forge/reflection/', ForgeReflectionView.as_view(), name='forge-reflection'),
     path('forge/profile/', ForgeProfileView.as_view(), name='forge-profile'),
