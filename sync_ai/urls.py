@@ -1,3 +1,4 @@
+from .forge_reflection_views import ForgeReflectionView
 from django.urls import path
 from .assist_pilot_views import SyncAssistPilotControlView, SyncAssistPilotDecisionView, SyncAssistPilotScanView
 from .assist_workday_views import SyncAssistWorkdayView, SyncAssistWorkdayProgressView, SyncAssistWorkdayRunView
@@ -41,6 +42,7 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path('forge/reflection/', ForgeReflectionView.as_view(), name='forge-reflection'),
     path("assist/pilot/workday/history/", SyncAssistWorkHistoryView.as_view(), name="sync-assist-work-history"),
     path("assist/pilot/team/", SyncAssistTeamView.as_view(), name="sync-assist-team-config"),
     path("assist/pilot/workday/<str:goal_id>/run/", SyncAssistWorkdayRunView.as_view(), name="sync-assist-workday-run"),
