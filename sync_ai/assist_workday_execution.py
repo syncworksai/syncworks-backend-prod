@@ -282,7 +282,12 @@ def execute_one(user, goal_id):
             and bool(os.environ.get("SERPER_API_KEY", "").strip())
         )
         if public_attempt:
-            used_today = AuditLog.objects.filter(
+            # Until the provider adapter reserves a known maximum via
+            # assist_pilot_budget.reserve_paid_tool, public paid requests
+            # must fail closed. An observed daily request count is NOT a USD cap.
+            return {"code": "budget_exhausted", "detail": "Paid web research is disabled until the $10 shared budget is enforced at the provider boundary."}
+        if public_attempt:
+            used_today = AuditLog.objects.filter;
                 actor=user, action=WORKED,
                 metadata__provider_requests=1,
                 created_at__gte=timezone.now() - timedelta(days=1),
