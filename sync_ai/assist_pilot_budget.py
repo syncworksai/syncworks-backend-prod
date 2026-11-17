@@ -79,7 +79,7 @@ def snapshot(owner):
     for metadata in reservations:
         role = metadata.get("role")
         roles[role] = roles.get(role, 0) + metadata["reserved_cents"]
-    return {
+    payload = {
         "period": start.strftime("%Y-%m"),
         "limit_usd": "10.00",
         "reserved_usd": f"{spent / 100:.2f}",
@@ -92,6 +92,23 @@ def snapshot(owner):
         "current_internal_worker_model_calls": 0,
         "notice": "A reservation is a conservative upper bound, not a reconciled provider invoice. Unregistered paid tools remain disabled. This is not a Render-wide billing cap.",
     }
+
+    from .assist_budget_policy import role_limits_snapshot
+    policies = role_limits_snapshot(owner)
+    for role, policy in policies.items():
+        reserved = roles.get(role, 0)
+        limit = int(Decimal(policy["limit_usd"]) * 100)
+        policy["reserved_usd"] = f"{reserved / 100:.2f}"
+        policy["remaining_usd"] = f"{max(0, limit - reserved) / 100:.2f}"
+    payload["employee_budgets"] = policies
+    payload["usage_percent"] = int(spent * 100 / CAP_CENTS)
+    payload["alerts"] = [
+        {"threshold_percent": threshold, "level": "critical" if threshold == 100 else "warning"}
+        for threshold in (75, 90, 100) if spent * 100 >= threshold * CAP_CENTS
+    ]
+    payload["actual_provider_cost_usd"] = None  # Not reconciled with invoices.
+    payload["pricing_status"] = "planning_only"
+    return payload
 
 
 def _used_cents_from_metadata(items):
@@ -130,6 +147,10 @@ def reserve_paid_tool(owner, *, role, provider, operation_key, max_usd):
                 raise ValueError("Idempotency key reused with different operation parameters.")
             return {"reservation_id": existing.pk, "created": False}
         used = _used_cents(_reservations(owner, start, end))
+        from .assist_budget_policy import role_limit_cents
+        role_used = _used_cents(_reservations(owner, start, end).filter(metadata__role=role))
+        if role_used + cents > role_limit_cents(owner, role):
+            raise PilotBudgetExceeded("Employee monthly paid-tool sub-limit exceeded. No paid call authorized.")
         if used + cents > CAP_CENTS:
             raise PilotBudgetExceeded("Shared $10 monthly AI/tool budget exceeded. No paid call authorized.")
         event = AuditLog.objects.create(
@@ -137,4 +158,12 @@ def reserve_paid_tool(owner, *, role, provider, operation_key, max_usd):
             action=RESERVATION_ACTION,
             metadata={"role": role, "provider": provider, "operation_key": operation_key, "reserved_cents": cents},
         )
+        for threshold in (75, 90, 100):
+            if used * 100 < CAP_CENTS * threshold <= (used + cents) * 100:
+                AuditLog.objects.create(
+                    actor=owner,
+                    action="sync_assist.budget.threshold_alert",
+                    metadata={"period": start.strftime("%Y-%m"), "threshold_percent": threshold,
+                              "reserved_cents": used + cents, "limit_cents": CAP_CENTS},
+                )
         return {"reservation_id": event.pk, "created": True}
