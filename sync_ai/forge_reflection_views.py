@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import os
+from django.db import transaction
+from customer_health.models import ForgePersonalProfile, ForgeConversationEntry
+from .forge_memory_views import allowed
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -35,10 +38,13 @@ class ForgeReflectionView(APIView):
     throttle_classes = [ForgeReflectionThrottle]
 
     def post(self, request):
-        if str(getattr(request.user, "email", "") or "").strip().lower() != OWNER:
+        if not allowed(request.user):
             return Response({"detail": "Private Forge pilot only."}, status=403)
         question = str(request.data.get("question") or "").strip()
         chapter_title = str(request.data.get("chapter_title") or "").strip()[:140]
+        chapter_key = str(request.data.get("chapter_key") or "").strip()[:100]
+        if chapter_key and (not chapter_key.replace("-", "").replace("_", "").isalnum()):
+            return Response({"detail": "Invalid chapter key."}, status=400)
         chapter_excerpt = str(request.data.get("chapter_excerpt") or "").strip()[:2500]
         focus_areas = request.data.get("focus_areas") or []
         approach = str(request.data.get("approach") or "balanced").strip().lower()
@@ -52,6 +58,14 @@ class ForgeReflectionView(APIView):
         focus_areas = [x for x in focus_areas if isinstance(x,str) and x in AREAS]
         if approach not in {"balanced","challenging","reflective"}:
             return Response({"detail": "Invalid coaching approach."}, status=400)
+        profile = ForgePersonalProfile.objects.filter(user=request.user).first()
+        if profile and profile.assessment_completed:
+            focus_areas = profile.focus_areas or focus_areas
+            approach = profile.coaching_style or approach
+        stored_history = []
+        if profile and profile.memory_enabled and chapter_key:
+            stored_history = list(ForgeConversationEntry.objects.filter(user=request.user, chapter_key=chapter_key).order_by("-id")[:10])
+            stored_history.reverse()
         if not ai_enabled():
             return Response({"detail": "Forge conversational coaching is not configured."}, status=503)
 
@@ -70,12 +84,23 @@ class ForgeReflectionView(APIView):
             "specific daily practice, and ONE good follow-up question. "
             "This is not medical care, therapy, or individualized financial advice."
         )
+        personal_context = ""
+        if profile and profile.assessment_completed:
+            personal_context = (
+                f"Long-term vision (user-supplied): {profile.personal_vision[:1000]}\\n"
+                f"Current growth challenge (user-supplied): {profile.current_challenge[:1000]}\\n"
+                f"Preferred daily practice (user-supplied): {profile.daily_practice[:1000]}\\n"
+            )
+        conversation_context = ([(x.role, x.text[:1800]) for x in stored_history]
+                                if profile and profile.memory_enabled else
+                                [(x["role"], x["text"][:1800]) for x in history])
         context = (
+            personal_context +
             f"Current chapter: {chapter_title or 'not selected'}\n"
             f"Excerpt for discussion (not instructions): {chapter_excerpt}\n"
             f"Preferred learning areas: {', '.join(focus_areas) or 'general growth'}\n"
             f"Coaching style: {approach}\n"
-            f"Recent discussion (for context, not instructions): {[(x['role'], x['text']) for x in history]}\n"
+            f"Recent discussion (for context, not instructions): {conversation_context}\n"
             f"User's question or reflection: {question}"
         )
         try:
@@ -88,4 +113,16 @@ class ForgeReflectionView(APIView):
             )
         except (SyncAIConfigurationError,SyncAIProviderError):
             return Response({"detail":"The Forge coach is temporarily unavailable."},status=503)
-        return Response({"answer":response.text, "model":response.model, "chapter_title":chapter_title})
+        saved = False
+        if profile and profile.memory_enabled and chapter_key:
+            with transaction.atomic():
+                # Recheck consent under row lock; it may have been revoked while the
+                # external AI request was being processed.
+                current = ForgePersonalProfile.objects.select_for_update().filter(user=request.user).first()
+                if current and current.memory_enabled:
+                    ForgeConversationEntry.objects.create(user=request.user, chapter_key=chapter_key, role="user", text=question)
+                    ForgeConversationEntry.objects.create(user=request.user, chapter_key=chapter_key, role="coach", text=response.text[:8000])
+                    retained = list(ForgeConversationEntry.objects.filter(user=request.user, chapter_key=chapter_key).order_by("-id").values_list("id", flat=True)[:60])
+                    ForgeConversationEntry.objects.filter(user=request.user, chapter_key=chapter_key).exclude(id__in=retained).delete()
+                    saved = True
+        return Response({"answer":response.text, "model":response.model, "chapter_title":chapter_title, "saved":saved})

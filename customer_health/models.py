@@ -104,3 +104,37 @@ class CustomerHealthFeedback(models.Model):
     def __str__(self) -> str:
         email = getattr(self.user, "email", "") or getattr(self.user, "username", "")
         return f"Health Feedback - {self.area} - {email}"
+
+
+class ForgePersonalProfile(models.Model):
+    """Separate founder-only personal coaching preferences; no Chief of Staff sharing."""
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="forge_personal_profile"
+    )
+    focus_areas = models.JSONField(default=default_list, blank=True)
+    coaching_style = models.CharField(max_length=24, default="balanced")
+    personal_vision = models.TextField(blank=True, default="")
+    current_challenge = models.TextField(blank=True, default="")
+    daily_practice = models.TextField(blank=True, default="")
+    memory_enabled = models.BooleanField(default=False)
+    assessment_completed = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Forge Personal Profile"
+
+
+class ForgeConversationEntry(models.Model):
+    """Opt-in, user-owned dialogue history, isolated from Sync Assist."""
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="forge_conversation_entries"
+    )
+    chapter_key = models.CharField(max_length=100, db_index=True)
+    role = models.CharField(max_length=12)
+    text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        indexes = [models.Index(fields=["user", "chapter_key", "created_at"], name="forge_msg_owner_chapter_idx")]
