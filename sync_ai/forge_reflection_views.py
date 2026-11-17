@@ -113,11 +113,16 @@ class ForgeReflectionView(APIView):
             )
         except (SyncAIConfigurationError,SyncAIProviderError):
             return Response({"detail":"The Forge coach is temporarily unavailable."},status=503)
+        saved = False
         if profile and profile.memory_enabled and chapter_key:
             with transaction.atomic():
-                ForgeConversationEntry.objects.create(user=request.user, chapter_key=chapter_key, role="user", text=question)
-                ForgeConversationEntry.objects.create(user=request.user, chapter_key=chapter_key, role="coach", text=response.text[:8000])
-                # Keep at most 60 stored entries per chapter to limit retention.
-                retained = list(ForgeConversationEntry.objects.filter(user=request.user, chapter_key=chapter_key).order_by("-id").values_list("id", flat=True)[:60])
-                ForgeConversationEntry.objects.filter(user=request.user, chapter_key=chapter_key).exclude(id__in=retained).delete()
-        return Response({"answer":response.text, "model":response.model, "chapter_title":chapter_title, "saved":bool(profile and profile.memory_enabled and chapter_key)})
+                # Recheck consent under row lock; it may have been revoked while the
+                # external AI request was being processed.
+                current = ForgePersonalProfile.objects.select_for_update().filter(user=request.user).first()
+                if current and current.memory_enabled:
+                    ForgeConversationEntry.objects.create(user=request.user, chapter_key=chapter_key, role="user", text=question)
+                    ForgeConversationEntry.objects.create(user=request.user, chapter_key=chapter_key, role="coach", text=response.text[:8000])
+                    retained = list(ForgeConversationEntry.objects.filter(user=request.user, chapter_key=chapter_key).order_by("-id").values_list("id", flat=True)[:60])
+                    ForgeConversationEntry.objects.filter(user=request.user, chapter_key=chapter_key).exclude(id__in=retained).delete()
+                    saved = True
+        return Response({"answer":response.text, "model":response.model, "chapter_title":chapter_title, "saved":saved})
