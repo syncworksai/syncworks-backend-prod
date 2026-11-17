@@ -7,7 +7,9 @@ on:
   pull_request:
     paths:
       - "customer_health/workout_views.py"
+      - "customer_health/workout_progression.py"
       - "customer_health/test_workout_persistence.py"
+      - "customer_health/test_workout_progression.py"
       - "customer_health/urls.py"
       - ".github/workflows/health-workout-persistence-ci.yml"
 
@@ -31,4 +33,4 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python manage.py check
       - run: python manage.py makemigrations customer_health --check --dry-run
-      - run: python manage.py test customer_health.test_workout_persistence -v 2
+      - run: python manage.py test customer_health.test_workout_persistence customer_health.test_workout_progression -v 2
