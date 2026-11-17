@@ -52,7 +52,7 @@ def role_limits_snapshot(owner):
 
 def configure_role_limit(owner, *, role, limit_usd):
     """Persist owner-only role policy under the same owner lock as reservations."""
-    from .assist_pilot_budget import ALLOWED_ROLES, RESERVATION_ACTION, _period_bounds, _reservations
+    from .assist_pilot_budget import ALLOWED_ROLES, _period_bounds, _reservations, _used_cents
     if role not in ALLOWED_ROLES:
         raise ValueError("Unsupported role.")
     try:
@@ -65,10 +65,7 @@ def configure_role_limit(owner, *, role, limit_usd):
     with transaction.atomic():
         get_user_model().objects.select_for_update().get(pk=owner.pk)
         start, end = _period_bounds()
-        used = sum(
-            (metadata or {}).get("reserved_cents", 0)
-            for metadata in _reservations(owner, start, end).filter(metadata__role=role).values_list("metadata", flat=True)
-        )
+        used = _used_cents(_reservations(owner, start, end).filter(metadata__role=role))
         if used > cents:
             raise ValueError("Role limit cannot be below existing monthly reservations.")
         limits = dict(_latest_policy(owner))
