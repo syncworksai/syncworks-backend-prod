@@ -42,6 +42,9 @@ class ForgeReflectionView(APIView):
         chapter_excerpt = str(request.data.get("chapter_excerpt") or "").strip()[:2500]
         focus_areas = request.data.get("focus_areas") or []
         approach = str(request.data.get("approach") or "balanced").strip().lower()
+        history = request.data.get("history") or []
+        if not isinstance(history,list) or len(history)>10 or any(not isinstance(item,dict) or item.get("role") not in ("user","coach") or not isinstance(item.get("text"),str) or len(item["text"])>1800 for item in history):
+            return Response({"detail": "Invalid discussion history."}, status=400)
         if not question or len(question) > 2500:
             return Response({"detail": "Question must be 1–2500 characters."}, status=400)
         if not isinstance(focus_areas, list) or len(focus_areas) > 8:
