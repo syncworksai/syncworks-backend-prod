@@ -154,8 +154,8 @@ class WorkdayPilotTests(APITestCase):
         self.assertEqual(blocked.status_code, 200)
         self.assertEqual(blocked.data["last_execution"]["status"], "BLOCKED")
 
-    def test_public_search_receipt_preserves_provider_sources_without_sending(self):
-        from unittest.mock import Mock, patch
+    def test_public_search_requires_integrated_spend_guard_before_provider_request(self):
+        from unittest.mock import patch
         self.client.force_authenticate(self.owner)
         payload = {
             "goal": "Research publicly listed businesses",
@@ -165,24 +165,15 @@ class WorkdayPilotTests(APITestCase):
             "allow_external_search": True,
         }
         goal = self.client.post(BASE, payload, format="json").data["goals"][0]
-        provider_response = Mock()
-        provider_response.json.return_value = {"organic": [
-            {"title": "Example Property Manager",
-             "link": "https://example.org/",
-             "snippet": "A publicly indexed business listing"},
-        ]}
         with patch.dict("os.environ", {
             "SYNC_ASSIST_LIVE_RESEARCH_ENABLED": "true",
             "SERPER_API_KEY": "placeholder-for-test",
-        }), patch("sync_ai.assist_public_search.requests.post", return_value=provider_response):
+        }), patch("sync_ai.assist_public_search.requests.post") as provider:
             run = self.client.post(BASE + goal["id"] + "/run/")
-        self.assertEqual(run.status_code, 200)
-        receipt = run.data["last_execution"]
-        self.assertEqual(receipt["status"], "AWAITING_APPROVAL")
-        self.assertEqual(receipt["sources"][0]["url"], "https://example.org/")
-        self.assertFalse(receipt["output"][0]["qualified"])
-        self.assertEqual(receipt["messages_sent"], 0)
-        self.assertEqual(receipt["external_actions"], 0)
+        self.assertEqual(run.status_code, 409)
+        self.assertIn("$10", run.data["detail"])
+        provider.assert_not_called()
+        self.assertFalse(self.client.get(BASE).data["goals"][0]["steps"][0].get("worker_receipt"))
 
     def test_marketing_and_executive_assistant_require_real_approved_research(self):
         self.client.force_authenticate(self.owner)
