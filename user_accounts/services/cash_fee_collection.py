@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from user_accounts.models import Business, CashFeeInvoice
 from user_accounts.models.platform_billing import PlatformBillingProfile
+from user_accounts.services.cash_fee_unlock import unlock_settled_cash_fees
 
 
 @dataclass
@@ -45,8 +46,8 @@ def charge_cash_fee_invoice(
 
     Returns: (ok, message)
     """
-    if inv.status != CashFeeInvoice.Status.OPEN:
-        return False, "Invoice not OPEN."
+    if inv.status not in (CashFeeInvoice.Status.OPEN, CashFeeInvoice.Status.OVERDUE):
+        return False, "Invoice is not payable."
 
     inv.mark_overdue_if_needed()
 
@@ -107,6 +108,7 @@ def charge_cash_fee_invoice(
             inv.status = CashFeeInvoice.Status.PAID
             inv.paid_at = timezone.now()
             inv.save(update_fields=["status", "paid_at", "stripe_payment_intent_id", "stripe_charge_id", "updated_at"])
+            unlock_settled_cash_fees()
             return True, "Charged successfully."
 
         inv.last_error = f"PaymentIntent status={pi.get('status')}"
@@ -137,14 +139,14 @@ def collect_open_cash_fee_invoices(*, due_only: bool = True) -> CashFeeCollectRe
     res = CashFeeCollectResult()
     today = timezone.localdate()
 
-    qs = CashFeeInvoice.objects.select_related("business").filter(status=CashFeeInvoice.Status.OPEN)
+    qs = CashFeeInvoice.objects.select_related("business").filter(status__in=(CashFeeInvoice.Status.OPEN, CashFeeInvoice.Status.OVERDUE))
     if due_only:
         qs = qs.filter(models.Q(due_date__lte=today) | models.Q(due_date__isnull=True))
 
     for inv in qs.iterator():
         res.considered += 1
 
-        if inv.status != CashFeeInvoice.Status.OPEN:
+        if inv.status not in (CashFeeInvoice.Status.OPEN, CashFeeInvoice.Status.OVERDUE):
             res.skipped_not_open += 1
             continue
 

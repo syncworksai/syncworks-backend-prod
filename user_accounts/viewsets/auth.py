@@ -281,14 +281,15 @@ class UpgradeToSboPromoAPIView(APIView):
             return Response({"detail": "Promo code is required."}, status=status.HTTP_400_BAD_REQUEST)
 
         promo = PromoCode.objects.filter(code__iexact=code).first()
+        is_lifetime_pilot = code.upper() == _legacy_promo_code().upper()
         billing_exempt = False
         subscriptions_waived = False
 
         if promo:
             if not promo.is_valid_now():
                 return Response({"detail": "Promo code is expired or inactive."}, status=status.HTTP_400_BAD_REQUEST)
-            billing_exempt = bool(getattr(promo, "billing_exempt", False))
-            subscriptions_waived = bool(getattr(promo, "waive_subscriptions", False))
+            billing_exempt = False if is_lifetime_pilot else bool(getattr(promo, "billing_exempt", False))
+            subscriptions_waived = True if is_lifetime_pilot else bool(getattr(promo, "waive_subscriptions", False))
         else:
             if code != _legacy_promo_code():
                 return Response({"detail": "Invalid promo code."}, status=status.HTTP_400_BAD_REQUEST)

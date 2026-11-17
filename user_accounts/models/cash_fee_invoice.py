@@ -45,6 +45,8 @@ class CashFeeInvoice(models.Model):
     attempt_count = models.PositiveIntegerField(default=0)
     last_attempt_at = models.DateTimeField(null=True, blank=True)
     last_error = models.TextField(blank=True, default="")
+    last_reminder_sent_at = models.DateTimeField(null=True, blank=True)
+    reminder_count = models.PositiveIntegerField(default=0)
 
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
