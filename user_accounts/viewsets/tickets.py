@@ -90,10 +90,7 @@ def _employee_can_assign(mem: Optional[BusinessMember]) -> bool:
 def _employee_can_schedule(mem: Optional[BusinessMember]) -> bool:
     if not mem:
         return False
-    return bool(
-        getattr(mem, "can_manage_schedule", False)
-        or _member_role(mem) in {"OWNER", "MANAGER", "DISPATCH", "ADMIN"}
-    )
+    return bool(getattr(mem, "can_manage_schedule", False))
 
 
 def _employee_is_assigned_tech(mem: Optional[BusinessMember], ticket: Ticket) -> bool:
@@ -115,7 +112,6 @@ def _employee_can_manual_override(mem: Optional[BusinessMember]) -> bool:
         getattr(mem, "can_manage_schedule", False)
         or getattr(mem, "can_assign_tickets", False)
         or getattr(mem, "can_close_tickets", False)
-        or _member_role(mem) in {"OWNER", "MANAGER", "DISPATCH", "ADMIN"}
     )
 
 
