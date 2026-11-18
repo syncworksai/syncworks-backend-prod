@@ -1841,7 +1841,33 @@ class TicketMessageViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(sender=self.request.user, type=TicketMessage.MessageType.USER)
+        message = serializer.save(sender=self.request.user, type=TicketMessage.MessageType.USER)
+        ticket = Ticket.objects.select_related("assigned_business","business_customer","customer").filter(pk=message.ticket_id).first()
+        if not ticket or not ticket.assigned_business_id:
+            return
+        from django.db import transaction
+        from user_accounts.viewsets.technician_workflow import _customer_update, _notify_dispatch
+        actor = self.request.user
+        def dispatch_notice():
+            if ticket.customer_visible and ticket.customer_id == actor.id:
+                _notify_dispatch(
+                    ticket.assigned_business,actor,ticket,
+                    f"Customer replied to ticket #{ticket.pk}. Open the ticket conversation."
+                )
+                if ticket.assigned_member_id and ticket.assigned_member_id != ticket.assigned_business.owner_id:
+                    from user_accounts.models import Notification
+                    Notification.objects.create(
+                        recipient_id=ticket.assigned_member_id, actor=actor,
+                        type=Notification.TYPE_TICKET,title="Customer message",
+                        body=f"Customer sent a message on ticket #{ticket.pk}.",
+                        data={"source":"BUSINESS_DISPATCH","business_id":ticket.assigned_business_id,
+                              "ticket_id":ticket.pk,"target_path":f"/tickets/{ticket.pk}"},
+                    )
+            else:
+                _customer_update(
+                    ticket,actor,"You have a new message from your service provider. Open your ticket to reply."
+                )
+        transaction.on_commit(dispatch_notice)
 
 
 class TicketAttachmentViewSet(viewsets.ModelViewSet):
