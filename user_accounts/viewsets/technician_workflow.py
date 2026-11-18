@@ -253,6 +253,9 @@ class TechnicianPickupView(APIView):
             return Response({"detail":"Job unavailable."}, status=404)
         if ticket.assigned_member_id == request.user.id:
             return Response({"detail":"Already assigned to you."}, status=409)
+        existing_clock = TicketOperationalProfile.objects.filter(ticket=ticket).first()
+        if existing_clock and existing_clock.actual_started_at and not existing_clock.actual_finished_at:
+            return Response({"detail":"This job has an active work clock. The assigned technician must release it before pickup."},status=409)
         # A pickup is only a REQUEST. Dispatch must approve.
         from user_accounts.models import WorkforceProfile
         required = set(x.lower() for x in (
@@ -311,6 +314,9 @@ class TechnicianPickupDecisionView(APIView):
         ).first()
         if not ticket or ticket.status in FINAL or ticket.assigned_member_id != notice.data.get("assigned_member_id"):
             return Response({"detail":"Job assignment changed; review again."},status=409)
+        running_clock = TicketOperationalProfile.objects.filter(ticket=ticket).first()
+        if running_clock and running_clock.actual_started_at and not running_clock.actual_finished_at:
+            return Response({"detail":"Work clock is active; the current technician must stop/release the job."},status=409)
         user_id = notice.data["requester_id"]
         candidate = BusinessMember.objects.filter(business=business,user_id=user_id,is_active=True).first()
         if not candidate:
