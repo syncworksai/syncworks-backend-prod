@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from django.db import transaction
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
+from django.utils.html import escape
 from datetime import timedelta
 from urllib.parse import urlencode
 import logging
@@ -46,8 +47,41 @@ def _email_partner_invitation(invitation_id):
             "The invitation expires in 14 days. A paid SyncWorks business subscription is not required just to receive this invitation. "
             "Full business management tools are offered separately.\n"
             "If you weren't expecting this invitation, you can ignore this email.\n")
+    # Table layout and inline styles keep the invitation readable in Gmail,
+    # Outlook and mobile mail apps without relying on images or external fonts.
+    safe_business = escape(invitation.inviting_business.name)
+    safe_name = escape(name)
+    safe_url = escape(url)
+    optional_message = (
+        f'<tr><td style="padding:0 32px 18px;color:#b9cbdf;font-size:14px;line-height:22px;">'
+        f'{escape(invitation.message[:500])}</td></tr>'
+        if invitation.message else ''
+    )
+    html = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:28px 12px;background:#071021;font-family:Arial,Helvetica,sans-serif;color:#f4f8ff;">
+<table role="presentation" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;margin:0 auto;border-collapse:collapse;">
+<tr><td style="height:5px;background:#20d4f2;border-radius:16px 16px 0 0;"></td></tr>
+<tr><td style="background:#0b1930;border:1px solid #254363;border-top:none;border-radius:0 0 16px 16px;padding:0;">
+<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;">
+<tr><td style="padding:30px 32px 10px;"><span style="font-size:16px;letter-spacing:2px;font-weight:bold;color:#eef6ff;">SYNCWORKS</span><br><span style="font-size:11px;letter-spacing:2px;color:#66dffa;">PARTNER NETWORK</span></td></tr>
+<tr><td style="padding:14px 32px 4px;font-size:27px;line-height:34px;font-weight:700;color:#ffffff;">You’re invited to work together.</td></tr>
+<tr><td style="padding:12px 32px 18px;font-size:15px;line-height:24px;color:#c9d8e9;">Hello {safe_name},<br><strong style="color:#ffffff;">{safe_business}</strong> invited you to join its subcontractor network on SyncWorks.</td></tr>
+<tr><td style="padding:0 32px 20px;font-size:14px;line-height:23px;color:#b9cbdf;">One place to receive job offers, respond to assignments, and stay informed as work progresses.</td></tr>
+{optional_message}
+<tr><td align="center" style="padding:4px 32px 20px;"><a href="{safe_url}" style="display:block;background:#20cbe8;border-radius:10px;padding:15px 20px;color:#061426;text-align:center;font-size:16px;font-weight:700;text-decoration:none;">Review your invitation</a></td></tr>
+<tr><td style="padding:0 32px 22px;font-size:12px;line-height:20px;color:#a6bcd4;">New to SyncWorks? Create a free account using this invited email address. Already a member? Sign in or switch accounts on the invitation page. No paid business subscription is required to receive this invitation.</td></tr>
+<tr><td style="padding:17px 32px;border-top:1px solid #254363;color:#829db9;font-size:12px;line-height:20px;">Invitation expires in 14 days. If the button does not work, copy this link into your browser:<br><a href="{safe_url}" style="color:#6bddff;overflow-wrap:anywhere;word-break:break-word;">{safe_url}</a><br><br>If you weren't expecting this invitation, you can ignore this email.</td></tr>
+</table></td></tr></table></body></html>"""
     try:
-        send_mail(subject,body,getattr(settings,'DEFAULT_FROM_EMAIL',None),[invitation.email],fail_silently=False)
+        message = EmailMultiAlternatives(
+            subject=subject,
+            body=body,
+            from_email=getattr(settings,'DEFAULT_FROM_EMAIL',None),
+            to=[invitation.email],
+        )
+        message.attach_alternative(html, 'text/html')
+        message.send(fail_silently=False)
     except Exception:
         logger.exception('Partner invite email failed for invitation %s',invitation_id)
 
