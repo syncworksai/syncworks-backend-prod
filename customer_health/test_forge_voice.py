@@ -41,13 +41,13 @@ class ForgeVoiceTests(TestCase):
         self.assertEqual(response.content, b"mp3-bytes")
         self.assertEqual(response["X-SyncWorks-Voice-Provider"], "elevenlabs")
         self.assertEqual(post_mock.call_args.kwargs["json"]["text"], "Make today count.")
-        self.assertIn("EI3BL0ECeQayX8N4doHx", post_mock.call_args.args[0])
-        self.assertEqual(response["X-SyncWorks-Forge-Voice"], "tucker")
+        self.assertIn("kSiaSqSOAHNl8g8caZB5", post_mock.call_args.args[0])
+        self.assertEqual(response["X-SyncWorks-Forge-Voice"], "jarvis")
 
     @override_settings(ELEVENLABS_API_KEY="test-key")
     def test_long_voice_request_rejected(self):
         response = self._client("jacoblord7@outlook.com").post(
-            self.url, {"text": "a" * 901}, format="json"
+            self.url, {"text": "a" * 1801}, format="json"
         )
         self.assertEqual(response.status_code, 400)
 
@@ -76,3 +76,13 @@ class ForgeVoiceTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         post_mock.assert_not_called()
+
+    @override_settings(ELEVENLABS_API_KEY="test-key")
+    @patch("customer_health.forge_voice_views.requests.post")
+    def test_explicit_jarvis_matches_saved_owner_voice_id(self, post_mock):
+        post_mock.return_value = Mock(ok=True, status_code=200, content=b"test-mp3")
+        response = self._client("jacoblord7@outlook.com").post(
+            self.url, {"text": "The next step is deliberate practice.", "voice_key": "jarvis"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("kSiaSqSOAHNl8g8caZB5", post_mock.call_args.args[0])
