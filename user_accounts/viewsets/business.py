@@ -395,6 +395,18 @@ class BusinessMemberViewSet(viewsets.ModelViewSet):
             .order_by("-created_at")
         )
 
+    # Permission updates must go through our business-scoped PATCH policy.
+    # ModelViewSet's default PUT/POST/DELETE handlers bypassed it.
+    def update(self, request, *args, **kwargs):
+        kwargs["partial"] = True
+        return self.partial_update(request, *args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        return Response({"detail": "Invite employees through the business invite workflow."}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def destroy(self, request, *args, **kwargs):
+        return Response({"detail": "Deactivate a membership instead of deleting it."}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
     def partial_update(self, request, *args, **kwargs):
         member = self.get_object()
         _require_team_manage_access(request.user, member.business)
