@@ -12,6 +12,7 @@ from django.conf import settings
 from django.core.mail import send_mail
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -213,6 +214,25 @@ class TechnicianTicketActionView(APIView):
             return Response({"detail":"Add a completion summary."}, status=400)
         if action == "CANCELLED" and not reason:
             return Response({"detail":"Cancellation reason is required."}, status=400)
+        if action == "SCHEDULED":
+            raw_start = str(request.data.get("scheduled_start") or "").strip()
+            scheduled = parse_datetime(raw_start) if raw_start else None
+            if not scheduled:
+                return Response({"detail":"Scheduled start time is required."},status=400)
+            if timezone.is_naive(scheduled):
+                scheduled = timezone.make_aware(scheduled, timezone.get_current_timezone())
+            try:
+                duration = int(request.data.get("duration_minutes") or 60)
+            except (ValueError,TypeError):
+                return Response({"detail":"Duration must be minutes."},status=400)
+            if duration < 15 or duration > 1440:
+                return Response({"detail":"Duration must be 15–1440 minutes."},status=400)
+            ops,_ = TicketOperationalProfile.objects.select_for_update().get_or_create(ticket=ticket)
+            ops.scheduled_start = scheduled
+            ops.scheduled_end = scheduled + timedelta(minutes=duration)
+            ops.expected_finish_at = ops.scheduled_end
+            ops.estimated_duration_minutes = duration
+            ops.save(update_fields=["scheduled_start","scheduled_end","expected_finish_at","estimated_duration_minutes","updated_at"])
         before = ticket.status
         ticket.status = action
         updates = ["status"]
