@@ -4,7 +4,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from user_accounts.viewsets.technician_workflow import (
-    TechnicianTicketActionView, TechnicianPickupView, TechnicianPickupDecisionView,
+    TechnicianTicketActionView, TechnicianPickupView, TechnicianPickupDecisionView,\n    TechnicianTeamBoardView, TechnicianPickupInboxView,
 )
 from user_accounts.viewsets.team import TeamInvitesViewSet, TeamMembersViewSet
 from user_accounts.viewsets.me import MeViewSet
@@ -497,7 +497,7 @@ urlpatterns = [
 
     path("business/technician/jobs/<int:ticket_id>/action/", TechnicianTicketActionView.as_view(), name="technician-ticket-action"),
     path("business/technician/jobs/<int:ticket_id>/pickup/", TechnicianPickupView.as_view(), name="technician-pickup-request"),
-    path("business/technician/pickups/<int:notification_id>/respond/", TechnicianPickupDecisionView.as_view(), name="technician-pickup-decision"),
+    path("business/technician/pickups/<int:notification_id>/respond/", TechnicianPickupDecisionView.as_view(), name="technician-pickup-decision"),\n    path("business/technician/team-board/", TechnicianTeamBoardView.as_view(), name="technician-team-board"),\n    path("business/technician/pickups/", TechnicianPickupInboxView.as_view(), name="technician-pickup-inbox"),
 
     # ----------------------------
     # Router Endpoints
