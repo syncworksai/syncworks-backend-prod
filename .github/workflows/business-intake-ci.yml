@@ -17,6 +17,8 @@ on:
       - "sync_ai/workforce_views.py"
       - "sync_ai/urls.py"
       - "user_accounts/viewsets/tickets.py"
+      - "user_accounts/viewsets/partner_network.py"
+      - "user_accounts/tests/test_subcontractor_signup_invites.py"
       - "user_accounts/tests/test_message_permissions.py"
       - ".github/workflows/business-intake-ci.yml"
   pull_request:
@@ -44,4 +46,4 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python manage.py check
       - run: python manage.py makemigrations user_accounts --check --dry-run
-      - run: python manage.py test user_accounts.tests.test_business_quick_intake user_accounts.tests.test_business_customer_connection user_accounts.tests.test_technician_handoffs user_accounts.tests.test_business_technician_groups user_accounts.tests.test_message_permissions -v 2
+      - run: python manage.py test user_accounts.tests.test_business_quick_intake user_accounts.tests.test_business_customer_connection user_accounts.tests.test_technician_handoffs user_accounts.tests.test_business_technician_groups user_accounts.tests.test_message_permissions user_accounts.tests.test_subcontractor_signup_invites -v 2
