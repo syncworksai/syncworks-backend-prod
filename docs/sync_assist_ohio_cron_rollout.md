@@ -11,8 +11,7 @@ This is the deployment path after SW-TEST-005 proved a single manual Shell worke
 - Schedule: `*/5 * * * *` (Render uses UTC); at most one job per tick.
 - Default OFF. Both `SYNC_ASSIST_DURABLE_WORKER_ENABLED=true` and
   `SYNC_ASSIST_DURABLE_SCHEDULED_ENABLED=true` must be explicitly set on the CRON SERVICE.
-- `DATABASE_URL` must be connected privately from the same **Ohio** production PostgreSQL instance
-  used by `syncworks-backend-prod`. Never copy the value into code, chat, GitHub or logs.
+- The cron uses Django's effective `DB_ENGINE=postgres`, `POSTGRES_DB=syncworks_db`, `POSTGRES_HOST`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and optionally `POSTGRES_PORT` settings connected privately to **Ohio**. A `DATABASE_URL` alone is not used by this Django configuration and does not prove correctness. Never copy credentials into code, chat, GitHub or logs.
 - Keep `SYNC_ASSIST_LIVE_RESEARCH_ENABLED=false` and all external sends disabled.
 - Run under the existing pilot API/owner authorization gates; do not grant new external tools.
 - One job max per tick; job leases and per-owner receipt deduplication remain enforced by the ORM.
@@ -27,15 +26,18 @@ This is the deployment path after SW-TEST-005 proved a single manual Shell worke
 1. Merge reviewed code after CI passes.
 2. Create an Ohio Render Cron Job on the repository with the settings above.
 3. Keep both enable flags `false`; verify healthy builds and a logged disabled tick.
-4. In Render dashboard, securely connect `DATABASE_URL` through the normal secret/environment workflow.
-   Check that the PostgreSQL service is the Ohio `syncworks-db`. Do not expose its URL to reviewers.
-5. Enable worker and scheduled flags on **the cron job only**; leave external research/messaging disabled.
+4. In Render dashboard, securely configure `DB_ENGINE=postgres` and `POSTGRES_*` for the Ohio `syncworks-db` using the normal secret/environment workflow. Do not expose credentials to reviewers. The script verifies the effective Django database, the `syncworks_db` name, and required tables before processing a job.
+5. First set only `SYNC_ASSIST_PREFLIGHT_ONLY=true` on cron to validate the actual Django database and required tables without running a job; examine logs and turn that flag off after validation. Verify database recovery readiness (backup export and PITR/restore evidence) independently. Only then enable worker and scheduled flags on **the cron job only**; leave external research/messaging disabled.
 6. Enroll a fresh owner-authorized internal-only SW-TEST-006 goal. Never reuse the cancelled
    SW-TEST-004 or already-`WAITING` SW-TEST-005 jobs.
 7. Observe the next cron run: job `QUEUED -> WAITING`, one receipt, one worker-tick,
    `messages_sent=0`, `external_actions=0`; owner approval remains required.
 8. Verify a second tick causes no duplicate receipt and that cancelled jobs remain `CANCELLED`.
 9. Run controlled retry/lease recovery tests in an isolated environment before broad rollout.
+
+## Diagnostics
+
+`SYNC_ASSIST_PREFLIGHT_ONLY=true` bypasses the worker gate solely to verify Django's actual PostgreSQL connection and table schema, then exits without running a job. It does not enable execution, and it should be set to `false` after the one-off check.
 
 ## Emergency stop
 

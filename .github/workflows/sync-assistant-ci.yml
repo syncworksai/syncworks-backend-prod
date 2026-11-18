@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "sync_ai/**"
+      - "scripts/run_sync_assist_cron.sh"
       - "personal_calendar/management/commands/sync_calendar_connections.py"
       - ".github/workflows/sync-assistant-ci.yml"
 
@@ -21,3 +22,18 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python manage.py check
       - run: python manage.py test sync_ai
+
+  production_health_probe:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Probe public production API health (diagnostic only)
+        if: always()
+        continue-on-error: true
+        run: |
+          for origin in https://api.syncworksapp.com https://syncworks-backend-prod.onrender.com; do
+            for endpoint in health/live health/ready; do
+              printf "Probe %s /%s: " "$origin" "$endpoint"
+              curl --silent --show-error --max-time 12 -o /dev/null -w "status=%{http_code} total=%{time_total}s\\n" "$origin/api/v1/sync-ai/$endpoint/" || true
+            done
+          done
