@@ -498,7 +498,9 @@ urlpatterns = [
 
     path("business/technician/jobs/<int:ticket_id>/action/", TechnicianTicketActionView.as_view(), name="technician-ticket-action"),
     path("business/technician/jobs/<int:ticket_id>/pickup/", TechnicianPickupView.as_view(), name="technician-pickup-request"),
-    path("business/technician/pickups/<int:notification_id>/respond/", TechnicianPickupDecisionView.as_view(), name="technician-pickup-decision"),\n    path("business/technician/team-board/", TechnicianTeamBoardView.as_view(), name="technician-team-board"),\n    path("business/technician/pickups/", TechnicianPickupInboxView.as_view(), name="technician-pickup-inbox"),
+    path("business/technician/pickups/<int:notification_id>/respond/", TechnicianPickupDecisionView.as_view(), name="technician-pickup-decision"),
+    path("business/technician/team-board/", TechnicianTeamBoardView.as_view(), name="technician-team-board"),
+    path("business/technician/pickups/", TechnicianPickupInboxView.as_view(), name="technician-pickup-inbox"),
 
     # ----------------------------
     # Router Endpoints
