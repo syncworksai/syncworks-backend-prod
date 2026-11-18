@@ -459,6 +459,22 @@ class TicketViewSet(viewsets.ModelViewSet):
             if not business:
                 return qs.none()
 
+            # A user with an SBO account may still be a non-owner employee
+            # in another business. Their global account role must not grant
+            # full access to that business's tickets.
+            if business.owner_id != u.id:
+                member = BusinessMember.objects.filter(user=u, business=business, is_active=True).first()
+                if not member:
+                    return qs.none()
+                can_manage_queue = bool(
+                    member.can_assign_tickets or member.can_manage_schedule
+                    or member.can_close_tickets or member.can_manage_team
+                )
+                member_tickets = qs.filter(assigned_business_id=business.id)
+                if not can_manage_queue:
+                    member_tickets = member_tickets.filter(assigned_member_id=u.id)
+                return member_tickets.distinct().order_by("-created_at")
+
             if action in provider_list_actions:
                 return qs.filter(assigned_business_id=business.id).distinct().order_by("-created_at")
 
