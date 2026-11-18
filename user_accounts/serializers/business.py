@@ -23,7 +23,7 @@ class BusinessCategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = BusinessCategory
         fields = ["id", "name", "created_at"]
-        read_only_fields = ["id", "created_at"]
+        read_only_fields = ["id", "created_at", "user_email", "user_first_name", "user_last_name", "user_name"]
 
 
 class BusinessSerializer(serializers.ModelSerializer):
@@ -331,12 +331,29 @@ class BusinessSerializer(serializers.ModelSerializer):
 
 
 class BusinessMemberSerializer(serializers.ModelSerializer):
+    # Expose employee identity from the linked user, not the membership record ID.
+    user_email = serializers.EmailField(source="user.email", read_only=True)
+    user_first_name = serializers.CharField(source="user.first_name", read_only=True)
+    user_last_name = serializers.CharField(source="user.last_name", read_only=True)
+    user_name = serializers.SerializerMethodField()
+
+    def get_user_name(self, obj):
+        user = getattr(obj, "user", None)
+        if not user:
+            return ""
+        name = " ".join(filter(None, [getattr(user, "first_name", ""), getattr(user, "last_name", "")])).strip()
+        return name or getattr(user, "username", "") or getattr(user, "email", "") or ""
+
     class Meta:
         model = BusinessMember
         fields = [
             "id",
             "business",
             "user",
+            "user_email",
+            "user_first_name",
+            "user_last_name",
+            "user_name",
             "role",
             "is_active",
             "can_manage_team",
