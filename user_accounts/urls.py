@@ -4,6 +4,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from user_accounts.viewsets.quick_intake_slots import QuickIntakeSlotsView
+from user_accounts.viewsets.customer_connection import CustomerConnectionClaimView
 from user_accounts.viewsets.technician_workflow import (
     TechnicianTicketActionView, TechnicianPickupView, TechnicianPickupDecisionView,
     TechnicianTeamBoardView, TechnicianPickupInboxView,
@@ -497,6 +498,7 @@ urlpatterns = [
         name="investor-inbox-thread-send",
     ),
 
+    path("customer/connection/claim/", CustomerConnectionClaimView.as_view(), name="customer-connection-claim"),
     path("business/quick-intake/slots/", QuickIntakeSlotsView.as_view(), name="quick-intake-slots"),
     path("business/technician/jobs/<int:ticket_id>/action/", TechnicianTicketActionView.as_view(), name="technician-ticket-action"),
     path("business/technician/jobs/<int:ticket_id>/pickup/", TechnicianPickupView.as_view(), name="technician-pickup-request"),
