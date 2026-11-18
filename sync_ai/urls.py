@@ -39,12 +39,13 @@ from .marketplace_views import MarketplaceAvailabilityView, MarketplaceBookView
 from .notification_views import SyncNotificationRefreshView, SyncNotificationSettingsView, SyncPushDeviceView
 from .professional_services_views import BusinessProfessionalAppointmentsView, CustomerProfessionalAppointmentResponseView, CustomerProfessionalAppointmentsView, ProfessionalAvailabilityView, ProfessionalDiscoveryView, ProfessionalPracticeSettingsView, ProfessionalProviderDetailView, ProfessionalProvidersView, ProfessionalResourceDetailView, ProfessionalResourcesView
 from .production_readiness_views import ProductionReadinessAPIView
-from .workforce_views import BusinessOperationsSummaryView, BusinessWorkforceView, TicketOperationsView
+from .workforce_views import BusinessOperationsSummaryView, BusinessWorkforceView, TicketOperationsView, BusinessTechnicianGroupsView
 from .views import SyncAIActionDraftView, SyncAIChatView, SyncAIStatusView, SyncAITicketReplyExecuteView
 from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOrderCreateView
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path('business/technician-groups/', BusinessTechnicianGroupsView.as_view(), name='business-technician-groups'),
     path('assist/pilot/delegate/', SyncAssistDelegationView.as_view(), name='sync-assist-delegate'),
     path('assist/pilot/budget/', SyncAssistBudgetView.as_view(), name='sync-assist-pilot-budget'),
     path('forge/reflection/', ForgeReflectionView.as_view(), name='forge-reflection'),
