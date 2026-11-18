@@ -11,6 +11,7 @@ on:
       - "user_accounts/services/personal_calendar_sync.py"
       - "user_accounts/signals.py"
       - "user_accounts/tests/test_business_customer_connection.py"
+      - "user_accounts/tests/test_technician_handoffs.py"
       - ".github/workflows/business-intake-ci.yml"
   pull_request:
     paths:
@@ -37,4 +38,4 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python manage.py check
       - run: python manage.py makemigrations user_accounts --check --dry-run
-      - run: python manage.py test user_accounts.tests.test_business_quick_intake user_accounts.tests.test_business_customer_connection -v 2
+      - run: python manage.py test user_accounts.tests.test_business_quick_intake user_accounts.tests.test_business_customer_connection user_accounts.tests.test_technician_handoffs -v 2
