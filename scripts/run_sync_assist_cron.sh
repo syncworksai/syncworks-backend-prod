@@ -2,7 +2,7 @@
 # Render cron: fail closed unless approved for the restricted private pilot.
 set -euo pipefail
 
-if [[ "${SYNC_ASSIST_DURABLE_WORKER_ENABLED:-false}" != "true" || "${SYNC_ASSIST_DURABLE_SCHEDULED_ENABLED:-false}" != "true" ]]; then
+if [[ "${SYNC_ASSIST_PREFLIGHT_ONLY:-false}" != "true" && ( "${SYNC_ASSIST_DURABLE_WORKER_ENABLED:-false}" != "true" || "${SYNC_ASSIST_DURABLE_SCHEDULED_ENABLED:-false}" != "true" ) ]]; then
   echo "SYNC Assist scheduled execution disabled (no jobs executed)."
   exit 0
 fi
@@ -41,6 +41,11 @@ except Exception as exc:
     sys.exit("ERROR: Scheduled worker database or schema is unavailable.")
 print("SYNC Assist preflight passed: Django PostgreSQL and required job tables verified.")
 PY
+
+if [[ "${SYNC_ASSIST_PREFLIGHT_ONLY:-false}" == "true" ]]; then
+  echo "SYNC Assist preflight-only check completed (no jobs executed)."
+  exit 0
+fi
 
 # Run at most one internally authorized step; no external sends or searches.
 exec python manage.py sync_assist_queue_worker --once --scheduled --max-jobs 1
