@@ -154,14 +154,27 @@ def create_phone_ticket(business, actor, data, *, founder_support=False):
         customer, is_new = _resolve_customer(business, v, actor)
         start = v.get("scheduled_start")
         duration = v.get("estimated_duration_minutes", 60)
+        # Once this CRM contact has accepted a verified invitation, future
+        # requests from the same business automatically reach their account.
+        linked_user_id = Ticket.objects.filter(
+            assigned_business=business, business_customer=customer,
+            customer_visible=True,
+        ).exclude(customer_id=business.owner_id).values_list("customer_id",flat=True).first()
+        linked_user = None
+        if linked_user_id:
+            from django.contrib.auth import get_user_model
+            linked_user = get_user_model().objects.filter(
+                pk=linked_user_id,email__iexact=customer.email,
+                email_verified=True,is_active=True
+            ).first()
         ticket = Ticket.objects.create(
-            customer=business.owner, business_customer=customer,
+            customer=linked_user or business.owner, business_customer=customer,
             assigned_business=business, assigned_member=member_user,
             work_title=v["service_label"].strip(), work_scope=v.get("description", ""),
             service_address=v.get("service_address") or customer.service_address,
             service_zip=v.get("service_zip") or customer.service_zip,
-            is_marketplace=False, customer_visible=False,
-            customer_status_label="Business-entered request; customer access not yet linked",
+            is_marketplace=False, customer_visible=bool(linked_user),
+            customer_status_label="Connected to verified customer" if linked_user else "Business-entered request; customer access not yet linked",
             status=Ticket.Status.SCHEDULED if start else Ticket.Status.ASSIGNED if member else Ticket.Status.NEW,
             assigned_at=timezone.now() if member else None,
             scheduled_at=timezone.now() if start else None,
@@ -186,6 +199,14 @@ def create_phone_ticket(business, actor, data, *, founder_support=False):
         customer.last_ticket = ticket
         customer.last_service_label = ticket.work_title
         customer.save(update_fields=["ticket_count", "first_service_at", "last_service_at", "last_ticket", "last_service_label", "updated_at"])
+        if customer.email and not linked_user and not founder_support:
+            from user_accounts.viewsets.customer_connection import send_customer_invitation
+            transaction.on_commit(lambda ticket_id=ticket.pk, customer_id=customer.pk:
+                                  send_customer_invitation(ticket_id,customer_id))
+        elif linked_user:
+            from user_accounts.viewsets.technician_workflow import _customer_update
+            transaction.on_commit(lambda ticket_id=ticket.pk:
+                                  _send_linked_request_confirmation(ticket_id,actor.pk))
         AuditLog.objects.create(
             actor=actor, action="business.phone_ticket_created",
             metadata={
@@ -196,6 +217,16 @@ def create_phone_ticket(business, actor, data, *, founder_support=False):
         )
         return ticket, customer, is_new
 
+
+
+
+def _send_linked_request_confirmation(ticket_id, actor_id):
+    from django.contrib.auth import get_user_model
+    from user_accounts.viewsets.technician_workflow import _customer_update
+    ticket = Ticket.objects.select_related("business_customer","assigned_business","customer").filter(pk=ticket_id).first()
+    actor = get_user_model().objects.filter(pk=actor_id).first()
+    if ticket and actor:
+        _customer_update(ticket,actor,"Your business has created a new service request. Check your SyncWorks dashboard for details.")
 
 class BusinessQuickIntakeView(APIView):
     permission_classes = [IsAuthenticated]
