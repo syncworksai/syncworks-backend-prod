@@ -29,3 +29,19 @@ class TestMessagePermissions(APITestCase):
         )
         self.assertEqual(r.status_code, 201)
         self.assertEqual(r.data["type"], "USER")
+
+    def test_message_list_requires_ticket_scope(self):
+        from user_accounts.models import TicketMessage
+        TicketMessage.objects.create(ticket=self.ticket,sender=self.customer,type="USER",body="private customer note")
+        res=self.client.get("/api/v1/ticket-messages/")
+        self.assertEqual(res.status_code,200)
+        messages=res.data.get("results",[]) if isinstance(res.data,dict) else res.data
+        self.assertEqual(len(messages),0)
+
+    def test_message_list_is_accessible_for_own_ticket(self):
+        from user_accounts.models import TicketMessage
+        TicketMessage.objects.create(ticket=self.ticket,sender=self.customer,type="USER",body="job conversation")
+        res=self.client.get("/api/v1/ticket-messages/",{"ticket":self.ticket.pk})
+        self.assertEqual(res.status_code,200)
+        messages=res.data.get("results",[]) if isinstance(res.data,dict) else res.data
+        self.assertGreaterEqual(len(messages),1)
