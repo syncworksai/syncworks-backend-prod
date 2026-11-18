@@ -29,6 +29,27 @@ class SyncVoiceAudio:
     character_cost: str
 
 
+VOICE_CONTEXTS = {
+    "default": "ELEVENLABS_SYNC_VOICE_ID",
+    "forge": "ELEVENLABS_FORGE_VOICE_ID",
+    "assistant": "ELEVENLABS_GEMMA_VOICE_ID",
+    "health": "ELEVENLABS_HEALTH_VOICE_ID",
+}
+
+
+def configured_context_voice_id(context: str) -> str:
+    """Select a server-configured voice. Never accept arbitrary provider voice IDs."""
+    if context not in VOICE_CONTEXTS:
+        raise ValueError("Unsupported voice context.")
+    env_name = VOICE_CONTEXTS[context]
+    explicit = (os.getenv(env_name) or "").strip()
+    if explicit:
+        return explicit
+    if context != "default":
+        raise SyncVoiceConfigurationError(f"{context} voice has not been configured.")
+    return configured_voice_id()
+
+
 def configured_voice_id() -> str:
     return (
         os.getenv("ELEVENLABS_SYNC_VOICE_ID")
@@ -47,12 +68,12 @@ def elevenlabs_configured() -> bool:
     return bool((os.getenv("ELEVENLABS_API_KEY") or "").strip())
 
 
-def synthesize_sync_voice(text: str) -> SyncVoiceAudio:
+def synthesize_sync_voice(text: str, context: str = "default") -> SyncVoiceAudio:
     api_key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
     if not api_key:
         raise SyncVoiceConfigurationError("ELEVENLABS_API_KEY is not configured.")
 
-    voice_id = configured_voice_id()
+    voice_id = configured_context_voice_id(context)
     model_id = configured_model_id()
     output_format = (
         os.getenv("ELEVENLABS_SYNC_OUTPUT_FORMAT")
