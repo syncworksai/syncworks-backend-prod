@@ -274,6 +274,7 @@ class EmployeeJobClockView(APIView):
         if action not in {"start", "finish"}:
             return Response({"detail": "action must be start or finish."}, status=400)
         ops, _ = TicketOperationalProfile.objects.select_for_update().get_or_create(ticket=ticket)
+        prior_status = ticket.status
         now = timezone.now()
         if action == "start":
             # Do not allow one technician to run two job clocks simultaneously.
@@ -300,6 +301,15 @@ class EmployeeJobClockView(APIView):
                 ticket.status = "COMPLETED"
                 ticket.save(update_fields=["status"])
         ops.save(update_fields=["actual_started_at", "actual_finished_at", "actual_work_seconds", "updated_at"])
+        if ticket.status != prior_status:
+            from user_accounts.viewsets.technician_workflow import (
+                _notify_dispatch, _customer_update, _sync_tech_calendar
+            )
+            _notify_dispatch(member.business, request.user, ticket,
+                             f"Job #{ticket.id}: {prior_status} → {ticket.status} (technician clock).")
+            _customer_update(ticket, request.user,
+                             f"Service status: {ticket.status.replace('_',' ').title()}.")
+            _sync_tech_calendar(ticket)
         return Response({"ticket_id": ticket.id, "status": ticket.status, "clock": _clock_payload(ops, now)})
 
 
