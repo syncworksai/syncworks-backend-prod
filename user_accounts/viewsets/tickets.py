@@ -795,6 +795,7 @@ class TicketViewSet(viewsets.ModelViewSet):
         except Exception:
             return Response({"detail": "BusinessMember not found"}, status=404)
 
+        previous_technician_id = ticket.assigned_member_id
         ticket.assigned_member_id = bm.user_id
         if str(ticket.status or "").upper() == Ticket.Status.NEW and ticket.assigned_business_id == active_biz.id:
             ticket.status = Ticket.Status.ASSIGNED
@@ -803,6 +804,8 @@ class TicketViewSet(viewsets.ModelViewSet):
         else:
             ticket.save(update_fields=["assigned_member_id"])
 
+        from user_accounts.viewsets.technician_workflow import _sync_tech_calendar
+        _sync_tech_calendar(ticket, previous_technician_id)
         _system_msg(ticket, u, f"Assigned to {bm.user.email if bm.user_id else 'member'}.")
         ticket.refresh_from_db()
         return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
@@ -829,8 +832,11 @@ class TicketViewSet(viewsets.ModelViewSet):
         if mem and not _employee_can_assign(mem) and getattr(active_biz, "owner_id", None) != u.id:
             return Response({"detail": "Not allowed."}, status=403)
 
+        previous_technician_id = ticket.assigned_member_id
         ticket.assigned_member = None
         ticket.save(update_fields=["assigned_member"])
+        from user_accounts.viewsets.technician_workflow import _sync_tech_calendar
+        _sync_tech_calendar(ticket, previous_technician_id)
 
         _system_msg(ticket, u, "Unassigned technician/member.")
         ticket.refresh_from_db()
