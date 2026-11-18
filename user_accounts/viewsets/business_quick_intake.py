@@ -237,8 +237,13 @@ class BusinessQuickIntakeView(APIView):
         return Response({
             "ticket_id": ticket.pk, "customer": _customer_payload(customer),
             "customer_created": created, "assigned_member_id": ticket.assigned_member_id,
-            "status": ticket.status, "customer_invited": False,
-            "detail": "Ticket and shared customer saved. No welcome email was sent.",
+            "status": ticket.status,
+            "customer_invitation_queued": bool(customer.email and not ticket.customer_visible),
+            "customer_connection_status": (
+                "connected" if ticket.customer_visible else
+                "invitation_queued" if customer.email else "email_required"
+            ),
+            "detail": "Ticket and customer saved. An invitation is queued for unlinked contacts with an email address.",
         }, status=status.HTTP_201_CREATED)
 
 
