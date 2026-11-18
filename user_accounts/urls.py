@@ -4,7 +4,8 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from user_accounts.viewsets.technician_workflow import (
-    TechnicianTicketActionView, TechnicianPickupView, TechnicianPickupDecisionView,\n    TechnicianTeamBoardView, TechnicianPickupInboxView,
+    TechnicianTicketActionView, TechnicianPickupView, TechnicianPickupDecisionView,
+    TechnicianTeamBoardView, TechnicianPickupInboxView,
 )
 from user_accounts.viewsets.team import TeamInvitesViewSet, TeamMembersViewSet
 from user_accounts.viewsets.me import MeViewSet
