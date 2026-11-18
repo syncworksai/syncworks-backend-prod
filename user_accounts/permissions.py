@@ -85,9 +85,8 @@ def _user_can_manage_team(member: BusinessMember | None, user, business: Busines
     if not member:
         return False
 
-    if bool(getattr(member, "is_owner", False)):
-        return True
-
+    # Do not trust a stored OWNER role as a permission bypass: the
+    # authoritative owner is Business.owner_id, checked above.
     # Common boolean flag
     if getattr(member, "can_manage_team", False):
         return True
