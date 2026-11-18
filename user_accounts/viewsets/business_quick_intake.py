@@ -176,6 +176,9 @@ def create_phone_ticket(business, actor, data, *, founder_support=False):
             expected_finish_at=start + timedelta(minutes=duration) if start else None,
             internal_note=f"Source: {v.get('intake_source', 'PHONE')}. Created by user #{actor.pk}.",
         )
+        if member_user and start:
+            from user_accounts.viewsets.technician_workflow import _sync_tech_calendar
+            _sync_tech_calendar(ticket)
         customer.ticket_count += 1
         if not customer.first_service_at:
             customer.first_service_at = timezone.now()
