@@ -10,7 +10,7 @@ fi
 # Verify Django's EFFECTIVE connection. The application does not configure
 # DATABASES from DATABASE_URL; checking that variable alone is insufficient.
 # The Ohio pilot job table is in syncworks_db, not the Oregon empty database.
-python - <<'PY'
+python - <<'PY' || exit 2
 import os
 import sys
 
