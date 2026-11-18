@@ -160,6 +160,11 @@ class TechnicianTicketActionView(APIView):
             if ticket.status in FINAL:
                 return Response({"detail":"A completed or cancelled job cannot be released."}, status=409)
             previous = ticket.assigned_member_id
+            ops = TicketOperationalProfile.objects.select_for_update().filter(ticket=ticket).first()
+            if ops and ops.actual_started_at and not ops.actual_finished_at:
+                ops.actual_finished_at = timezone.now()
+                ops.actual_work_seconds = max(0,int((ops.actual_finished_at - ops.actual_started_at).total_seconds()))
+                ops.save(update_fields=["actual_finished_at","actual_work_seconds","updated_at"])
             ticket.assigned_member = None
             ticket.status = Ticket.Status.NEW
             ticket.save(update_fields=["assigned_member", "status"])
@@ -170,6 +175,22 @@ class TechnicianTicketActionView(APIView):
             _sync_tech_calendar(ticket, previous)
             _customer_update(ticket, request.user, "A new technician is being arranged.")
             return Response({"ticket_id":ticket.pk,"status":ticket.status,"assigned_member_id":None,"queue":True})
+        if action == "DELAYED":
+            if not reason:
+                return Response({"detail":"Provide a delay reason."},status=400)
+            try:
+                minutes = min(480,max(5,int(request.data.get("minutes") or 15)))
+            except (ValueError,TypeError):
+                return Response({"detail":"Delay minutes must be a number."},status=400)
+            ops,_ = TicketOperationalProfile.objects.select_for_update().get_or_create(ticket=ticket)
+            if ops.expected_finish_at:
+                ops.expected_finish_at += timedelta(minutes=minutes)
+            elif ops.scheduled_end:
+                ops.expected_finish_at = ops.scheduled_end + timedelta(minutes=minutes)
+            ops.save(update_fields=["expected_finish_at","updated_at"])
+            _notify_dispatch(business,request.user,ticket,f"Job #{ticket.pk} delayed {minutes}m: {reason}")
+            _customer_update(ticket,request.user,f"Technician delayed approximately {minutes} minutes. {reason}")
+            return Response({"ticket_id":ticket.pk,"status":ticket.status,"delay_minutes":minutes})
         if action not in DISPATCH_STATUSES or (not dispatch and action not in FIELD_STATUSES):
             return Response({"detail":"This status requires dispatch permission."}, status=403)
         if ticket.status in FINAL and action != ticket.status:
@@ -186,6 +207,16 @@ class TechnicianTicketActionView(APIView):
             setattr(ticket, stamped, timezone.now())
             updates.append(stamped)
         ticket.save(update_fields=updates)
+        if action in {"IN_PROGRESS","COMPLETED","CANCELLED"}:
+            ops,_ = TicketOperationalProfile.objects.select_for_update().get_or_create(ticket=ticket)
+            if action == "IN_PROGRESS" and not ops.actual_started_at:
+                ops.actual_started_at = timezone.now()
+                ops.actual_finished_at = None
+                ops.save(update_fields=["actual_started_at","actual_finished_at","updated_at"])
+            elif action in {"COMPLETED","CANCELLED"} and ops.actual_started_at and not ops.actual_finished_at:
+                ops.actual_finished_at = timezone.now()
+                ops.actual_work_seconds = max(0,int((ops.actual_finished_at - ops.actual_started_at).total_seconds()))
+                ops.save(update_fields=["actual_finished_at","actual_work_seconds","updated_at"])
         _notify_dispatch(business, request.user, ticket,
             f"Job #{ticket.pk}: {before} → {action}." + (f" {reason}" if reason else ""))
         _sync_tech_calendar(ticket)
