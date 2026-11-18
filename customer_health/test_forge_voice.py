@@ -41,6 +41,8 @@ class ForgeVoiceTests(TestCase):
         self.assertEqual(response.content, b"mp3-bytes")
         self.assertEqual(response["X-SyncWorks-Voice-Provider"], "elevenlabs")
         self.assertEqual(post_mock.call_args.kwargs["json"]["text"], "Make today count.")
+        self.assertIn("EI3BL0ECeQayX8N4doHx", post_mock.call_args.args[0])
+        self.assertEqual(response["X-SyncWorks-Forge-Voice"], "tucker")
 
     @override_settings(ELEVENLABS_API_KEY="test-key")
     def test_long_voice_request_rejected(self):
@@ -55,3 +57,22 @@ class ForgeVoiceTests(TestCase):
             self.url, {"text": "A sample lesson."}, format="json"
         )
         self.assertEqual(response.status_code, 503)
+
+    @override_settings(ELEVENLABS_API_KEY="test-key")
+    @patch("customer_health.forge_voice_views.requests.post")
+    def test_select_different_mature_narrator(self, post_mock):
+        post_mock.return_value = Mock(ok=True, status_code=200, content=b"test-mp3")
+        response = self._client("jacoblord7@outlook.com").post(
+            self.url, {"text": "A deliberate breath.", "voice_key": "ambrose"}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("gRPwZFYxBbXTrxXJzU6u", post_mock.call_args.args[0])
+
+    @override_settings(ELEVENLABS_API_KEY="test-key")
+    @patch("customer_health.forge_voice_views.requests.post")
+    def test_rejects_arbitrary_voice_id(self, post_mock):
+        response = self._client("jacoblord7@outlook.com").post(
+            self.url, {"text": "A deliberate breath.", "voice_key": "my-secret-voice"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        post_mock.assert_not_called()

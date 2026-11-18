@@ -21,6 +21,15 @@ logger = logging.getLogger(__name__)
 OWNER_EMAIL = "jacoblord7@outlook.com"
 MAX_TEXT = 900
 
+# Curated mature male narrators, selected from ElevenLabs voice discovery.
+# Client sends a stable key, never an arbitrary voice ID or provider URL.
+FORGE_VOICES = {
+    "tucker": {"id": "EI3BL0ECeQayX8N4doHx", "name": "Tucker Thomas · deep American storyteller"},
+    "ambrose": {"id": "gRPwZFYxBbXTrxXJzU6u", "name": "Father Ambrose · warm, reflective American"},
+    "david": {"id": "BNgbHR0DNeZixGQVzloa", "name": "David · deep British narrator"},
+}
+DEFAULT_FORGE_VOICE = "tucker"
+
 
 class ForgeVoiceSpeakView(APIView):
     """Speak short personalized text using backend ElevenLabs credentials.
@@ -36,6 +45,7 @@ class ForgeVoiceSpeakView(APIView):
 
         content = str(request.data.get("text") or "").strip()
         energy = str(request.data.get("energy") or "calm").strip().lower()
+        voice_key = str(request.data.get("voice_key") or DEFAULT_FORGE_VOICE).strip().lower()
         if not content or len(content) > MAX_TEXT:
             return Response(
                 {"detail": f"Text must contain 1–{MAX_TEXT} characters."},
@@ -44,10 +54,11 @@ class ForgeVoiceSpeakView(APIView):
         if energy not in ("calm", "balanced", "high_energy"):
             return Response({"detail": "Unsupported energy setting."}, status=status.HTTP_400_BAD_REQUEST)
 
+        if voice_key not in FORGE_VOICES:
+            return Response({"detail": "Unknown Forge narrator."}, status=400)
+
         key = _setting("ELEVENLABS_API_KEY")
-        voice_id = _setting("ELEVENLABS_FORGE_VOICE_ID") or _setting(
-            "ELEVENLABS_HEALTH_VOICE_ID", DEFAULT_HEALTH_VOICE_ID
-        )
+        voice_id = FORGE_VOICES[voice_key]["id"]
         if not key or not voice_id:
             return Response(
                 {"detail": "Forge natural voice is not configured.", "code": "forge_voice_unavailable"},
@@ -91,4 +102,5 @@ class ForgeVoiceSpeakView(APIView):
         response = HttpResponse(upstream.content, content_type="audio/mpeg")
         response["Cache-Control"] = "private, no-store"
         response["X-SyncWorks-Voice-Provider"] = "elevenlabs"
+        response["X-SyncWorks-Forge-Voice"] = voice_key
         return response
