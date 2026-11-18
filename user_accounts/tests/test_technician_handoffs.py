@@ -22,7 +22,7 @@ class TechnicianHandoffTests(TestCase):
         self.dm=BusinessMember.objects.create(business=self.biz,user=self.dispatch,role="DISPATCH",can_assign_tickets=True,can_manage_schedule=True)
         self.tm=BusinessMember.objects.create(business=self.biz,user=self.tech,role="TECHNICIAN")
         self.om=BusinessMember.objects.create(business=self.biz,user=self.other,role="TECHNICIAN")
-        WorkforceProfile.objects.create(member=self.tm,skills=["plumbing"],is_schedulable=True)
+        WorkforceProfile.objects.create(member=self.tm,skills=["plumbing"],is_schedulable=True,route_start_address="100 Start Street, Montgomery, AL")
         WorkforceProfile.objects.create(member=self.om,skills=["plumbing"],is_schedulable=True)
         self.client=APIClient()
         self.headers={"HTTP_X_BUSINESS_ID":str(self.biz.id)}
@@ -30,6 +30,7 @@ class TechnicianHandoffTests(TestCase):
         start=timezone.now()+timedelta(hours=3)
         res=self.client.post("/api/v1/business/quick-intake/",{
             "customer_name":"Customer","email":"ops-customer@example.com",
+            "service_address":"200 Destination Avenue, Montgomery, AL",
             "service_label":"Leak inspection","required_skills":["plumbing"],
             "assigned_member_id":self.tech.id,
             "scheduled_start":start.isoformat(),"estimated_duration_minutes":60,
@@ -86,3 +87,12 @@ class TechnicianHandoffTests(TestCase):
     def test_unassigned_tech_cannot_cancel_coworker_job(self):
         result=self.action(self.other,"CANCELLED","trying to cancel colleague")
         self.assertEqual(result.status_code,403)
+
+    def test_en_route_uses_rounded_eta_not_false_live_gps(self):
+        with patch("sync_ai.live_operations_views.live_travel",return_value={
+            "minutes":23,"basis":"google_live_traffic"
+        }):
+            response=self.action(self.tech,"EN_ROUTE")
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertIn("30 minutes",response.data.get("arrival_estimate") or "")
+        self.assertIn("not a live GPS location",response.data.get("arrival_estimate") or "")
