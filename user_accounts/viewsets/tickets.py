@@ -1829,8 +1829,15 @@ class TicketMessageViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = TicketMessage.objects.all().order_by("created_at")
         ticket_id = self.request.query_params.get("ticket")
+        # Lists must always be scoped to one authorized ticket. Object
+        # endpoints still rely on TicketParticipantRequired checks.
+        if getattr(self, "action", None) == "list" and not ticket_id:
+            return qs.none()
         if ticket_id:
-            qs = qs.filter(ticket_id=ticket_id)
+            try:
+                return qs.filter(ticket_id=int(ticket_id))
+            except (TypeError, ValueError):
+                return qs.none()
         return qs
 
     def perform_create(self, serializer):
