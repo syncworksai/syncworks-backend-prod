@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from django.db import transaction
+from django.conf import settings
+from django.core.mail import send_mail
+from datetime import timedelta
+from urllib.parse import urlencode
+import logging
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -22,6 +27,29 @@ from user_accounts.serializers.partner_network import (
     PartnerBusinessCardSerializer,
 )
 from user_accounts.viewsets.ticket_conversations import _business_context
+
+
+logger = logging.getLogger(__name__)
+
+
+def _email_partner_invitation(invitation_id):
+    invitation = BusinessPartnerInvitation.objects.select_related('inviting_business').filter(pk=invitation_id).first()
+    if not invitation or not invitation.email:
+        return
+    root = (getattr(settings,'FRONTEND_URL','https://syncworksapp.com') or 'https://syncworksapp.com').rstrip('/')
+    url = f"{root}/partner/join?{urlencode({'token':invitation.token})}"
+    name = invitation.contact_name or invitation.business_name or 'there'
+    subject = f"{invitation.inviting_business.name} invited you to work through SyncWorks"
+    body = (f"Hello {name},\n\n{invitation.inviting_business.name} invited you to connect as a subcontractor on SyncWorks.\n\n"
+            f"You can review offers, accept or decline work, and receive job updates once you connect an account with this email.\n"
+            f"{invitation.message[:500]}\n\nAccept your invitation: {url}\n\n"
+            "The invitation expires in 14 days. A paid SyncWorks business subscription is not required just to receive this invitation. "
+            "Full business management tools are offered separately.\n"
+            "If you weren't expecting this invitation, you can ignore this email.\n")
+    try:
+        send_mail(subject,body,getattr(settings,'DEFAULT_FROM_EMAIL',None),[invitation.email],fail_silently=False)
+    except Exception:
+        logger.exception('Partner invite email failed for invitation %s',invitation_id)
 
 
 def _owner_affiliate_code(business: Business) -> str:
@@ -207,7 +235,9 @@ class BusinessPartnerInvitationViewSet(viewsets.ModelViewSet):
         )
 
     def create(self, request, *args, **kwargs):
-        business, _, _ = _business_context(request)
+        business, membership, oversight = _business_context(request)
+        if not oversight:
+            raise ValidationError({"detail":"Team management permission required to invite partners."})
         target_id = request.data.get("target_business")
         email = str(request.data.get("email") or "").strip().lower()
         phone = str(request.data.get("phone") or "").strip()
@@ -272,10 +302,13 @@ class BusinessPartnerInvitationViewSet(viewsets.ModelViewSet):
             message=str(request.data.get("message") or "").strip(),
             affiliate_code=_owner_affiliate_code(business),
             created_by=request.user,
+            expires_at=timezone.now()+timedelta(days=14),
         )
+        if invitation.email:
+            transaction.on_commit(lambda invitation_id=invitation.id: _email_partner_invitation(invitation_id))
 
         return Response(
-            self.get_serializer(invitation).data,
+            {**self.get_serializer(invitation).data, "email_queued":bool(invitation.email)},
             status=status.HTTP_201_CREATED,
         )
 
@@ -350,6 +383,9 @@ class BusinessPartnerInvitationViewSet(viewsets.ModelViewSet):
                     )
                 }
             )
+
+        if invitation.email and not getattr(request.user,"email_verified",False):
+            raise ValidationError({"email":"Verify the invited email address before accepting a partner invitation."})
 
         if decision not in {"ACCEPT", "DECLINE"}:
             raise ValidationError(
