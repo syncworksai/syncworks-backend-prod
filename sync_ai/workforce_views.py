@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from user_accounts.models import Business, BusinessMember, Ticket, TicketOperationalProfile, WorkforceProfile
+from user_accounts.models import Business, BusinessMember, Ticket, TicketOperationalProfile, WorkforceProfile, BusinessTechnicianGroup
 
 
 def _business_for_request(request):
@@ -48,6 +48,8 @@ def _member_payload(member):
         },
         "workforce": {
             "title": profile.title,
+            "technician_group_id":profile.technician_group_id,
+            "technician_group_name":profile.technician_group.name if profile.technician_group_id else "",
             "skills": profile.skills or [],
             "weekly_availability": profile.weekly_availability or {},
             "breaks": profile.breaks or [],
@@ -110,6 +112,15 @@ class BusinessWorkforceView(APIView):
                     setattr(profile, field, max(0, min(int(request.data.get(field) or 0), 10080)))
                 except (TypeError, ValueError):
                     pass
+        if "technician_group_id" in request.data:
+            group_id=request.data.get("technician_group_id")
+            if group_id in ("", None):
+                profile.technician_group=None
+            else:
+                try:
+                    profile.technician_group=BusinessTechnicianGroup.objects.get(pk=int(group_id),business=business)
+                except (BusinessTechnicianGroup.DoesNotExist,ValueError,TypeError):
+                    return Response({"detail":"Technician group not found for this business."},status=400)
         if "is_schedulable" in request.data:
             profile.is_schedulable = bool(request.data.get("is_schedulable"))
         profile.save()
@@ -205,3 +216,45 @@ class BusinessOperationsSummaryView(APIView):
             "open_work": open_tickets.count(),
             "sla_late": late,
         })
+
+
+class BusinessTechnicianGroupsView(APIView):
+    """Create and manage business-scoped crew/region groups."""
+    permission_classes=[IsAuthenticated]
+
+    def _context(self,request):
+        try:
+            return (*_business_for_request(request),None)
+        except (ValueError,LookupError,PermissionError) as exc:
+            return None,None,Response({"detail":str(exc)},status=403 if isinstance(exc,PermissionError) else 400)
+
+    def get(self,request):
+        business,member,error=self._context(request)
+        if error:return error
+        return Response({"groups":[{"id":g.id,"name":g.name,"members":g.technicians.filter(member__is_active=True).count()} for g in BusinessTechnicianGroup.objects.filter(business=business)]})
+
+    def post(self,request):
+        business,member,error=self._context(request)
+        if error:return error
+        if not _can_manage(member,business,request.user):
+            return Response({"detail":"Only business team/schedule managers can create groups."},status=403)
+        name=str(request.data.get("name") or "").strip()[:80]
+        if not name:return Response({"detail":"Group name required."},status=400)
+        if BusinessTechnicianGroup.objects.filter(business=business,name__iexact=name).exists():
+            return Response({"detail":"A group with this name already exists."},status=409)
+        group=BusinessTechnicianGroup.objects.create(business=business,name=name)
+        return Response({"id":group.id,"name":group.name},status=201)
+
+    def delete(self,request):
+        business,member,error=self._context(request)
+        if error:return error
+        if not _can_manage(member,business,request.user):
+            return Response({"detail":"Management permission required."},status=403)
+        try:group_id=int(request.data.get("group_id"))
+        except (TypeError,ValueError):return Response({"detail":"group_id required."},status=400)
+        group=BusinessTechnicianGroup.objects.filter(pk=group_id,business=business).first()
+        if not group:return Response({"detail":"Group not found."},status=404)
+        if group.technicians.exists():
+            return Response({"detail":"Move technicians out of the group before deleting."},status=409)
+        group.delete()
+        return Response({"deleted":True})
