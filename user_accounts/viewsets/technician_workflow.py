@@ -433,6 +433,8 @@ class TechnicianTeamBoardView(APIView):
                 "member_id":person.id,"user_id":person.user_id,
                 "name":person.user.get_full_name() or person.user.email,
                 "role":person.role,"skills":profile.skills if profile else [],
+                "technician_group_id":profile.technician_group_id if profile else None,
+                "technician_group_name":profile.technician_group.name if profile and profile.technician_group_id else "",
                 "jobs":jobs_by_user.get(person.user_id,[]),
                 "is_self":person.user_id==request.user.id,
             })
