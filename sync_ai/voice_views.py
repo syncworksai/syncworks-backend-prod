@@ -16,6 +16,7 @@ from .voice import (
     SyncVoiceConfigurationError,
     SyncVoiceProviderError,
     configured_model_id,
+    VOICE_ROLES,
     configured_voice_id,
     elevenlabs_configured,
     synthesize_sync_voice,
@@ -40,6 +41,13 @@ class SyncVoiceStatusView(APIView):
                 "voice_id": configured_voice_id(),
                 "model": configured_model_id(),
                 "browser_fallback": True,
+                "roles": {
+                    role: {"configured": bool(configured_voice_id(role)) and elevenlabs_configured(),
+                           "label": {"sync": "SYNC", "forge": "SYNC Voice / Forge",
+                                     "female_assistant": "Gemma / Female Assistant",
+                                     "health": "Female Workout Voice / Health"}[role]}
+                    for role in VOICE_ROLES
+                },
             }
         )
 
@@ -49,6 +57,9 @@ class SyncVoiceSynthesizeView(APIView):
     throttle_classes = [SyncVoiceThrottle]
 
     def post(self, request):
+        role = str(request.data.get("role") or "sync").strip()
+        if role not in VOICE_ROLES:
+            return Response({"detail": "Unsupported voice role."}, status=400)
         text = str(request.data.get("text") or "").strip()
         if not text:
             return Response(
@@ -65,14 +76,15 @@ class SyncVoiceSynthesizeView(APIView):
         metadata = {
             "feature": "sync_voice",
             "provider": "elevenlabs",
-            "voice_id": configured_voice_id(),
+            "voice_id": configured_voice_id(role),
+            "role": role,
             "model": configured_model_id(),
             "user_id": str(request.user.id),
             "character_count": len(text),
         }
 
         try:
-            audio = synthesize_sync_voice(text)
+            audio = synthesize_sync_voice(text) if role == "sync" else synthesize_sync_voice(text, role=role)
         except SyncVoiceConfigurationError as exc:
             AuditLog.objects.create(
                 actor=request.user,

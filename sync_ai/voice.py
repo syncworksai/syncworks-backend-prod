@@ -9,6 +9,13 @@ import requests
 DEFAULT_ELEVENLABS_VOICE_ID = "kSiaSqSOAHNl8g8caZB5"
 DEFAULT_ELEVENLABS_MODEL = "eleven_multilingual_v2"
 DEFAULT_OUTPUT_FORMAT = "mp3_44100_128"
+# Voice roles are server-authorized; users cannot pass provider IDs.
+VOICE_ROLES = {
+    "sync": "ELEVENLABS_SYNC_VOICE_ID",
+    "forge": "ELEVENLABS_FORGE_VOICE_ID",
+    "female_assistant": "ELEVENLABS_GEMMA_VOICE_ID",
+    "health": "ELEVENLABS_HEALTH_VOICE_ID",
+}
 
 
 class SyncVoiceConfigurationError(RuntimeError):
@@ -29,11 +36,16 @@ class SyncVoiceAudio:
     character_cost: str
 
 
-def configured_voice_id() -> str:
-    return (
-        os.getenv("ELEVENLABS_SYNC_VOICE_ID")
-        or DEFAULT_ELEVENLABS_VOICE_ID
-    ).strip()
+def configured_voice_id(role: str = "sync") -> str:
+    if role not in VOICE_ROLES:
+        raise ValueError("Unsupported voice role.")
+    configured = (os.getenv(VOICE_ROLES[role]) or "").strip()
+    if configured:
+        return configured
+    if role in {"sync", "forge"}:
+        # Compatibility fallback, not verified as selected SYNC Voice.
+        return (os.getenv("ELEVENLABS_SYNC_VOICE_ID") or DEFAULT_ELEVENLABS_VOICE_ID).strip()
+    return ""
 
 
 def configured_model_id() -> str:
@@ -47,12 +59,14 @@ def elevenlabs_configured() -> bool:
     return bool((os.getenv("ELEVENLABS_API_KEY") or "").strip())
 
 
-def synthesize_sync_voice(text: str) -> SyncVoiceAudio:
+def synthesize_sync_voice(text: str, role: str = "sync") -> SyncVoiceAudio:
     api_key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
     if not api_key:
         raise SyncVoiceConfigurationError("ELEVENLABS_API_KEY is not configured.")
 
-    voice_id = configured_voice_id()
+    voice_id = configured_voice_id(role)
+    if not voice_id:
+        raise SyncVoiceConfigurationError(f"ElevenLabs voice for {role} is not configured.")
     model_id = configured_model_id()
     output_format = (
         os.getenv("ELEVENLABS_SYNC_OUTPUT_FORMAT")
