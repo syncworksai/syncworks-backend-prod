@@ -473,13 +473,21 @@ class TicketViewSet(viewsets.ModelViewSet):
 
         if role_is(u, "EMPLOYEE", "PM", "PROPERTY_MGR"):
             if active_biz:
-                if action in provider_list_actions:
-                    return qs.filter(assigned_business_id=active_biz.id).distinct().order_by("-created_at")
-
-                if action in provider_detailish_actions:
-                    return self._provider_visible_queryset_for_business(qs, active_biz)
-
-                return qs.filter(assigned_business_id=active_biz.id).distinct().order_by("-created_at")
+                # Ticket access is based on the CURRENT membership flags,
+                # not the global User.role or a stale browser role selection.
+                membership = BusinessMember.objects.filter(
+                    user=u, business=active_biz, is_active=True
+                ).first()
+                if not membership:
+                    return qs.none()
+                can_manage_queue = bool(
+                    membership.can_assign_tickets or membership.can_manage_schedule
+                    or membership.can_close_tickets or membership.can_manage_team
+                )
+                business_tickets = qs.filter(assigned_business_id=active_biz.id)
+                if not can_manage_queue:
+                    business_tickets = business_tickets.filter(assigned_member_id=u.id)
+                return business_tickets.distinct().order_by("-created_at")
 
             biz_ids = self._employee_business_ids(u)
             if not biz_ids:
