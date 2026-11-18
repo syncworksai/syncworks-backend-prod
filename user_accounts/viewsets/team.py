@@ -5,7 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from user_accounts.models import BusinessMember, InviteCode
-from user_accounts.permissions import IsBusinessMember, CanManageTeam
+from user_accounts.permissions import IsBusinessMember, CanManageTeam, _get_active_business_id
 from user_accounts.serializers.team import (
     BusinessMemberSerializer,
     InviteCodeSerializer,
@@ -22,7 +22,7 @@ class TeamMembersViewSet(viewsets.ModelViewSet):
     permission_classes = [IsBusinessMember, CanManageTeam]
 
     def get_queryset(self):
-        return BusinessMember.objects.filter(business_id=self.request.business_id).select_related("user").order_by("-created_at")
+        return BusinessMember.objects.filter(business_id=_get_active_business_id(self.request, view=self)).select_related("user").order_by("-created_at")
 
     def perform_update(self, serializer):
         member = self.get_object()
@@ -56,11 +56,11 @@ class TeamInvitesViewSet(viewsets.ModelViewSet):
     permission_classes = [IsBusinessMember, CanManageTeam]
 
     def get_queryset(self):
-        return InviteCode.objects.filter(business_id=self.request.business_id).order_by("-created_at")
+        return InviteCode.objects.filter(business_id=_get_active_business_id(self.request, view=self)).order_by("-created_at")
 
     def perform_create(self, serializer):
         serializer.save(
-            business_id=self.request.business_id,
+            business_id=_get_active_business_id(self.request, view=self),
             created_by=self.request.user,
         )
 
