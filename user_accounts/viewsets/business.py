@@ -97,12 +97,9 @@ def _can_manage_team(user, business: Business) -> bool:
     if not member:
         return False
 
-    member_role = str(getattr(member, "role", "") or "").upper()
-
-    return bool(
-        getattr(member, "can_manage_team", False)
-        or member_role in {"OWNER", "MANAGER", "DISPATCH", "ADMIN"}
-    )
+    # Roles are labels/default presets, not permanent authorization.
+    # Only the actual business owner and explicitly permitted members manage team access.
+    return bool(getattr(member, "can_manage_team", False))
 
 
 def _require_business_access(user, business: Business) -> None:
@@ -423,6 +420,12 @@ class BusinessMemberViewSet(viewsets.ModelViewSet):
 
         payload = {k: v for k, v in request.data.items() if k in allowed}
 
+        # Do not let an employee change another owner's permissions.
+        if getattr(member.business, "owner_id", None) == member.user_id and not _is_platform_admin(request.user):
+            raise PermissionDenied("The business owner's access cannot be changed here.")
+
+        # Never permit role/permission escalation through a form just because
+        # a user happens to hold an elevated job title.
         for k, v in payload.items():
             setattr(member, k, v)
 
