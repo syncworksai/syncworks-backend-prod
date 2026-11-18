@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
+from rest_framework.response import Response
 
 from user_accounts.permissions import _user_can_manage_team
 from user_accounts.viewsets.business import _can_manage_team, BusinessMemberViewSet
@@ -33,7 +34,7 @@ class BusinessTeamAuthorizationTests(SimpleTestCase):
         user = SimpleNamespace(id=5, pk=5, is_authenticated=True)
         request = APIRequestFactory().put("/api/v1/business-members/23/", {"role":"MANAGER"}, format="json")
         force_authenticate(request, user=user)
-        with patch.object(BusinessMemberViewSet, "partial_update", return_value=SimpleNamespace(status_code=200)) as patched:
+        with patch.object(BusinessMemberViewSet, "partial_update", return_value=Response({"ok": True}, status=200)) as patched:
             result = BusinessMemberViewSet.as_view({"put":"update"})(request, pk="23")
         self.assertEqual(result.status_code, 200)
         patched.assert_called_once()
