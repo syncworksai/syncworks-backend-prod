@@ -262,8 +262,21 @@ def _build_tech_board(business, raw_date):
             "is_schedulable": p.is_schedulable if p else False,
             "jobs": [job_row(t) for t in sorted(own, key=lambda t: getattr(getattr(t, "operations_profile", None), "scheduled_start", None) or start)],
         })
+    # An external subcontractor offer is pending the partner's decision.
+    # Do not present it as freely assignable while that offer is outstanding.
+    # A declined offer resets the source ticket to NEW in partner_work_tickets,
+    # and this filter then places it back in the normal dispatch queue.
+    from user_accounts.models import PartnerWorkTicket
+    pending_partner_ticket_ids = set(
+        PartnerWorkTicket.objects.filter(
+            source_ticket_id__in=[t.id for t in active_jobs],
+            hiring_business=business,
+            status=PartnerWorkTicket.Status.OFFERED,
+        ).values_list("source_ticket_id", flat=True)
+    )
     backlog = [
-        job_row(t) for t in active_jobs if t.assigned_member_id is None
+        job_row(t) for t in active_jobs
+        if t.assigned_member_id is None and t.id not in pending_partner_ticket_ids
     ]
     return {
         "business_id": business.pk, "business_name": business.name,
