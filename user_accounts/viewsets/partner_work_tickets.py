@@ -11,6 +11,7 @@ from rest_framework.response import Response
 
 from user_accounts.models import (
     BusinessMember,
+    Notification,
     BusinessPartnerRelationship,
     PartnerWorkTicket,
     Ticket,
@@ -199,6 +200,13 @@ class PartnerWorkTicketViewSet(viewsets.ModelViewSet):
                 update_fields=["status", "assigned_at"]
             )
 
+        Notification.objects.create(
+            recipient=relationship.partner_business.owner,actor=request.user,
+            type=Notification.TYPE_TICKET,title="New subcontractor job offer",
+            body=f"{business.name} offered you a new job: {work.title}.",
+            data={"source":"PARTNER_WORK","business_id":relationship.partner_business_id,
+                  "partner_work_id":work.pk,"target_path":"/partner/workspace"},
+        )
         return Response(
             self.get_serializer(work).data,
             status=status.HTTP_201_CREATED,
@@ -248,6 +256,14 @@ class PartnerWorkTicketViewSet(viewsets.ModelViewSet):
             )
 
         work.save()
+        Notification.objects.create(
+            recipient=work.hiring_business.owner,actor=request.user,
+            type=Notification.TYPE_TICKET,title=f"Subcontractor {work.status.lower()}",
+            body=f"{work.partner_business.name} {work.status.lower()} job: {work.title}.",
+            data={"source":"BUSINESS_DISPATCH","business_id":work.hiring_business_id,
+                  "partner_work_id":work.pk,"ticket_id":work.source_ticket_id,
+                  "target_path":"/sbo/dispatch"},
+        )
         return Response(self.get_serializer(work).data)
 
     @action(detail=True, methods=["post"], url_path="respond")
