@@ -105,6 +105,39 @@ def _sync_tech_calendar(ticket, prior_user_id=None):
     )
 
 
+def _travel_arrival_text(ticket):
+    """Conservative travel notice from configured route origin, never fake live GPS."""
+    if not ticket.assigned_member_id or not ticket.service_address:
+        return ""
+    from user_accounts.models import WorkforceProfile
+    member = BusinessMember.objects.filter(
+        business_id=ticket.assigned_business_id,user_id=ticket.assigned_member_id,
+        is_active=True
+    ).first()
+    profile = WorkforceProfile.objects.filter(member=member).first() if member else None
+    origin = (profile.route_start_address or "").strip() if profile else ""
+    if not origin:
+        return ""
+    try:
+        from sync_ai.live_operations_views import live_travel
+        result = live_travel(origin,ticket.service_address)
+        if result.get("basis") == "same_or_missing_location":
+            return ""
+        raw = result.get("minutes")
+        if raw is None or float(raw) <= 0:
+            return ""
+        from math import ceil
+        estimated = int(ceil(float(raw)/10.0)*10)
+        arrival = timezone.localtime(timezone.now()+timedelta(minutes=estimated))
+        source = "traffic-aware" if result.get("basis") == "google_live_traffic" else "route-estimated"
+        return (f" Approximate arrival is {estimated} minutes from the configured "
+                f"technician route origin (around {arrival.strftime('%I:%M %p')}). "
+                f"This is a {source} estimate, not a live GPS location; traffic and prior stops may change it.")
+    except Exception:
+        logger.exception("Travel ETA unavailable for ticket=%s",ticket.pk)
+        return ""
+
+
 def _customer_update(ticket, actor, description):
     customer = getattr(ticket, "business_customer", None)
     email = (getattr(customer, "email", "") or "").strip()
@@ -254,8 +287,9 @@ class TechnicianTicketActionView(APIView):
         _notify_dispatch(business, request.user, ticket,
             f"Job #{ticket.pk}: {before} → {action}." + (f" {reason}" if reason else ""))
         _sync_tech_calendar(ticket)
-        _customer_update(ticket, request.user, f"Status: {action.replace('_',' ').title()}" + (f". {reason}" if reason and action not in {"CANCELLED"} else ""))
-        return Response({"ticket_id":ticket.pk,"status":ticket.status,"assigned_member_id":ticket.assigned_member_id})
+        eta_note = _travel_arrival_text(ticket) if action == "EN_ROUTE" else ""
+        _customer_update(ticket, request.user, f"Status: {action.replace('_',' ').title()}" + (f". {reason}" if reason and action not in {"CANCELLED"} else "") + eta_note)
+        return Response({"ticket_id":ticket.pk,"status":ticket.status,"assigned_member_id":ticket.assigned_member_id, "arrival_estimate":eta_note.strip() if action=="EN_ROUTE" else None})
 
 
 class TechnicianPickupView(APIView):
