@@ -44,7 +44,7 @@ def _business_for_actor(request, *, support_business_id=None):
         return business, False
     # Access depends on explicit membership flags, not a job title alone.
     allowed = bool(member and member.is_active and (
-        member.can_create_tickets or member.can_assign_tickets or member.can_manage_schedule
+        member.can_assign_tickets or member.can_manage_schedule
     ))
     if not allowed:
         raise PermissionDenied("Owner or dispatch permission required.")
@@ -238,6 +238,7 @@ class BusinessQuickIntakeView(APIView):
             "ticket_id": ticket.pk, "customer": _customer_payload(customer),
             "customer_created": created, "assigned_member_id": ticket.assigned_member_id,
             "status": ticket.status,
+            "customer_invited": False,  # Legacy flag: delivery has not been confirmed.
             "customer_invitation_queued": bool(customer.email and not ticket.customer_visible),
             "customer_connection_status": (
                 "connected" if ticket.customer_visible else
