@@ -17,7 +17,7 @@ from user_accounts.models import Ticket, TicketOperationalProfile, BusinessMembe
 from user_accounts.viewsets.business_quick_intake import _business_for_actor
 
 BUSY_STATUS = {"ASSIGNED", "ACCEPTED", "SCHEDULED", "EN_ROUTE", "ON_SITE", "IN_PROGRESS", "NEEDS_QUOTE", "QUOTED", "APPROVED"}
-WEEKDAYS = ("mon","tue","wed","thu","fri","sat","sun")
+WEEKDAYS = ("monday","tuesday","wednesday","thursday","friday","saturday","sunday")
 
 
 def _timezone(value):
@@ -34,10 +34,14 @@ def _windows(profile, day):
         return [(8*60, 17*60)]
     raw = availability.get(WEEKDAYS[day.weekday()])
     if raw is None:
+        raw = availability.get(WEEKDAYS[day.weekday()][:3])
+    if raw is None:
         raw = availability.get(str(day.weekday()))
     if raw is None:
         return []
     if isinstance(raw, dict):
+        if raw.get("open") is False or raw.get("enabled") is False:
+            return []
         raw = [raw]
     if not isinstance(raw, list):
         return []
@@ -45,7 +49,7 @@ def _windows(profile, day):
     for entry in raw:
         if not isinstance(entry, dict):
             continue
-        if entry.get("enabled") is False:
+        if entry.get("enabled") is False or entry.get("open") is False:
             continue
         start = str(entry.get("start") or entry.get("from") or "")
         end = str(entry.get("end") or entry.get("to") or "")
