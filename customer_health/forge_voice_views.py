@@ -19,16 +19,17 @@ from .voice_views import (
 
 logger = logging.getLogger(__name__)
 OWNER_EMAIL = "jacoblord7@outlook.com"
-MAX_TEXT = 900
+MAX_TEXT = 1800
 
 # Curated mature male narrators, selected from ElevenLabs voice discovery.
 # Client sends a stable key, never an arbitrary voice ID or provider URL.
 FORGE_VOICES = {
+    "jarvis": {"id": "kSiaSqSOAHNl8g8caZB5", "name": "SyncWorks Jarvis · British male"},
     "tucker": {"id": "EI3BL0ECeQayX8N4doHx", "name": "Tucker Thomas · deep American storyteller"},
     "ambrose": {"id": "gRPwZFYxBbXTrxXJzU6u", "name": "Father Ambrose · warm, reflective American"},
     "david": {"id": "BNgbHR0DNeZixGQVzloa", "name": "David · deep British narrator"},
 }
-DEFAULT_FORGE_VOICE = "tucker"
+DEFAULT_FORGE_VOICE = "jarvis"
 
 
 class ForgeVoiceSpeakView(APIView):
