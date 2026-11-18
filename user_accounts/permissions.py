@@ -92,11 +92,8 @@ def _user_can_manage_team(member: BusinessMember | None, user, business: Busines
     if getattr(member, "can_manage_team", False):
         return True
 
-    # Some schemas store a role for membership
-    mrole = (getattr(member, "role", "") or "").upper()
-    if mrole in {"OWNER", "MANAGER", "ADMIN", "DISPATCH"}:
-        return True
-
+    # Role labels determine default presets when assigned; they do not
+    # override explicit permissions subsequently revoked by the owner.
     return False
 
 
