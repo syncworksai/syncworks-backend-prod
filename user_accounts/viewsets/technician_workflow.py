@@ -320,3 +320,73 @@ class TechnicianPickupDecisionView(APIView):
             data={"source":"TICKET","ticket_id":ticket.id,"target_path":"/employee"})
         return Response({"state":decision,"ticket_id":ticket.id,
                          "assigned_member_id":ticket.assigned_member_id})
+
+
+class TechnicianTeamBoardView(APIView):
+    """Team visibility for members without granting dispatch write permission."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        business, member = _context(request)
+        if not business or not member:
+            return Response({"detail":"Active employee membership required."},status=403)
+        qs = Ticket.objects.filter(assigned_business=business).exclude(
+            status__in=["CLOSED","CANCELLED","PAID","INVOICED"]
+        ).select_related("operations_profile").order_by("id")[:300]
+        people = BusinessMember.objects.filter(business=business,is_active=True).select_related("user")
+        jobs_by_user = {}
+        unassigned = []
+        for ticket in qs:
+            ops = TicketOperationalProfile.objects.filter(ticket=ticket).first()
+            row = {
+                "ticket_id":ticket.id,"title":ticket.work_title or "Service request",
+                "status":ticket.status,
+                "scheduled_start":ops.scheduled_start.isoformat() if ops and ops.scheduled_start else None,
+                "scheduled_end":ops.scheduled_end.isoformat() if ops and ops.scheduled_end else None,
+                "required_skills":ops.required_skills if ops else [],
+                "assigned_member_id":ticket.assigned_member_id,
+            }
+            if ticket.assigned_member_id:
+                jobs_by_user.setdefault(ticket.assigned_member_id,[]).append(row)
+            else:
+                unassigned.append(row)
+        from user_accounts.models import WorkforceProfile
+        profiles = {p.member_id:p for p in WorkforceProfile.objects.filter(member__business=business)}
+        rows = []
+        for person in people:
+            profile = profiles.get(person.id)
+            rows.append({
+                "member_id":person.id,"user_id":person.user_id,
+                "name":person.user.get_full_name() or person.user.email,
+                "role":person.role,"skills":profile.skills if profile else [],
+                "jobs":jobs_by_user.get(person.user_id,[]),
+                "is_self":person.user_id==request.user.id,
+            })
+        return Response({"staff":rows,"unassigned":unassigned,
+                         "business_id":business.id,"can_dispatch":_dispatcher(request.user,business,member)})
+
+
+class TechnicianPickupInboxView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        business, member = _context(request)
+        if not business or not _dispatcher(request.user,business,member):
+            return Response({"detail":"Dispatch permission required."},status=403)
+        pending = Notification.objects.filter(
+            recipient_id__in=_dispatch_recipients(business),
+            data__source=PICKUP_TAG,
+            data__business_id=business.id,
+            is_read=False,
+        ).order_by("id")
+        seen=set()
+        result=[]
+        for notice in pending:
+            primary=(notice.data or {}).get("primary_request_id") or notice.id
+            if primary in seen:continue
+            seen.add(primary)
+            result.append({"id":primary,"ticket_id":notice.data.get("ticket_id"),
+                           "requester_id":notice.data.get("requester_id"),
+                           "title":notice.title,"body":notice.body,
+                           "created_at":notice.created_at.isoformat()})
+        return Response({"requests":result})
