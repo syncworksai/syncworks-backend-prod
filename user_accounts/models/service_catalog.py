@@ -21,6 +21,9 @@ class ServiceCatalogItem(models.Model):
     )
 
     name = models.CharField(max_length=160)
+    service_category = models.CharField(max_length=100, blank=True, default="", help_text="Business-defined group, e.g. Plumbing or Appliances")
+    required_skills = models.JSONField(default=list, blank=True)
+    estimated_duration_minutes = models.PositiveIntegerField(default=60)
     sku = models.CharField(max_length=64, blank=True, default="")
     description = models.TextField(blank=True, default="")
 
