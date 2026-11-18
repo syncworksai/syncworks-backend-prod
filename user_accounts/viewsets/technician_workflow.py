@@ -111,16 +111,30 @@ def _customer_update(ticket, actor, description):
     # Never send a customer inbox notification to that placeholder.
     linked = bool(ticket.customer_visible and ticket.customer_id
                   and ticket.customer_id != ticket.assigned_business.owner_id)
+    linked_customer_id = ticket.customer_id if linked else None
     if linked:
+        # The linked account is authoritative, never send a linked ticket
+        # notification using a potentially different CRM contact email.
+        email = (ticket.customer.email or "").strip()
+    elif email:
+        # A legacy phone ticket may have a CRM contact but no customer link.
+        # Notify only a uniquely matched, verified customer account. Do not
+        # give that account access to the ticket's private detail URL.
+        from django.contrib.auth import get_user_model
+        matches = list(get_user_model().objects.filter(
+            email__iexact=email, email_verified=True, is_active=True, role="CUSTOMER"
+        ).exclude(pk=ticket.assigned_business.owner_id).values_list("id",flat=True)[:2])
+        if len(matches) == 1:
+            linked_customer_id = matches[0]
+    if linked_customer_id:
         Notification.objects.create(
-            recipient_id=ticket.customer_id, actor=actor, type=Notification.TYPE_TICKET,
+            recipient_id=linked_customer_id, actor=actor, type=Notification.TYPE_TICKET,
             title="Service request updated",
             body=f"{ticket.work_title or 'Service request'}: {description}",
-            data={"source":"TICKET","ticket_id":ticket.pk,
-                  "target_path":f"/customer/tickets/{ticket.pk}"},
+            data={"source":"TICKET","ticket_id":ticket.pk if linked else None,
+                  "business_id":ticket.assigned_business_id,
+                  "target_path":f"/customer/tickets/{ticket.pk}" if linked else "/customer"},
         )
-        if not email:
-            email = (ticket.customer.email or "").strip()
     if not email or "@" not in email:
         return
     subject = f"SyncWorks service update — ticket #{ticket.pk}"
