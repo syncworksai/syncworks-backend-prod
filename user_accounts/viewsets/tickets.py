@@ -806,6 +806,8 @@ class TicketViewSet(viewsets.ModelViewSet):
 
         from user_accounts.viewsets.technician_workflow import _sync_tech_calendar
         _sync_tech_calendar(ticket, previous_technician_id)
+        from user_accounts.viewsets.technician_workflow import _customer_update
+        _customer_update(ticket, u, "A technician has been assigned to your service request.")
         _system_msg(ticket, u, f"Assigned to {bm.user.email if bm.user_id else 'member'}.")
         ticket.refresh_from_db()
         return Response(TicketSerializer(ticket, context=self.get_serializer_context()).data)
@@ -837,6 +839,8 @@ class TicketViewSet(viewsets.ModelViewSet):
         ticket.save(update_fields=["assigned_member"])
         from user_accounts.viewsets.technician_workflow import _sync_tech_calendar
         _sync_tech_calendar(ticket, previous_technician_id)
+        from user_accounts.viewsets.technician_workflow import _customer_update
+        _customer_update(ticket, u, "Your service request is awaiting technician reassignment.")
 
         _system_msg(ticket, u, "Unassigned technician/member.")
         ticket.refresh_from_db()
