@@ -17,6 +17,9 @@ class ServiceCatalogItemSerializer(serializers.ModelSerializer):
             "id",
             "business",
             "name",
+            "service_category",
+            "required_skills",
+            "estimated_duration_minutes",
             "sku",
             "description",
             "item_type",
@@ -54,6 +57,19 @@ class ServiceCatalogItemSerializer(serializers.ModelSerializer):
             return str(obj.gross_margin_pct)
         except Exception:
             return "0.00"
+
+    def validate_service_category(self, value):
+        return (value or "").strip()
+
+    def validate_required_skills(self, value):
+        if not isinstance(value, list) or len(value) > 12 or any(not isinstance(item, str) or len(item) > 80 for item in value):
+            raise serializers.ValidationError("Provide up to 12 skill labels.")
+        return [x.strip() for x in value if x.strip()]
+
+    def validate_estimated_duration_minutes(self, value):
+        if not 15 <= value <= 1440:
+            raise serializers.ValidationError("Enter 15–1440 minutes.")
+        return value
 
     def validate_name(self, v):
         v = (v or "").strip()
