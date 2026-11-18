@@ -81,3 +81,16 @@ class ScheduledWorkerEntrypointTests(SimpleTestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Django PostgreSQL configuration", result.stderr)
         self.assertNotIn("unused.invalid", result.stderr)
+
+    def test_preflight_only_checks_database_without_worker_flags(self):
+        result = self._invoke(
+            SYNC_ASSIST_PREFLIGHT_ONLY="true",
+            DB_ENGINE="postgres",
+            POSTGRES_DB="unexpected_database",
+            POSTGRES_HOST="localhost",
+            POSTGRES_USER="dummy",
+            POSTGRES_PASSWORD="dummy",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("designated Ohio pilot database", result.stderr)
+        self.assertNotIn("Processed", result.stdout)
