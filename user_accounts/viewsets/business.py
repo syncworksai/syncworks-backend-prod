@@ -73,12 +73,8 @@ def _can_manage_business(user, business: Business) -> bool:
     if not member:
         return False
 
-    member_role = str(getattr(member, "role", "") or "").upper()
-
-    return bool(
-        getattr(member, "can_manage_settings", False)
-        or member_role in {"OWNER", "MANAGER", "ADMIN"}
-    )
+    # Business administration is an explicit permission, independent of job title.
+    return bool(getattr(member, "can_manage_settings", False))
 
 
 def _can_manage_team(user, business: Business) -> bool:
