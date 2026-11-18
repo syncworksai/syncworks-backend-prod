@@ -22,6 +22,11 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python manage.py check
       - run: python manage.py test sync_ai
+
+  production_health_probe:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
       - name: Probe public production API health (diagnostic only)
         if: always()
         continue-on-error: true
