@@ -493,18 +493,20 @@ class TicketViewSet(viewsets.ModelViewSet):
             if not biz_ids:
                 return qs.none()
 
-            if action in provider_list_actions:
-                return qs.filter(assigned_business_id__in=biz_ids).distinct().order_by("-created_at")
-
-            if action in provider_detailish_actions:
-                union_ids: set[int] = set(qs.filter(assigned_business_id__in=biz_ids).values_list("id", flat=True))
-                for biz in Business.objects.filter(id__in=biz_ids, is_active=True):
-                    union_ids.update(self._eligible_marketplace_ticket_ids_for_business(biz))
-                if not union_ids:
-                    return qs.none()
-                return qs.filter(id__in=list(union_ids)).distinct().order_by("-created_at")
-
-            return qs.filter(assigned_business_id__in=biz_ids).distinct().order_by("-created_at")
+            privileged_ids = list(
+                BusinessMember.objects.filter(
+                    user=u, is_active=True
+                ).filter(
+                    Q(can_assign_tickets=True) | Q(can_manage_schedule=True)
+                    | Q(can_close_tickets=True) | Q(can_manage_team=True)
+                ).values_list("business_id", flat=True)
+            )
+            # A field employee without queue permissions can only read
+            # their own assigned jobs even without X-Business-Id.
+            return qs.filter(
+                Q(assigned_business_id__in=privileged_ids)
+                | Q(assigned_business_id__in=biz_ids, assigned_member_id=u.id)
+            ).distinct().order_by("-created_at")
 
         return qs.none()
 
