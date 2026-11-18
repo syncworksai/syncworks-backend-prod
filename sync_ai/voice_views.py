@@ -16,6 +16,8 @@ from .voice import (
     SyncVoiceConfigurationError,
     SyncVoiceProviderError,
     configured_model_id,
+    configured_context_voice_id,
+    VOICE_CONTEXTS,
     configured_voice_id,
     elevenlabs_configured,
     synthesize_sync_voice,
@@ -39,6 +41,7 @@ class SyncVoiceStatusView(APIView):
                 "provider": "elevenlabs",
                 "voice_id": configured_voice_id(),
                 "model": configured_model_id(),
+                "contexts": {name: bool(configured_context_voice_id(name)) if name == "default" else bool((os.getenv(env_name) or "").strip()) for name, env_name in VOICE_CONTEXTS.items()},
                 "browser_fallback": True,
             }
         )
@@ -61,18 +64,21 @@ class SyncVoiceSynthesizeView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        context = str(request.data.get("context") or "default").strip().lower()
+        if context not in VOICE_CONTEXTS:
+            return Response({"detail": "Invalid voice context."}, status=status.HTTP_400_BAD_REQUEST)
         started = time.monotonic()
         metadata = {
             "feature": "sync_voice",
             "provider": "elevenlabs",
-            "voice_id": configured_voice_id(),
+            "voice_context": context,
             "model": configured_model_id(),
             "user_id": str(request.user.id),
             "character_count": len(text),
         }
 
         try:
-            audio = synthesize_sync_voice(text)
+            audio = synthesize_sync_voice(text, context=context)
         except SyncVoiceConfigurationError as exc:
             AuditLog.objects.create(
                 actor=request.user,

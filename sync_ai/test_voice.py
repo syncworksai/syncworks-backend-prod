@@ -88,3 +88,34 @@ class SyncVoiceTests(APITestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertTrue(response.data["browser_fallback"])
+
+    @patch("sync_ai.voice.requests.post")
+    def test_context_voice_ids_route_only_to_configured_profiles(self, post):
+        provider = Mock()
+        provider.status_code = 200
+        provider.content = b"audio"
+        provider.headers = {"content-type": "audio/mpeg"}
+        post.return_value = provider
+        with patch.dict("os.environ", {
+            "ELEVENLABS_API_KEY": "test",
+            "ELEVENLABS_FORGE_VOICE_ID": "forge-id",
+            "ELEVENLABS_GEMMA_VOICE_ID": "gemma-id",
+            "ELEVENLABS_HEALTH_VOICE_ID": "workout-id",
+        }):
+            for context, expected in [
+                ("forge", "forge-id"), ("assistant", "gemma-id"), ("health", "workout-id")
+            ]:
+                response = self.client.post("/api/v1/sync-ai/voice/synthesize/",
+                                            {"text": "Hello", "context": context}, format="json")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response["X-SYNC-Voice-ID"], expected)
+        self.assertEqual(post.call_count, 3)
+
+    def test_rejects_arbitrary_voice_ids_and_unconfigured_contexts(self):
+        response = self.client.post("/api/v1/sync-ai/voice/synthesize/",
+                                    {"text": "Hello", "context": "https://evil"}, format="json")
+        self.assertEqual(response.status_code, 400)
+        with patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test"}, clear=True):
+            response = self.client.post("/api/v1/sync-ai/voice/synthesize/",
+                                        {"text": "Hello", "context": "forge"}, format="json")
+        self.assertEqual(response.status_code, 503)
