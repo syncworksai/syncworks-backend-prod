@@ -24,6 +24,29 @@ class TeamMembersViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return BusinessMember.objects.filter(business_id=self.request.business_id).select_related("user").order_by("-created_at")
 
+    def perform_update(self, serializer):
+        member = self.get_object()
+        owner_id = getattr(member.business, "owner_id", None)
+        is_platform_admin = bool(
+            getattr(self.request.user, "is_superuser", False)
+            or getattr(self.request.user, "is_platform_admin", False)
+        )
+        if owner_id == member.user_id and not is_platform_admin:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Business owner permissions cannot be edited here.")
+        if serializer.validated_data.get("role") == "OWNER" and member.user_id != owner_id:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only the actual business owner may have owner access.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import PermissionDenied
+        raise PermissionDenied("Deactivate employee access instead of deleting membership.")
+
+    def perform_create(self, serializer):
+        from rest_framework.exceptions import PermissionDenied
+        raise PermissionDenied("Use the employee invite workflow to add team members.")
+
 
 class TeamInvitesViewSet(viewsets.ModelViewSet):
     """
