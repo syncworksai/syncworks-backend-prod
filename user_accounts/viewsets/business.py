@@ -377,23 +377,30 @@ class BusinessMemberViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-
+        qs = BusinessMember.objects.select_related("user", "business")
         if _is_platform_admin(user):
-            return (
-                BusinessMember.objects.select_related("user", "business")
-                .all()
-                .order_by("-created_at")
-            )
+            return qs.order_by("-created_at")
 
-        business_ids = Business.objects.filter(
-            Q(owner=user) | Q(members__user=user, members__is_active=True)
-        ).values_list("id", flat=True)
+        # A user may view their own membership; team managers can also
+        # review records for businesses they are explicitly permitted to manage.
+        owner_ids = Business.objects.filter(owner=user).values_list("id", flat=True)
+        manager_ids = BusinessMember.objects.filter(
+            user=user, is_active=True, can_manage_team=True
+        ).values_list("business_id", flat=True)
+        return qs.filter(
+            Q(user=user) | Q(business_id__in=owner_ids) | Q(business_id__in=manager_ids)
+        ).distinct().order_by("-created_at")
 
-        return (
-            BusinessMember.objects.select_related("user", "business")
-            .filter(business_id__in=business_ids)
-            .order_by("-created_at")
-        )
+    @action(detail=False, methods=["get"], url_path="me")
+    def me(self, request):
+        # No user-supplied ID: always resolve using the authenticated account.
+        memberships = BusinessMember.objects.filter(
+            user=request.user, is_active=True
+        ).select_related("user", "business").order_by("business_id")
+        raw_business = request.headers.get("X-Business-Id") or request.query_params.get("business_id")
+        if raw_business:
+            memberships = memberships.filter(business_id=raw_business)
+        return Response(self.get_serializer(memberships, many=True).data)
 
     # Permission updates must go through our business-scoped PATCH policy.
     # ModelViewSet's default PUT/POST/DELETE handlers bypassed it.
