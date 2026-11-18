@@ -2,8 +2,24 @@ from __future__ import annotations
 
 from django.db import models
 
-from .business import BusinessMember
+from .business import Business, BusinessMember
 from .tickets import Ticket
+
+
+class BusinessTechnicianGroup(models.Model):
+    """Business-owned, optional region/crew group for dispatch filtering."""
+    business = models.ForeignKey(Business, on_delete=models.CASCADE, related_name="technician_groups")
+    name = models.CharField(max_length=80)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["business","name"], name="ua_techgroup_business_name_uniq")
+        ]
+
+    def __str__(self):
+        return f"{self.business_id}: {self.name}"
 
 
 class WorkforceProfile(models.Model):
@@ -19,6 +35,7 @@ class WorkforceProfile(models.Model):
         related_name="workforce_profile",
     )
     title = models.CharField(max_length=120, blank=True, default="")
+    technician_group = models.ForeignKey(BusinessTechnicianGroup, on_delete=models.SET_NULL, null=True, blank=True, related_name="technicians")
     skills = models.JSONField(default=list, blank=True)
     weekly_availability = models.JSONField(default=dict, blank=True)
     breaks = models.JSONField(default=list, blank=True)
