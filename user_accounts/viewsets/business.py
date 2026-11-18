@@ -439,6 +439,9 @@ class BusinessMemberViewSet(viewsets.ModelViewSet):
 
         payload = {k: v for k, v in request.data.items() if k in allowed}
 
+        # Owner role belongs only to the actual owner, never to a promoted member.
+        if payload.get("role") == "OWNER" and member.user_id != member.business.owner_id:
+            raise PermissionDenied("Only the business owner may have owner access.")
         # Do not let an employee change another owner's permissions.
         if getattr(member.business, "owner_id", None) == member.user_id and not _is_platform_admin(request.user):
             raise PermissionDenied("The business owner's access cannot be changed here.")
