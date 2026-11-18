@@ -19,6 +19,7 @@ on:
       - "user_accounts/viewsets/tickets.py"
       - "user_accounts/viewsets/partner_network.py"
       - "user_accounts/tests/test_subcontractor_signup_invites.py"
+      - "user_accounts/viewsets/partner_work_tickets.py"
       - "user_accounts/tests/test_message_permissions.py"
       - ".github/workflows/business-intake-ci.yml"
   pull_request:
