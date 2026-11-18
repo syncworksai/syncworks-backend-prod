@@ -95,6 +95,10 @@ def sync_ticket_to_personal_calendar(ticket):
         "external_event_id": str(ticket.pk),
     }
     start, end, operations = _schedule(ticket)
+    # Phone-entered CRM requests are not owned by the business owner placeholder.
+    if not ticket.customer_visible:
+        PersonalCalendarEvent.objects.filter(**lookup).update(status=PersonalCalendarEvent.Status.ARCHIVED)
+        return None
     if not start:
         PersonalCalendarEvent.objects.filter(**lookup).update(status=PersonalCalendarEvent.Status.ARCHIVED)
         return None
