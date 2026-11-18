@@ -42,9 +42,9 @@ def _business_for_actor(request, *, support_business_id=None):
     business, member, _ = _business_context(request)
     if business.owner_id == request.user.id:
         return business, False
+    # Access depends on explicit membership flags, not a job title alone.
     allowed = bool(member and member.is_active and (
-        str(member.role or "").upper() in LEADERS
-        or member.can_assign_tickets or member.can_manage_schedule
+        member.can_create_tickets or member.can_assign_tickets or member.can_manage_schedule
     ))
     if not allowed:
         raise PermissionDenied("Owner or dispatch permission required.")
