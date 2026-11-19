@@ -152,6 +152,11 @@ def invite_employee(
     for key in allowed_invite_perm_fields:
         invite_fields[key] = bool((permissions or {}).get(key, False))
 
+    # A CEO-appointed HR member can administer ordinary employee roles;
+    # they cannot transfer ownership or grant protected permissions.
+    if seat_role == BusinessMemberRole.HR:
+        invite_fields["can_manage_team"] = True
+
     # No employee membership is granted until the invited address signs in
     # and explicitly accepts. Do not create users or change account roles here.
     invite = InviteCode.objects.create(**invite_fields)
@@ -224,6 +229,10 @@ def accept_employee_invite(
     business = invite.business
     if not business:
         raise ValueError("Invite is missing a business.")
+    if str(invite.role).upper() in {"OWNER", "ADMIN", "CEO"}:
+        raise ValueError("This invitation cannot grant business ownership.")
+    if business.owner_id == accepting_user.id:
+        raise ValueError("The business owner cannot accept an employee role for their own business.")
 
     # Existing Personal, Business, PM, and platform roles and credentials
     # must stay untouched. Only a scoped business membership is added.

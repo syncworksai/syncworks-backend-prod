@@ -25,18 +25,25 @@ class TeamMembersViewSet(viewsets.ModelViewSet):
         return BusinessMember.objects.filter(business_id=_get_active_business_id(self.request, view=self)).select_related("user").order_by("-created_at")
 
     def perform_update(self, serializer):
+        from rest_framework.exceptions import PermissionDenied
         member = self.get_object()
-        owner_id = getattr(member.business, "owner_id", None)
-        is_platform_admin = bool(
-            getattr(self.request.user, "is_superuser", False)
-            or getattr(self.request.user, "is_platform_admin", False)
-        )
-        if owner_id == member.user_id and not is_platform_admin:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Business owner permissions cannot be edited here.")
-        if serializer.validated_data.get("role") == "OWNER" and member.user_id != owner_id:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Only the actual business owner may have owner access.")
+        owner_id = member.business.owner_id
+        actor = self.request.user
+        privileged = bool(owner_id == actor.id or getattr(actor, "is_superuser", False) or getattr(actor, "is_platform_admin", False))
+        if member.user_id == owner_id or str(member.role).upper() == "OWNER":
+            raise PermissionDenied("The business owner is managed outside employee permissions.")
+        if member.user_id == actor.id:
+            raise PermissionDenied("You cannot edit your own employee permissions.")
+        values = serializer.validated_data
+        role = str(values.get("role", member.role)).upper()
+        if role in {"OWNER", "ADMIN", "CEO"}:
+            raise PermissionDenied("Cannot grant executive ownership through team management.")
+        if not privileged:
+            if "role" in values and role not in {"TECH", "TECHNICIAN", "DISPATCH", "ACCOUNTING", "HR"}:
+                raise PermissionDenied("Delegated HR cannot assign management roles.")
+            for key in ("can_manage_team", "can_manage_settings", "can_view_financials", "can_manage_invoices", "can_manage_connections", "can_manage_properties"):
+                if key in values and values[key] != getattr(member, key, False):
+                    raise PermissionDenied("Only the owner can edit protected permissions.")
         serializer.save()
 
     def perform_destroy(self, instance):
@@ -59,10 +66,22 @@ class TeamInvitesViewSet(viewsets.ModelViewSet):
         return InviteCode.objects.filter(business_id=_get_active_business_id(self.request, view=self)).order_by("-created_at")
 
     def perform_create(self, serializer):
-        serializer.save(
-            business_id=_get_active_business_id(self.request, view=self),
-            created_by=self.request.user,
-        )
+        from rest_framework.exceptions import PermissionDenied
+        user = self.request.user
+        business_id = _get_active_business_id(self.request, view=self)
+        from user_accounts.models import Business
+        business = Business.objects.get(pk=business_id)
+        owner = business.owner_id == user.id or getattr(user, "is_superuser", False) or getattr(user, "is_platform_admin", False)
+        role = str(serializer.validated_data.get("role", "")).upper()
+        if role in {"OWNER", "ADMIN", "CEO"}:
+            raise PermissionDenied("Owner and platform roles cannot be invited.")
+        if not owner:
+            if role not in {"TECH", "TECHNICIAN", "DISPATCH", "ACCOUNTING"}:
+                raise PermissionDenied("Only the owner may appoint HR or management.")
+            protected = ("can_manage_team", "can_manage_settings", "can_view_financials", "can_manage_invoices", "can_manage_connections", "can_manage_properties")
+            if any(serializer.validated_data.get(key, False) for key in protected):
+                raise PermissionDenied("Only the owner can grant protected permissions.")
+        serializer.save(business_id=business_id, created_by=user)
 
     @action(detail=False, methods=["post"], url_path="accept", permission_classes=[])
     def accept(self, request):
@@ -93,6 +112,11 @@ class TeamInvitesViewSet(viewsets.ModelViewSet):
 
         if invite.email and invite.email.lower().strip() != request.user.email.lower().strip():
             return Response({"detail": "Invite is locked to a different email."}, status=status.HTTP_403_FORBIDDEN)
+
+        if str(invite.role).upper() in {"OWNER", "ADMIN", "CEO"}:
+            return Response({"detail": "This invitation has an invalid executive role."}, status=status.HTTP_403_FORBIDDEN)
+        if invite.business.owner_id == request.user.id:
+            return Response({"detail": "Business owner access cannot be changed by accepting an employee invitation."}, status=status.HTTP_403_FORBIDDEN)
 
         # Create or update membership
         member, created = BusinessMember.objects.get_or_create(
