@@ -137,11 +137,11 @@ class IsBusinessMember(BasePermission):
             # If no business context, deny (prevents leakage)
             return False
 
-        # SBO owner qualifies
-        if _role_is(u, "SBO"):
-            return Business.objects.filter(id=business_id, owner_id=u.id, is_active=True).exists()
+        # Business.owner_id is authoritative irrespective of the user's
+        # global account role: a solo CEO may still have role CUSTOMER.
+        if Business.objects.filter(id=business_id, owner_id=u.id, is_active=True).exists():
+            return True
 
-        # EMPLOYEE must be a member
         return BusinessMember.objects.filter(user_id=u.id, business_id=business_id, is_active=True).exists()
 
 
