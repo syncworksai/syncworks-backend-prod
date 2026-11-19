@@ -354,8 +354,8 @@ class BusinessTeamViewSet(viewsets.ViewSet):
             raise ValidationError({"permissions": "Unknown permission key."})
         actor_is_owner = business.owner_id == request.user.id or _is_platform_admin(request.user)
         if not actor_is_owner:
-            if requested_role not in {"TECHNICIAN", "TECH", "DISPATCH", "ACCOUNTING", "HR"}:
-                raise PermissionDenied("Delegated HR cannot invite executive or manager accounts.")
+            if requested_role not in {"TECHNICIAN", "TECH", "DISPATCH", "ACCOUNTING"}:
+                raise PermissionDenied("Only an owner may appoint HR or management.")
             protected = {
                 "can_manage_team", "can_manage_settings", "can_view_financials",
                 "can_manage_invoices", "can_manage_connections", "can_manage_properties",
