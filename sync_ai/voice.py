@@ -23,7 +23,9 @@ class SyncVoiceConfigurationError(RuntimeError):
 
 
 class SyncVoiceProviderError(RuntimeError):
-    pass
+    def __init__(self, message, *, upstream_status=None):
+        super().__init__(message)
+        self.upstream_status = upstream_status
 
 
 @dataclass(frozen=True)
@@ -99,14 +101,10 @@ def synthesize_sync_voice(text: str, role: str = "sync") -> SyncVoiceAudio:
         raise SyncVoiceProviderError("ElevenLabs could not be reached.") from exc
 
     if response.status_code >= 400:
-        detail = ""
-        try:
-            payload = response.json()
-            detail = str(payload.get("detail") or payload.get("message") or "")
-        except Exception:
-            detail = response.text[:240]
+        # Do not expose provider response bodies, which can contain account details.
         raise SyncVoiceProviderError(
-            f"ElevenLabs returned {response.status_code}: {detail[:240]}"
+            "Voice provider rejected synthesis.",
+            upstream_status=response.status_code,
         )
 
     if not response.content:
