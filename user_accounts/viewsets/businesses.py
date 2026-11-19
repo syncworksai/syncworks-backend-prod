@@ -34,6 +34,7 @@ def _is_platform_admin(user) -> bool:
     return bool(
         getattr(user, "is_platform_admin", False)
         or getattr(user, "is_superuser", False)
+        or getattr(user, "is_staff", False)
     )
 
 
@@ -67,7 +68,12 @@ def _can_manage_business(user, business: Business) -> bool:
     if not member:
         return False
 
-    return bool(getattr(member, "can_manage_settings", False))
+    member_role = str(getattr(member, "role", "") or "").upper()
+
+    return bool(
+        getattr(member, "can_manage_settings", False)
+        or member_role in {"OWNER", "MANAGER", "ADMIN"}
+    )
 
 
 def _can_manage_team(user, business: Business) -> bool:
@@ -86,9 +92,12 @@ def _can_manage_team(user, business: Business) -> bool:
     if not member:
         return False
 
-    # Delegation is explicit: dispatcher and manager titles alone must not
-    # confer the authority to edit employee permissions.
-    return bool(getattr(member, "can_manage_team", False))
+    member_role = str(getattr(member, "role", "") or "").upper()
+
+    return bool(
+        getattr(member, "can_manage_team", False)
+        or member_role in {"OWNER", "MANAGER", "DISPATCH", "ADMIN"}
+    )
 
 
 def _require_business_access(user, business: Business) -> None:
@@ -256,39 +265,6 @@ class BusinessViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
-    @action(detail=False, methods=["get"], url_path="access-contexts")
-    def access_contexts(self, request):
-        """Server-authoritative contexts: one account can own and staff businesses."""
-        qs = self.get_queryset().select_related("owner")
-        memberships = {
-            member.business_id: member
-            for member in BusinessMember.objects.filter(
-                user=request.user, business__in=qs, is_active=True
-            )
-        }
-        contexts = []
-        for business in qs:
-            owner = business.owner_id == request.user.id
-            member = memberships.get(business.id)
-            permissions = {
-                field: bool(owner or (member and getattr(member, field, False)))
-                for field in (
-                    "can_manage_team", "can_manage_settings", "can_view_financials",
-                    "can_manage_invoices", "can_create_tickets", "can_assign_tickets",
-                    "can_close_tickets", "can_manage_schedule", "can_manage_categories",
-                    "can_manage_properties", "can_manage_connections",
-                )
-            }
-            contexts.append({
-                "business_id": business.id,
-                "business_name": business.name,
-                "is_owner": owner,
-                "can_access_ceo": owner,
-                "role": "OWNER" if owner else (member.role if member else None),
-                "permissions": permissions,
-            })
-        return Response({"businesses": contexts}, status=status.HTTP_200_OK)
-
     @action(detail=False, methods=["get"], url_path="me")
     def me(self, request):
         qs = self.get_queryset()
@@ -320,7 +296,7 @@ class BusinessTeamViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["get"], url_path="members")
     def members(self, request, pk=None):
         business = self._get_business(pk)
-        _require_team_manage_access(request.user, business)
+        _require_business_access(request.user, business)
 
         qs = (
             BusinessMember.objects.filter(business=business)
@@ -340,28 +316,6 @@ class BusinessTeamViewSet(viewsets.ViewSet):
 
         ser = EmployeeInviteCreateSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
-        requested_role = str(ser.validated_data["role"]).upper()
-        if requested_role in {"OWNER", "ADMIN", "CEO"}:
-            raise PermissionDenied("Business ownership is not assignable through employee invitations.")
-        requested_permissions = ser.validated_data.get("permissions") or {}
-        allowed_permission_keys = {
-            "can_manage_team", "can_manage_settings", "can_view_financials",
-            "can_manage_invoices", "can_create_tickets", "can_assign_tickets",
-            "can_close_tickets", "can_manage_schedule", "can_manage_categories",
-            "can_manage_properties", "can_manage_connections",
-        }
-        if set(requested_permissions) - allowed_permission_keys:
-            raise ValidationError({"permissions": "Unknown permission key."})
-        actor_is_owner = business.owner_id == request.user.id or _is_platform_admin(request.user)
-        if not actor_is_owner:
-            if requested_role not in {"TECHNICIAN", "TECH", "DISPATCH", "ACCOUNTING"}:
-                raise PermissionDenied("Only an owner may appoint HR or management.")
-            protected = {
-                "can_manage_team", "can_manage_settings", "can_view_financials",
-                "can_manage_invoices", "can_manage_connections", "can_manage_properties",
-            }
-            if any(requested_permissions.get(key) for key in protected):
-                raise PermissionDenied("Only the business owner can grant protected permissions.")
 
         res = invite_employee(
             business=business,
@@ -379,78 +333,80 @@ class BusinessTeamViewSet(viewsets.ViewSet):
 
 
 class BusinessMemberViewSet(viewsets.ModelViewSet):
-    """Business-scoped employee access; owner role is never delegated here."""
+    """
+    Routes:
+      PATCH /business-members/{id}/
+      POST  /business-members/{id}/terminate/
+    """
 
     serializer_class = BusinessMemberSerializer
     permission_classes = [IsAuthenticated]
-    http_method_names = ["get", "head", "options", "patch", "post"]
 
     def get_queryset(self):
         user = self.request.user
-        qs = BusinessMember.objects.select_related("user", "business")
-        if _is_platform_admin(user):
-            return qs.order_by("-created_at")
-        managed_business_ids = Business.objects.filter(owner=user).values_list("id", flat=True)
-        delegated_business_ids = BusinessMember.objects.filter(
-            user=user, is_active=True, can_manage_team=True
-        ).values_list("business_id", flat=True)
-        return qs.filter(
-            Q(user=user) | Q(business_id__in=managed_business_ids)
-            | Q(business_id__in=delegated_business_ids)
-        ).distinct().order_by("-created_at")
 
-    @action(detail=False, methods=["get"], url_path="me")
-    def me(self, request):
-        """Only the caller's memberships. An owner needs no employee seat."""
-        qs = BusinessMember.objects.filter(user=request.user, is_active=True).select_related("user", "business")
-        return Response(self.get_serializer(qs, many=True).data)
+        if _is_platform_admin(user):
+            return (
+                BusinessMember.objects.select_related("user", "business")
+                .all()
+                .order_by("-created_at")
+            )
+
+        business_ids = Business.objects.filter(
+            Q(owner=user) | Q(members__user=user, members__is_active=True)
+        ).values_list("id", flat=True)
+
+        return (
+            BusinessMember.objects.select_related("user", "business")
+            .filter(business_id__in=business_ids)
+            .order_by("-created_at")
+        )
 
     def partial_update(self, request, *args, **kwargs):
         member = self.get_object()
         _require_team_manage_access(request.user, member.business)
-        actor_is_owner = member.business.owner_id == request.user.id
-        is_admin = _is_platform_admin(request.user)
-        privileged = actor_is_owner or is_admin
 
-        if member.user_id == member.business.owner_id or str(member.role).upper() == "OWNER":
-            raise PermissionDenied("Business ownership cannot be changed through employee management.")
-        if member.user_id == request.user.id:
-            raise PermissionDenied("You cannot change your own employee permissions.")
-
-        permission_keys = {
-            "can_manage_team", "can_manage_settings", "can_view_financials",
-            "can_manage_invoices", "can_create_tickets", "can_assign_tickets",
-            "can_close_tickets", "can_manage_schedule", "can_manage_categories",
-            "can_manage_properties", "can_manage_connections",
+        allowed = {
+            "role",
+            "is_active",
+            "can_view_invoices",
+            "can_send_quotes",
+            "can_assign_tickets",
+            "can_manage_team",
+            "can_post_internal_messages",
+            "can_manage_schedule",
+            "can_close_tickets",
+            "can_manage_invoices",
+            "can_manage_settings",
+            "can_view_financials",
+            "can_create_tickets",
+            "can_manage_categories",
+            "can_manage_properties",
+            "can_manage_connections",
         }
-        payload = {k: v for k, v in request.data.items() if k in permission_keys | {"role", "is_active"}}
-        requested_role = str(payload.get("role", member.role)).upper()
-        if requested_role in {"OWNER", "ADMIN", "CEO"}:
-            raise PermissionDenied("Owner and platform roles cannot be assigned to employees.")
-        allowed_roles = {"TECHNICIAN", "TECH", "DISPATCH", "ACCOUNTING", "MANAGER", "HR"}
-        if requested_role not in allowed_roles:
-            raise ValidationError({"role": "Unknown business role."})
-        if not privileged:
-            if "role" in payload and requested_role not in {"TECHNICIAN", "TECH", "DISPATCH", "ACCOUNTING", "HR"}:
-                raise PermissionDenied("HR cannot assign management or executive roles.")
-            for key in ("can_manage_team", "can_manage_settings", "can_view_financials", "can_manage_invoices", "can_manage_connections", "can_manage_properties"):
-                if key in payload and payload[key] != getattr(member, key, False):
-                    raise PermissionDenied(f"Only the owner may grant {key}.")
-        serializer = self.get_serializer(member, data=payload, partial=True)
-        serializer.is_valid(raise_exception=True)
-        instance = serializer.save()
-        if payload.get("is_active") is False and instance.is_active is False:
-            # Preserve existing termination side effects.
-            terminate_member(member=instance, terminated_by=request.user)
-        return Response(self.get_serializer(instance).data, status=status.HTTP_200_OK)
+
+        payload = {k: v for k, v in request.data.items() if k in allowed}
+
+        for k, v in payload.items():
+            setattr(member, k, v)
+
+        if (
+            payload.get("is_active") is False
+            and getattr(member, "terminated_at", None) is None
+        ):
+            terminate_member(member=member, terminated_by=request.user)
+
+        member.save()
+
+        return Response(self.get_serializer(member).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"], url_path="terminate")
     def terminate(self, request, pk=None):
         member = self.get_object()
         _require_team_manage_access(request.user, member.business)
-        if member.user_id in {request.user.id, member.business.owner_id} or str(member.role).upper() == "OWNER":
-            raise PermissionDenied("Cannot terminate your own or the business owner's access.")
+
         terminate_member(member=member, terminated_by=request.user)
+
         return Response(self.get_serializer(member).data, status=status.HTTP_200_OK)
 
 
