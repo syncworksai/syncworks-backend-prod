@@ -76,8 +76,8 @@ class TeamInvitesViewSet(viewsets.ModelViewSet):
         if role in {"OWNER", "ADMIN", "CEO"}:
             raise PermissionDenied("Owner and platform roles cannot be invited.")
         if not owner:
-            if role not in {"TECH", "TECHNICIAN", "DISPATCH", "ACCOUNTING", "HR"}:
-                raise PermissionDenied("HR cannot assign management roles.")
+            if role not in {"TECH", "TECHNICIAN", "DISPATCH", "ACCOUNTING"}:
+                raise PermissionDenied("Only the owner may appoint HR or management.")
             protected = ("can_manage_team", "can_manage_settings", "can_view_financials", "can_manage_invoices", "can_manage_connections", "can_manage_properties")
             if any(serializer.validated_data.get(key, False) for key in protected):
                 raise PermissionDenied("Only the owner can grant protected permissions.")
