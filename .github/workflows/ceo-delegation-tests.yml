@@ -3,7 +3,7 @@ on:
   pull_request:
     paths:
       - 'user_accounts/models/business.py'
-      - 'user_accounts/viewsets/businesses.py'
+      - 'user_accounts/viewsets/business.py'
       - 'user_accounts/viewsets/team.py'
       - 'user_accounts/services/employees.py'
       - 'user_accounts/permissions.py'
