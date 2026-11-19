@@ -152,6 +152,11 @@ def invite_employee(
     for key in allowed_invite_perm_fields:
         invite_fields[key] = bool((permissions or {}).get(key, False))
 
+    # A CEO-appointed HR member can administer ordinary employee roles;
+    # they cannot transfer ownership or grant protected permissions.
+    if seat_role == BusinessMemberRole.HR:
+        invite_fields["can_manage_team"] = True
+
     # No employee membership is granted until the invited address signs in
     # and explicitly accepts. Do not create users or change account roles here.
     invite = InviteCode.objects.create(**invite_fields)
