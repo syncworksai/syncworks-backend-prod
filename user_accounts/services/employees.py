@@ -224,6 +224,10 @@ def accept_employee_invite(
     business = invite.business
     if not business:
         raise ValueError("Invite is missing a business.")
+    if str(invite.role).upper() in {"OWNER", "ADMIN", "CEO"}:
+        raise ValueError("This invitation cannot grant business ownership.")
+    if business.owner_id == accepting_user.id:
+        raise ValueError("The business owner cannot accept an employee role for their own business.")
 
     # Existing Personal, Business, PM, and platform roles and credentials
     # must stay untouched. Only a scoped business membership is added.
