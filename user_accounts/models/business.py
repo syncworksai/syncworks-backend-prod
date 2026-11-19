@@ -205,6 +205,7 @@ class BusinessMemberRole(models.TextChoices):
     MANAGER = "MANAGER", "Manager"
     DISPATCH = "DISPATCH", "Dispatch"
     ACCOUNTING = "ACCOUNTING", "Accounting"
+    HR = "HR", "Human Resources"
     TECHNICIAN = "TECHNICIAN", "Technician"
     TECH = "TECH", "Technician (Legacy)"
 
