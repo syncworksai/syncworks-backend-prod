@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+import logging
 
 from django.http import HttpResponse
 from rest_framework import status
@@ -11,6 +12,8 @@ from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 
 from user_accounts.models import AuditLog
+
+logger = logging.getLogger(__name__)
 
 from .voice import (
     SyncVoiceConfigurationError,
@@ -86,6 +89,7 @@ class SyncVoiceSynthesizeView(APIView):
         try:
             audio = synthesize_sync_voice(text) if role == "sync" else synthesize_sync_voice(text, role=role)
         except SyncVoiceConfigurationError as exc:
+            logger.warning("SYNC voice configuration unavailable for role=%s", role)
             AuditLog.objects.create(
                 actor=request.user,
                 action="sync_voice.configuration_error",
@@ -93,12 +97,15 @@ class SyncVoiceSynthesizeView(APIView):
             )
             return Response(
                 {
-                    "detail": "SYNC premium voice is not configured.",
+                    "detail": "Voice is not ready.",
+                    "voice_error_code": "VOICE_NOT_CONFIGURED",
                     "browser_fallback": True,
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         except SyncVoiceProviderError as exc:
+            upstream_status = getattr(exc, "upstream_status", None)
+            logger.warning("SYNC voice provider failure role=%s upstream_status=%s", role, upstream_status or "network_or_empty_audio")
             AuditLog.objects.create(
                 actor=request.user,
                 action="sync_voice.provider_error",
@@ -106,7 +113,8 @@ class SyncVoiceSynthesizeView(APIView):
             )
             return Response(
                 {
-                    "detail": "SYNC premium voice is temporarily unavailable.",
+                    "detail": "Voice is temporarily unavailable.",
+                    "voice_error_code": ("VOICE_PROVIDER_AUTH" if upstream_status in (401, 403) else "VOICE_PROVIDER_UNAVAILABLE"),
                     "browser_fallback": True,
                 },
                 status=status.HTTP_502_BAD_GATEWAY,
