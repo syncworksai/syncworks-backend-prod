@@ -346,6 +346,28 @@ class BusinessTeamViewSet(viewsets.ViewSet):
 
         ser = EmployeeInviteCreateSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
+        requested_role = str(ser.validated_data["role"]).upper()
+        if requested_role in {"OWNER", "ADMIN", "CEO"}:
+            raise PermissionDenied("Business ownership is not assignable through employee invitations.")
+        requested_permissions = ser.validated_data.get("permissions") or {}
+        allowed_permission_keys = {
+            "can_manage_team", "can_manage_settings", "can_view_financials",
+            "can_manage_invoices", "can_create_tickets", "can_assign_tickets",
+            "can_close_tickets", "can_manage_schedule", "can_manage_categories",
+            "can_manage_properties", "can_manage_connections",
+        }
+        if set(requested_permissions) - allowed_permission_keys:
+            raise ValidationError({"permissions": "Unknown permission key."})
+        actor_is_owner = business.owner_id == request.user.id or _is_platform_admin(request.user)
+        if not actor_is_owner:
+            if requested_role not in {"TECHNICIAN", "TECH", "DISPATCH", "ACCOUNTING", "HR"}:
+                raise PermissionDenied("Delegated HR cannot invite executive or manager accounts.")
+            protected = {
+                "can_manage_team", "can_manage_settings", "can_view_financials",
+                "can_manage_invoices", "can_manage_connections", "can_manage_properties",
+            }
+            if any(requested_permissions.get(key) for key in protected):
+                raise PermissionDenied("Only the business owner can grant protected permissions.")
 
         res = invite_employee(
             business=business,
