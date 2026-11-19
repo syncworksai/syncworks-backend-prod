@@ -34,3 +34,20 @@ jobs:
         run: python manage.py test user_accounts.tests.test_ceo_delegation --verbosity 2
       - name: Enforce no migration drift
         run: python manage.py makemigrations --check --dry-run
+
+  migration-plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      DB_ENGINE: sqlite
+      DJANGO_DEBUG: 'true'
+      DJANGO_SECRET_KEY: 'ci-migration-plan-only-not-production'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Output proposed role migration
+        run: python manage.py makemigrations user_accounts --dry-run --verbosity 3
