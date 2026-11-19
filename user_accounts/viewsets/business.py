@@ -490,6 +490,8 @@ class BusinessMemberViewSet(viewsets.ModelViewSet):
         if proposed_role not in {"MANAGER", "HR", "DISPATCH", "ACCOUNTING", "TECHNICIAN", "TECH"}:
             raise ValidationError({"role": "Invalid business role."})
         if not privileged:
+            if str(member.role).upper() in {"HR", "MANAGER"}:
+                raise PermissionDenied("Only the owner can modify HR or manager access.")
             if "role" in payload and proposed_role not in {"DISPATCH", "ACCOUNTING", "TECHNICIAN", "TECH"}:
                 raise PermissionDenied("Only an owner can appoint HR or managers.")
             protected = (
