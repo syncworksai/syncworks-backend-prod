@@ -1,0 +1,34 @@
+name: CEO delegation authorization tests
+on:
+  pull_request:
+    paths:
+      - 'user_accounts/models/business.py'
+      - 'user_accounts/viewsets/businesses.py'
+      - 'user_accounts/viewsets/team.py'
+      - 'user_accounts/services/employees.py'
+      - 'user_accounts/permissions.py'
+      - 'user_accounts/tests/test_ceo_delegation.py'
+      - 'user_accounts/migrations/**'
+      - '.github/workflows/ceo-delegation-tests.yml'
+  workflow_dispatch:
+jobs:
+  owner-and-employee-permissions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DB_ENGINE: sqlite
+      DJANGO_DEBUG: 'true'
+      DJANGO_SECRET_KEY: 'ci-owner-auth-only-not-production'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Django system checks
+        run: python manage.py check
+      - name: Record migration drift
+        run: python manage.py makemigrations --check --dry-run
+      - name: Owner, HR and tenant isolation regression tests
+        run: python manage.py test user_accounts.tests.test_ceo_delegation --verbosity 2
