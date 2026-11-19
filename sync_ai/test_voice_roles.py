@@ -41,3 +41,17 @@ class VoiceRoleTests(APITestCase):
         self.assertIn("female_assistant", result.data["roles"])
         self.assertIn("health", result.data["roles"])
         self.assertNotIn("api_key", result.data)
+
+    def test_unconfigured_voice_returns_safe_error_code(self):
+        with patch.dict("os.environ", {"ELEVENLABS_GEMMA_VOICE_ID": "", "ELEVENLABS_API_KEY": "dummy"}):
+            result = self.client.post(BASE + "synthesize/", {"text": "Hello", "role": "female_assistant"}, format="json")
+        self.assertEqual(result.status_code, 503)
+        self.assertEqual(result.data["voice_error_code"], "VOICE_NOT_CONFIGURED")
+
+    def test_provider_unauthorized_reports_safe_code(self):
+        from .voice import SyncVoiceProviderError
+        with patch("sync_ai.voice_views.synthesize_sync_voice", side_effect=SyncVoiceProviderError("rejected", upstream_status=401)):
+            result = self.client.post(BASE + "synthesize/", {"text": "Hello", "role": "female_assistant"}, format="json")
+        self.assertEqual(result.status_code, 502)
+        self.assertEqual(result.data["voice_error_code"], "VOICE_PROVIDER_AUTH")
+        self.assertNotIn("rejected", str(result.data))
