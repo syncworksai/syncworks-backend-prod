@@ -34,7 +34,6 @@ def _is_platform_admin(user) -> bool:
     return bool(
         getattr(user, "is_platform_admin", False)
         or getattr(user, "is_superuser", False)
-        or getattr(user, "is_staff", False)
     )
 
 
@@ -68,12 +67,7 @@ def _can_manage_business(user, business: Business) -> bool:
     if not member:
         return False
 
-    member_role = str(getattr(member, "role", "") or "").upper()
-
-    return bool(
-        getattr(member, "can_manage_settings", False)
-        or member_role in {"OWNER", "MANAGER", "ADMIN"}
-    )
+    return bool(getattr(member, "can_manage_settings", False))
 
 
 def _can_manage_team(user, business: Business) -> bool:
@@ -326,7 +320,7 @@ class BusinessTeamViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["get"], url_path="members")
     def members(self, request, pk=None):
         business = self._get_business(pk)
-        _require_business_access(request.user, business)
+        _require_team_manage_access(request.user, business)
 
         qs = (
             BusinessMember.objects.filter(business=business)
@@ -440,7 +434,7 @@ class BusinessMemberViewSet(viewsets.ModelViewSet):
             if "role" in payload and requested_role not in {"TECHNICIAN", "TECH", "DISPATCH", "ACCOUNTING", "HR"}:
                 raise PermissionDenied("HR cannot assign management or executive roles.")
             for key in ("can_manage_team", "can_manage_settings", "can_view_financials", "can_manage_invoices", "can_manage_connections", "can_manage_properties"):
-                if payload.get(key) is True and not getattr(member, key, False):
+                if key in payload and payload[key] != getattr(member, key, False):
                     raise PermissionDenied(f"Only the owner may grant {key}.")
         serializer = self.get_serializer(member, data=payload, partial=True)
         serializer.is_valid(raise_exception=True)
