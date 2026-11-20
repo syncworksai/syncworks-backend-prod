@@ -283,7 +283,11 @@ def _build_tech_board(business, raw_date):
             "priority": op.priority if op else "STANDARD",
             "scheduled_start": op.scheduled_start.isoformat() if op and op.scheduled_start else None,
             "scheduled_end": op.scheduled_end.isoformat() if op and op.scheduled_end else None,
+            "en_route_at": t.en_route_at.isoformat() if t.en_route_at else None,
+            "on_site_at": t.on_site_at.isoformat() if t.on_site_at else None,
+            "work_started_at": t.started_at.isoformat() if t.started_at else None,
             "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+            "actual_work_seconds": op.actual_work_seconds if op else 0,
             "required_skills": op.required_skills if op else [],
         }
     team = list(BusinessMember.objects.filter(business=business, is_active=True).select_related("user"))
