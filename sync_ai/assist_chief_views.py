@@ -14,6 +14,7 @@ from user_accounts.models import AuditLog
 from .assist_pilot_views import _pilot
 from .assist_daily_views import _build
 from .assist_outlook_views import _settings, _latest
+from .assist_assignment_views import _snapshot as assignment_snapshot
 
 CREATED="sync_assist.chief.case_created"
 CHANGED="sync_assist.chief.case_changed"
@@ -106,6 +107,7 @@ class JarvisChiefBriefingView(APIView):
         tasks=[x for x in daily["items"] if x["status"]=="OPEN"]
         high=[x for x in tasks if x["priority"]=="HIGH"]
         priority_cases=[x for x in open_cases if x["priority"]=="HIGH"]
+        pending_assignments=[x for x in assignment_snapshot(request.user)["assignments"] if x["state"]=="AWAITING_REVIEW"]
         cfg=_settings()
         outlook_connected=bool(cfg and _latest(request.user))
         sections=[
@@ -115,6 +117,7 @@ class JarvisChiefBriefingView(APIView):
             {"key":"cases","title":"Unresolved issues","headline":f"{len(open_cases)} unresolved case files ({len(priority_cases)} high priority)","items":[
                 {"title":x["title"],"source":"owner_entered","category":x["category"],"next_action":x["next_step"] or "Review case"}
                 for x in open_cases[:3]],"scope":"Cases manually entered or updated by account owner"},
+            {"key":"delegation","title":"AI assignments awaiting review","headline":f"{len(pending_assignments)} tasks or tickets need owner review","items":[{"title":f"{x['role'].replace('_',' ').title()} · {x['kind'].lower()}"+(f" #{x['ticket_id']}" if x.get("ticket_id") else ""),"source":"owner_assigned","category":"BUSINESS","next_action":x["suggested_next_action"]} for x in pending_assignments[:3]],"scope":"Review-only owner assignments; no external actions"},
             {"key":"portfolio","title":"Business & properties","headline":f"{daily['data_diagnostics']['owned_businesses']} owned businesses, {daily['data_diagnostics']['owned_properties']} linked properties","items":[],"scope":daily["data_diagnostics"]["scan_limit"]},
             {"key":"email","title":"Email","headline":"Outlook connected; open Mail Desk for an on-demand inbox brief" if outlook_connected else "Outlook is not connected inside SyncWorks","items":[],"scope":"No email content included in this briefing"},
         ]
@@ -123,6 +126,7 @@ class JarvisChiefBriefingView(APIView):
             "sections":sections,"counts":{
                 "tasks_open":len(tasks),"tasks_high":len(high),
                 "cases_open":len(open_cases),"cases_high":len(priority_cases),
+                "ai_assignments_pending":len(pending_assignments),
             },"outlook_connected":outlook_connected,"auto_send":False,
             "scheduled_delivery":False,"verified_health_monitoring":False,
             "notice":"Snapshot from authorized owner records only. No automatic sending, email inspection, market feed or claimed background execution.",
