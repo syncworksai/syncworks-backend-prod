@@ -4,6 +4,8 @@ Runs after ticket commit; no LLM, email, payment, or dispatch side effects.
 Repeated saves and retries cannot create duplicate review assignments.
 """
 from uuid import NAMESPACE_URL,uuid4,uuid5
+from datetime import timedelta
+from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from user_accounts.models import AuditLog,Ticket
@@ -13,6 +15,12 @@ from .assist_assignment_views import CREATED,MAX_ITEMS,_suggest,_candidate_techn
 def intake_ticket_for_victoria(ticket_id):
     ticket=Ticket.objects.select_related("assigned_business").filter(pk=ticket_id).first()
     if not ticket or not ticket.assigned_business_id or ticket.is_imported:
+        return False
+    if ticket.status not in {"NEW","ASSIGNED","ACCEPTED","SCHEDULED"}:
+        return False
+    if ticket.created_at < timezone.now()-timedelta(days=7):
+        return False
+    if ticket.assigned_business.is_demo:
         return False
     owner=ticket.assigned_business.owner
     if not _pilot(owner) or ticket.status in {"CANCELLED","CLOSED","PAID"}:
