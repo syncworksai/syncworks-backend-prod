@@ -273,6 +273,10 @@ def _build_tech_board(business, raw_date):
         .select_related("assigned_member", "business_customer", "operations_profile")
         .order_by("-created_at")[:300]
     )
+    from technician_time.models import TechnicianJobEvent
+    needs_quote_by_ticket = {}
+    for event in TechnicianJobEvent.objects.filter(ticket_id__in=[job.pk for job in active_jobs], action="NEEDS_QUOTE").order_by("occurred_at"):
+        needs_quote_by_ticket[event.ticket_id] = event.occurred_at.isoformat()
     def job_row(t):
         op = getattr(t, "operations_profile", None)
         return {
@@ -288,6 +292,7 @@ def _build_tech_board(business, raw_date):
             "work_started_at": t.started_at.isoformat() if t.started_at else None,
             "completed_at": t.completed_at.isoformat() if t.completed_at else None,
             "actual_work_seconds": op.actual_work_seconds if op else 0,
+            "needs_quote_at": needs_quote_by_ticket.get(t.pk),
             "required_skills": op.required_skills if op else [],
         }
     team = list(BusinessMember.objects.filter(business=business, is_active=True).select_related("user"))
