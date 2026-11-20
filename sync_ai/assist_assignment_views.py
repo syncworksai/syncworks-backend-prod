@@ -181,9 +181,9 @@ class SyncAssistEmployeeWorkView(APIView):
             return Response({"detail": "Unknown AI employee role."}, status=404)
         all_items = _snapshot(request.user)["assignments"]
         assigned = [item for item in all_items if item.get("role") == role]
-        pending = sum(item.get("state") == "AWAITING_REVIEW" for item in assigned)
+        pending = 0
         visible = []
-        for item in assigned[:12]:
+        for item in assigned:
             ticket_id = item.get("ticket_id")
             live_ticket = None
             if ticket_id is not None:
@@ -192,6 +192,10 @@ class SyncAssistEmployeeWorkView(APIView):
                 # merely because the old user retained an audit-log assignment.
                 if not _accessible_ticket(request.user, live_ticket):
                     continue
+            if item.get("state") == "AWAITING_REVIEW":
+                pending += 1
+            if len(visible) >= 12:
+                continue
             old_status = item.get("ticket_status_at_review")
             current_status = live_ticket.status if live_ticket else None
             visible.append({
