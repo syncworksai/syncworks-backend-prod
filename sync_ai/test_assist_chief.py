@@ -49,7 +49,8 @@ class ChiefOfStaffTests(TestCase):
         self.assertFalse(result.data["auto_send"])
         self.assertFalse(result.data["scheduled_delivery"])
         self.assertFalse(result.data["verified_health_monitoring"])
-        self.assertEqual(len(result.data["sections"]),4)
+        self.assertEqual(len(result.data["sections"]),5)
+        self.assertTrue(any(section["key"] == "delegation" for section in result.data["sections"]))
 
     def test_case_not_accessible_from_other_account(self):
         self.client.force_authenticate(self.pilot)
