@@ -1,6 +1,6 @@
 """Founder-pilot persisted employee display/role preferences.
 
-This API configures the four existing portrait slots. Assignment roles are
+This API configures stable role slots, including planned employees. Assignment roles are
 validated against the workday role registry and do not expand tool privileges.
 No secrets, outbound integrations or user-provided code is accepted.
 """
@@ -19,6 +19,12 @@ SLOTS = {
     "executive-male": {"name": "James", "role": "SALES_MANAGER"},
     "future-female": {"name": "Elizabeth", "role": "MARKETING_MANAGER"},
     "future-male": {"name": "William", "role": "RESEARCH_ANALYST"},
+    "executive-assistant": {"name": "Executive Assistant", "role": "EXECUTIVE_ASSISTANT"},
+    "business-manager": {"name": "Business Operations", "role": "BUSINESS_MANAGER"},
+    "finance-manager": {"name": "Finance Analyst", "role": "FINANCE_MANAGER"},
+    "property-manager": {"name": "Property Assistant", "role": "PROPERTY_MANAGER"},
+    "customer-service": {"name": "Customer Service", "role": "CUSTOMER_SERVICE"},
+    "personal-trainer": {"name": "Fitness Coach", "role": "PERSONAL_TRAINER"},
 }
 MAX_NAME_LENGTH = 32
 PHOTO_CHOICES = {
@@ -31,6 +37,12 @@ DEFAULT_PHOTOS = {
     "executive-male": "/jarvis-avatars/james.jpeg",
     "future-female": "/jarvis-avatars/elizabeth.jpeg",
     "future-male": "/jarvis-avatars/william.jpeg",
+    "executive-assistant": "/jarvis-avatars/victoria.jpeg",
+    "business-manager": "/jarvis-avatars/james.jpeg",
+    "finance-manager": "/jarvis-avatars/william.jpeg",
+    "property-manager": "/jarvis-avatars/elizabeth.jpeg",
+    "customer-service": "/jarvis-avatars/victoria.jpeg",
+    "personal-trainer": "/jarvis-avatars/james.jpeg",
 }
 
 # These roles presently have bounded, auditable internal task handlers.
@@ -75,7 +87,7 @@ class SyncAssistTeamView(APIView):
             return Response({"detail": "Private pilot only."}, status=403)
         submitted = request.data.get("employees")
         if not isinstance(submitted, list) or len(submitted) != len(SLOTS):
-            return Response({"detail": "Provide exactly the four existing employee slots."}, status=400)
+            return Response({"detail": "Provide exactly the ten fixed employee role slots."}, status=400)
         overrides = {}
         for row in submitted:
             if not isinstance(row, dict) or set(row.keys()) not in ({"id", "name", "role"}, {"id", "name", "role", "photo"}):
