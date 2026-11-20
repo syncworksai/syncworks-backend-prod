@@ -50,6 +50,24 @@ class TeamConfigurationTests(APITestCase):
         self.assertEqual(self.client.put(URL, {"employees": payload}, format="json").status_code, 400)
         self.assertFalse(AuditLog.objects.filter(actor=self.owner, action="sync_assist.team.config_updated").exists())
 
+    def test_migrates_only_obsolete_legacy_display_names_and_portraits(self):
+        AuditLog.objects.create(actor=self.owner, action="sync_assist.team.config_updated", metadata={"employees":{
+            "executive-male":{"name":"James","photo":"/jarvis-avatars/james.jpeg"},
+            "future-male":{"name":"William","photo":"/jarvis-avatars/william.jpeg"},
+            "finance-manager":{"name":"Finance Analyst","photo":"/jarvis-avatars/william.jpeg"},
+        }})
+        by_role={e["role"]:e for e in self.client.get(URL).data["employees"]}
+        self.assertEqual(by_role["SALES_MANAGER"]["name"],"Scarlett")
+        self.assertEqual(by_role["RESEARCH_ANALYST"]["name"],"Sophia")
+        self.assertEqual(by_role["FINANCE_MANAGER"]["name"],"Charlotte")
+        self.assertEqual(by_role["SALES_MANAGER"]["photo"],"")
+        AuditLog.objects.create(actor=self.owner, action="sync_assist.team.config_updated", metadata={"employees":{
+            "executive-male":{"name":"My Custom Name","photo":"/jarvis-avatars/elizabeth.jpeg"},
+        }})
+        by_role={e["role"]:e for e in self.client.get(URL).data["employees"]}
+        self.assertEqual(by_role["SALES_MANAGER"]["name"],"My Custom Name")
+        self.assertEqual(by_role["SALES_MANAGER"]["photo"],"/jarvis-avatars/elizabeth.jpeg")
+
     def test_nonpilot_denied_and_does_not_leak_owner_config(self):
         self.client.force_authenticate(self.other)
         self.assertEqual(self.client.get(URL).status_code, 403)
