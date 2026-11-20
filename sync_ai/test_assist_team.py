@@ -26,11 +26,12 @@ class TeamConfigurationTests(APITestCase):
             {"id": e["id"], "name": "Alex" if e["id"] == "executive-female" else e["name"], "role": e["role"]}
             for e in response.data["employees"]
         ]
-        employees[0]["role"] = "EXECUTIVE_ASSISTANT"
+        employees[0]["photo"] = "/jarvis-avatars/elizabeth.jpeg"
         self.assertEqual(self.client.put(URL, {"employees": employees}, format="json").status_code, 200)
         saved = self.client.get(URL).data["employees"]
         self.assertEqual(saved[0]["name"], "Alex")
-        self.assertEqual(saved[0]["role"], "EXECUTIVE_ASSISTANT")
+        self.assertEqual(saved[0]["role"], "CHIEF_OF_STAFF")
+        self.assertEqual(saved[0]["photo"], "/jarvis-avatars/elizabeth.jpeg")
         self.assertEqual(saved[0]["execution_status"], "internal_pilot")
         self.assertEqual(AuditLog.objects.filter(actor=self.owner, action="sync_assist.team.config_updated").count(), 1)
 
@@ -42,6 +43,9 @@ class TeamConfigurationTests(APITestCase):
         payload[1]["role"] = "ROOT_ADMIN"
         self.assertEqual(self.client.put(URL, {"employees": payload}, format="json").status_code, 400)
         payload[1]["role"] = "SALES_MANAGER"
+        payload[1]["photo"] = "https://evil.example/image.png"
+        self.assertEqual(self.client.put(URL, {"employees": payload}, format="json").status_code, 400)
+        payload[1].pop("photo")
         payload[1]["privileges"] = ["god_mode"]
         self.assertEqual(self.client.put(URL, {"employees": payload}, format="json").status_code, 400)
         self.assertFalse(AuditLog.objects.filter(actor=self.owner, action="sync_assist.team.config_updated").exists())
