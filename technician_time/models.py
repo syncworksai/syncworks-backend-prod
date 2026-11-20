@@ -15,3 +15,14 @@ class TechnicianShift(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["business", "technician"], condition=Q(clock_out_at__isnull=True), name="one_active_tech_shift_per_business")
         ]
+
+class TechnicianJobEvent(models.Model):
+    business = models.ForeignKey("user_accounts.Business", on_delete=models.CASCADE)
+    ticket = models.ForeignKey("user_accounts.Ticket", on_delete=models.CASCADE, related_name="technician_time_events")
+    technician = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    action = models.CharField(max_length=40)
+    note = models.TextField(blank=True, default="")
+    occurred_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["occurred_at", "id"]
