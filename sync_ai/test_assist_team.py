@@ -20,7 +20,7 @@ class TeamConfigurationTests(APITestCase):
     def test_defaults_and_persistence(self):
         response = self.client.get(URL)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data["employees"]), 4)
+        self.assertEqual(len(response.data["employees"]), 10)
         self.assertEqual(response.data["employees"][0]["name"], "Victoria")
         employees = [
             {"id": e["id"], "name": "Alex" if e["id"] == "executive-female" else e["name"], "role": e["role"]}
