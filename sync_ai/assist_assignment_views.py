@@ -6,10 +6,12 @@ or auto-enrolls a paid worker. Assignments await explicit review.
 from uuid import UUID, uuid4
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models import Count
+from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from user_accounts.models import AuditLog, Ticket
+from user_accounts.models import AuditLog, Ticket, WorkforceProfile, TicketOperationalProfile
 from .assist_pilot_views import _pilot
 
 CREATED="sync_assist.assignment.created"
@@ -23,6 +25,41 @@ def _accessible_ticket(user,ticket):
         ticket.assigned_business_id and ticket.assigned_business and
         ticket.assigned_business.owner_id==user.id
     )))
+
+def _candidate_technicians(ticket):
+    """Read-only skill/load shortlist, not a verified routing plan or dispatch."""
+    if not ticket or not ticket.assigned_business_id or ticket.assigned_member_id:
+        return []
+    ops=TicketOperationalProfile.objects.filter(ticket=ticket).first()
+    skills={str(x).strip().lower() for x in (ops.required_skills or []) if str(x).strip()} if ops else set()
+    profiles=list(WorkforceProfile.objects.select_related("member","member__user","technician_group").filter(
+        member__business_id=ticket.assigned_business_id,member__is_active=True,is_schedulable=True
+    )[:120])
+    if not profiles:return []
+    ids=[p.member.user_id for p in profiles]
+    today=timezone.localdate()
+    counts=dict(TicketOperationalProfile.objects.filter(
+        ticket__assigned_business_id=ticket.assigned_business_id,
+        ticket__assigned_member_id__in=ids,
+        scheduled_start__date=today,
+    ).exclude(ticket__status__in=["CANCELLED","PAID","CLOSED"]).values_list(
+        "ticket__assigned_member_id"
+    ).annotate(n=Count("pk")).values_list("ticket__assigned_member_id","n"))
+    rows=[]
+    for profile in profiles:
+        abilities={str(x).strip().lower() for x in (profile.skills or []) if str(x).strip()}
+        if skills and not skills.issubset(abilities):continue
+        rows.append({
+            "member_id":profile.member_id,
+            "technician_name":profile.member.user.get_full_name() or profile.member.user.email,
+            "crew":profile.technician_group.name if profile.technician_group_id else "",
+            "matched_required_skills":sorted(skills),
+            "scheduled_jobs_today":counts.get(profile.member.user_id,0),
+            "availability":"not_verified",
+            "route":"not_calculated",
+        })
+    return sorted(rows,key=lambda x:(x["scheduled_jobs_today"],x["technician_name"]))[:3]
+
 
 def _suggest(ticket):
     if not ticket:
@@ -98,7 +135,9 @@ class SyncAssistAssignmentsView(APIView):
                 "request_id":key,"assignment_id":str(uuid4()),"role":role,"kind":kind,
                 "description":description.strip(),"ticket_id":ticket.pk if ticket else None,
                 "ticket_status_at_review":ticket.status if ticket else None,
-                "suggested_next_action":_suggest(ticket),"requires_approval":True,
+                "suggested_next_action":_suggest(ticket),
+                "technician_candidates":_candidate_technicians(ticket) if ticket and ticket.assigned_business_id and ticket.assigned_business.owner_id==request.user.id else [],
+                "requires_approval":True,
             }
             AuditLog.objects.create(actor=request.user,action=CREATED,metadata=record)
         return Response({"created":True,"assignment":{**record,"state":"AWAITING_REVIEW"},
