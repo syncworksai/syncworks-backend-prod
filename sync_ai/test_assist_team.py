@@ -60,7 +60,7 @@ class TeamConfigurationTests(APITestCase):
         self.assertEqual(by_role["SALES_MANAGER"]["name"],"Scarlett")
         self.assertEqual(by_role["RESEARCH_ANALYST"]["name"],"Sophia")
         self.assertEqual(by_role["FINANCE_MANAGER"]["name"],"Charlotte")
-        self.assertEqual(by_role["SALES_MANAGER"]["photo"],"")
+        self.assertEqual(by_role["SALES_MANAGER"]["photo"],"/jarvis-avatars/Scarlett.png")
         AuditLog.objects.create(actor=self.owner, action="sync_assist.team.config_updated", metadata={"employees":{
             "executive-male":{"name":"My Custom Name","photo":"/jarvis-avatars/elizabeth.jpeg"},
         }})
