@@ -6,8 +6,6 @@ from decimal import Decimal, InvalidOperation
 from django.db import transaction
 from django.utils import timezone
 from django.conf import settings
-from django.core.mail import send_mail
-from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -142,7 +140,7 @@ def _send_invoice(invoice: Invoice, business: Business, *, actor=None, automated
         invoice=invoice,
         event_type=InvoiceEvent.EventType.SENT,
         actor=actor,
-        message="Invoice auto-sent using Business billing settings." if automated else "Invoice sent to customer through SyncWorks.",
+        message="Invoice automatically issued and customer notified within SyncWorks." if automated else "Invoice issued and customer notified within SyncWorks.",
         metadata={"automated": bool(automated)},
     )
     _notify_customer(
@@ -380,6 +378,8 @@ class BusinessInvoiceActionView(APIView):
             reason = str(request.data.get("reason") or "").strip()[:300]
             if not reason:
                 return Response({"detail": "A refund reason is required."}, status=400)
+            if InvoiceEvent.objects.filter(invoice=invoice, payment_source="REFUND_REQUEST", metadata__refund_status="REVIEW_REQUIRED").exists():
+                return Response({"detail": "A refund review is already pending for this invoice."}, status=409)
             InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.NOTE, actor=request.user,
                 message="Refund review requested; no funds have been returned.", amount=requested,
                 payment_source="REFUND_REQUEST", metadata={"reason":reason,"refund_status":"REVIEW_REQUIRED","processor":"STRIPE" if invoice.stripe_payment_intent_id else "EXTERNAL"})
