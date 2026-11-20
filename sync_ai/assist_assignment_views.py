@@ -162,3 +162,55 @@ class SyncAssistAssignmentDecisionView(APIView):
             if not item:return Response({"detail":"Assignment not found."},status=404)
             AuditLog.objects.create(actor=request.user,action=REVIEWED,metadata={"assignment_id":key,"state":decision})
         return Response(_snapshot(request.user))
+
+
+class SyncAssistEmployeeWorkView(APIView):
+    """Read-only owner-scoped queue for one fixed AI employee role.
+
+    Fresh ticket status is resolved on each read; historical assignment
+    recommendations are not represented as live dispatch decisions.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, role):
+        if not _pilot(request.user):
+            return Response({"detail": "Private pilot only."}, status=403)
+        from .assist_team_views import SLOTS, EXECUTABLE_ROLES
+        role = str(role).strip().upper()
+        if role not in {item["role"] for item in SLOTS.values()}:
+            return Response({"detail": "Unknown AI employee role."}, status=404)
+        all_items = _snapshot(request.user)["assignments"]
+        assigned = [item for item in all_items if item.get("role") == role]
+        pending = sum(item.get("state") == "AWAITING_REVIEW" for item in assigned)
+        visible = []
+        for item in assigned[:12]:
+            ticket_id = item.get("ticket_id")
+            live_ticket = None
+            if ticket_id is not None:
+                live_ticket = Ticket.objects.select_related("assigned_business").filter(pk=ticket_id).first()
+                # If a business changed hands, never disclose live ticket details
+                # merely because the old user retained an audit-log assignment.
+                if not _accessible_ticket(request.user, live_ticket):
+                    continue
+            old_status = item.get("ticket_status_at_review")
+            current_status = live_ticket.status if live_ticket else None
+            visible.append({
+                "assignment_id": item.get("assignment_id"),
+                "kind": item.get("kind"),
+                "description": str(item.get("description") or "")[:500],
+                "ticket_id": ticket_id,
+                "created_at": item.get("created_at"),
+                "state": item.get("state"),
+                "suggested_next_action": str(item.get("suggested_next_action") or "")[:500],
+                "ticket_status": current_status,
+                "status_changed_since_review": bool(live_ticket and old_status != current_status),
+                "recommendation_is_historical": True,
+            })
+        return Response({
+            "role": role,
+            "pending_count": pending,
+            "assignments": visible,
+            "internal_worker_available": role in EXECUTABLE_ROLES,
+            "execution_mode": "REVIEW_ONLY",
+            "notice": "Assignment suggestions are historical review notes, not fresh scheduling or payment instructions. No actions were run.",
+        })
