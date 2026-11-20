@@ -7,7 +7,7 @@ from .assist_job_views import SyncAssistJobView, SyncAssistJobCancelView
 from .assist_budget_views import SyncAssistBudgetView
 from .assist_delegation_views import SyncAssistDelegationView
 from .assist_team_views import SyncAssistTeamView
-from .assist_assignment_views import SyncAssistAssignmentsView, SyncAssistAssignmentDecisionView
+from .assist_assignment_views import SyncAssistAssignmentsView, SyncAssistAssignmentDecisionView, SyncAssistEmployeeWorkView
 from .assist_work_history import SyncAssistWorkHistoryView
 from .assist_communications_views import SyncAssistCommunicationsView, SyncAssistWhatsAppInboundView
 from .assist_internal_connections import SyncAssistInternalConnectionsView
@@ -47,6 +47,7 @@ from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
     path('assist/pilot/assignments/', SyncAssistAssignmentsView.as_view(), name='assist-assignments'),
+    path('assist/pilot/employees/<str:role>/work/', SyncAssistEmployeeWorkView.as_view(), name='assist-employee-work'),
     path('assist/pilot/assignments/<str:assignment_id>/decision/', SyncAssistAssignmentDecisionView.as_view(), name='assist-assignment-decision'),
     path('business/technician-groups/', BusinessTechnicianGroupsView.as_view(), name='business-technician-groups'),
     path('assist/pilot/delegate/', SyncAssistDelegationView.as_view(), name='sync-assist-delegate'),
