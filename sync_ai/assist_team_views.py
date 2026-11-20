@@ -12,7 +12,6 @@ from rest_framework.views import APIView
 
 from user_accounts.models import AuditLog
 from .assist_pilot_views import _pilot
-from .assist_workday_views import ROLES
 
 ACTION = "sync_assist.team.config_updated"
 SLOTS = {
@@ -22,30 +21,44 @@ SLOTS = {
     "future-male": {"name": "William", "role": "RESEARCH_ANALYST"},
 }
 MAX_NAME_LENGTH = 32
+PHOTO_CHOICES = {
+    "/jarvis-avatars/victoria.jpeg", "/jarvis-avatars/james.jpeg",
+    "/jarvis-avatars/elizabeth.jpeg", "/jarvis-avatars/william.jpeg",
+    "/lady10.png",
+}
+DEFAULT_PHOTOS = {
+    "executive-female": "/lady10.png",
+    "executive-male": "/jarvis-avatars/james.jpeg",
+    "future-female": "/jarvis-avatars/elizabeth.jpeg",
+    "future-male": "/jarvis-avatars/william.jpeg",
+}
+
 # These roles presently have bounded, auditable internal task handlers.
 EXECUTABLE_ROLES = {"CHIEF_OF_STAFF", "RESEARCH_ANALYST", "SALES_MANAGER", "MARKETING_MANAGER", "EXECUTIVE_ASSISTANT"}
 
 
 def team_snapshot(user):
-    items = {key: {"id": key, **default} for key, default in SLOTS.items()}
+    items = {key: {"id": key, **default, "photo": DEFAULT_PHOTOS[key]} for key, default in SLOTS.items()}
     latest = AuditLog.objects.filter(actor=user, action=ACTION).order_by("-id").first()
     if latest:
         overrides = (latest.metadata or {}).get("employees", {})
         if isinstance(overrides, dict):
             for key, item in overrides.items():
                 if key in items and isinstance(item, dict):
-                    name, role = item.get("name"), item.get("role")
+                    name, photo = item.get("name"), item.get("photo")
                     if isinstance(name, str) and 1 <= len(name.strip()) <= MAX_NAME_LENGTH:
                         items[key]["name"] = name.strip()
-                    if role in ROLES:
-                        items[key]["role"] = role
+                    if photo in PHOTO_CHOICES:
+                        items[key]["photo"] = photo
     return {
         "employees": [
             {**item, "execution_status": "internal_pilot" if item["role"] in EXECUTABLE_ROLES else "not_implemented"}
             for item in items.values()
         ],
-        "allowed_roles": sorted(ROLES),
-        "notice": "Roles are assignment labels, not permission grants. Only marked internal-pilot roles can execute existing audited work. External actions remain disabled.",
+        "allowed_roles": [entry["role"] for entry in SLOTS.values()],
+        "photo_choices": sorted(PHOTO_CHOICES),
+        "pilot_entitlement": "FREE_TEST_ACCOUNT",
+        "notice": "Employee roles are fixed and do not grant permission to use tools. Only marked internal-pilot roles can execute existing audited work. External actions remain disabled.",
     }
 
 
@@ -64,19 +77,20 @@ class SyncAssistTeamView(APIView):
         if not isinstance(submitted, list) or len(submitted) != len(SLOTS):
             return Response({"detail": "Provide exactly the four existing employee slots."}, status=400)
         overrides = {}
-        used_roles = set()
         for row in submitted:
-            if not isinstance(row, dict) or set(row.keys()) != {"id", "name", "role"}:
-                return Response({"detail": "Each employee requires id, name and role only."}, status=400)
+            if not isinstance(row, dict) or set(row.keys()) not in ({"id", "name", "role"}, {"id", "name", "role", "photo"}):
+                return Response({"detail": "Each employee requires id, name, fixed role and optional approved photo."}, status=400)
             key, name, role = row["id"], row["name"], row["role"]
+            photo = row.get("photo", DEFAULT_PHOTOS.get(key))
             if not isinstance(key, str) or key not in SLOTS or key in overrides:
                 return Response({"detail": "Unknown or duplicate employee."}, status=400)
             if not isinstance(name, str) or not 1 <= len(name.strip()) <= MAX_NAME_LENGTH:
                 return Response({"detail": "Employee names must be 1–32 characters."}, status=400)
-            if not isinstance(role, str) or role not in ROLES or role in used_roles:
-                return Response({"detail": "Assign each employee a different supported role."}, status=400)
-            used_roles.add(role)
-            overrides[key] = {"name": name.strip(), "role": role}
+            if role != SLOTS[key]["role"]:
+                return Response({"detail": "Employee roles are fixed. Customize only the name and portrait."}, status=400)
+            if photo not in PHOTO_CHOICES:
+                return Response({"detail": "Choose one of the approved employee portraits."}, status=400)
+            overrides[key] = {"name": name.strip(), "photo": photo}
         with transaction.atomic():
             get_user_model().objects.select_for_update().get(pk=request.user.pk)
             AuditLog.objects.create(actor=request.user, action=ACTION, metadata={"employees": overrides})
