@@ -16,30 +16,31 @@ from .assist_pilot_views import _pilot
 ACTION = "sync_assist.team.config_updated"
 SLOTS = {
     "executive-female": {"name": "Victoria", "role": "CHIEF_OF_STAFF"},
-    "executive-male": {"name": "James", "role": "SALES_MANAGER"},
+    "executive-male": {"name": "Scarlett", "role": "SALES_MANAGER"},
     "future-female": {"name": "Elizabeth", "role": "MARKETING_MANAGER"},
-    "future-male": {"name": "William", "role": "RESEARCH_ANALYST"},
+    "future-male": {"name": "Sophia", "role": "RESEARCH_ANALYST"},
     "executive-assistant": {"name": "Executive Assistant", "role": "EXECUTIVE_ASSISTANT"},
     "business-manager": {"name": "Business Operations", "role": "BUSINESS_MANAGER"},
-    "finance-manager": {"name": "Finance Analyst", "role": "FINANCE_MANAGER"},
+    "finance-manager": {"name": "Charlotte", "role": "FINANCE_MANAGER"},
     "property-manager": {"name": "Property Assistant", "role": "PROPERTY_MANAGER"},
     "customer-service": {"name": "Customer Service", "role": "CUSTOMER_SERVICE"},
     "personal-trainer": {"name": "Fitness Coach", "role": "PERSONAL_TRAINER"},
 }
 MAX_NAME_LENGTH = 32
 PHOTO_CHOICES = {
+    "", # Intentional placeholder until the approved portrait is uploaded.
     "/jarvis-avatars/victoria.jpeg", "/jarvis-avatars/james.jpeg",
     "/jarvis-avatars/elizabeth.jpeg", "/jarvis-avatars/william.jpeg",
     "/lady10.png",
 }
 DEFAULT_PHOTOS = {
     "executive-female": "/lady10.png",
-    "executive-male": "/jarvis-avatars/james.jpeg",
+    "executive-male": "",
     "future-female": "/jarvis-avatars/elizabeth.jpeg",
-    "future-male": "/jarvis-avatars/william.jpeg",
+    "future-male": "",
     "executive-assistant": "/jarvis-avatars/victoria.jpeg",
     "business-manager": "/jarvis-avatars/james.jpeg",
-    "finance-manager": "/jarvis-avatars/william.jpeg",
+    "finance-manager": "",
     "property-manager": "/jarvis-avatars/elizabeth.jpeg",
     "customer-service": "/jarvis-avatars/victoria.jpeg",
     "personal-trainer": "/jarvis-avatars/james.jpeg",
@@ -59,9 +60,13 @@ def team_snapshot(user):
                 if key in items and isinstance(item, dict):
                     name, photo = item.get("name"), item.get("photo")
                     if isinstance(name, str) and 1 <= len(name.strip()) <= MAX_NAME_LENGTH:
-                        items[key]["name"] = name.strip()
+                        # Legacy 4-avatar roster used James and William. Migrate
+                        # only those exact defaults, preserving personal renames.
+                        old_defaults = {"executive-male": "James", "future-male": "William", "finance-manager": "Finance Analyst"}
+                        items[key]["name"] = SLOTS[key]["name"] if name.strip() == old_defaults.get(key) else name.strip()
                     if photo in PHOTO_CHOICES:
-                        items[key]["photo"] = photo
+                        old_photos = {"executive-male": "/jarvis-avatars/james.jpeg", "future-male": "/jarvis-avatars/william.jpeg", "finance-manager": "/jarvis-avatars/william.jpeg"}
+                        items[key]["photo"] = DEFAULT_PHOTOS[key] if photo == old_photos.get(key) else photo
     return {
         "employees": [
             {**item, "execution_status": "internal_pilot" if item["role"] in EXECUTABLE_ROLES else "not_implemented"}
