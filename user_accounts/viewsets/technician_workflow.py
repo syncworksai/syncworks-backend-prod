@@ -25,8 +25,8 @@ STATUS_TIMESTAMPS = {
     "ON_SITE": "on_site_at", "IN_PROGRESS": "started_at",
     "COMPLETED": "completed_at", "CANCELLED": "cancelled_at",
 }
-FIELD_STATUSES = {"EN_ROUTE", "ON_SITE", "IN_PROGRESS", "COMPLETED"}
-DISPATCH_STATUSES = set(STATUS_TIMESTAMPS) | {"ASSIGNED"}
+FIELD_STATUSES = {"EN_ROUTE", "ON_SITE", "IN_PROGRESS", "NEEDS_QUOTE", "COMPLETED"}
+DISPATCH_STATUSES = set(STATUS_TIMESTAMPS) | {"ASSIGNED", "NEEDS_QUOTE"}
 FINAL = {"CANCELLED", "CLOSED", "PAID", "COMPLETED", "INVOICED"}
 PICKUP_TAG = "TECH_JOB_PICKUP_REQUEST"
 
@@ -243,6 +243,8 @@ class TechnicianTicketActionView(APIView):
             return Response({"detail":"This status requires dispatch permission."}, status=403)
         if ticket.status in FINAL and action != ticket.status:
             return Response({"detail":"This ticket is already finalized."}, status=409)
+        if action == "NEEDS_QUOTE" and not reason:
+            return Response({"detail":"Describe the work that needs a quote."}, status=400)
         if action == "COMPLETED" and not reason:
             return Response({"detail":"Add a completion summary."}, status=400)
         if action == "CANCELLED" and not reason:
@@ -419,6 +421,11 @@ class TechnicianTeamBoardView(APIView):
                 "scheduled_end":ops.scheduled_end.isoformat() if ops and ops.scheduled_end else None,
                 "required_skills":ops.required_skills if ops else [],
                 "assigned_member_id":ticket.assigned_member_id,
+                "en_route_at":ticket.en_route_at.isoformat() if ticket.en_route_at else None,
+                "on_site_at":ticket.on_site_at.isoformat() if ticket.on_site_at else None,
+                "work_started_at":ticket.started_at.isoformat() if ticket.started_at else None,
+                "completed_at":ticket.completed_at.isoformat() if ticket.completed_at else None,
+                "actual_work_seconds":ops.actual_work_seconds if ops else 0,
             }
             if ticket.assigned_member_id:
                 jobs_by_user.setdefault(ticket.assigned_member_id,[]).append(row)
