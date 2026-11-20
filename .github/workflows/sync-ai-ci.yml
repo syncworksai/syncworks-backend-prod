@@ -7,6 +7,7 @@ on:
       - "sync_ai/assist_team_views.py"
       - "sync_ai/test_assist_team.py"
       - "sync_ai/assist_assignment_views.py"
+      - "sync_ai/assist_chief_views.py"
       - "sync_ai/test_assist_assignments.py"
       - "sync_ai/urls.py"
       - ".github/workflows/sync-ai-ci.yml"
