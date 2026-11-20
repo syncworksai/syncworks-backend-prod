@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 from django.utils import timezone
+from django.conf import settings
+from django.core.mail import send_mail
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -139,7 +141,7 @@ def _send_invoice(invoice: Invoice, business: Business, *, actor=None, automated
         invoice=invoice,
         event_type=InvoiceEvent.EventType.SENT,
         actor=actor,
-        message="Invoice auto-sent using Business billing settings." if automated else "Invoice sent to customer through SyncWorks.",
+        message="Invoice automatically issued and customer notified within SyncWorks." if automated else "Invoice issued and customer notified within SyncWorks.",
         metadata={"automated": bool(automated)},
     )
     _notify_customer(
@@ -160,6 +162,7 @@ def _invoice_payload(invoice: Invoice, include_events=False):
         "ticket_code": getattr(ticket, "ticket_code", "") if ticket else "",
         "ticket_status": getattr(ticket, "status", "") if ticket else "",
         "customer_name": _customer_name(ticket),
+        "customer_email": str(getattr(getattr(ticket, "customer", None), "email", "") or ""),
         "marketplace_origin": bool(getattr(ticket, "is_marketplace", False)) if ticket else False,
         "service_title": (getattr(ticket, "work_title", "") or getattr(getattr(ticket, "service_request", None), "title", "") or invoice.title) if ticket else invoice.title,
     })
@@ -224,6 +227,7 @@ class BusinessInvoiceCenterView(APIView):
         return Response({
             "business_id": business.id,
             "business_name": business.name,
+            "permissions": {"can_manage_invoices": _can_manage_invoices(business, member, request.user)},
             "summary": {"invoice_count": len(all_invoices), "outstanding": str(outstanding.quantize(Decimal("0.01"))), "overdue_count": len(overdue), "due_soon_count": len(due_soon), "paid_this_month": str(paid_month.quantize(Decimal("0.01"))), "ready_to_bill_count": len(ready_tickets)},
             "automation": {"auto_send_invoices": automation.auto_send_invoices, "auto_reminders_enabled": automation.auto_reminders_enabled, "due_terms": automation.due_terms},
             "suggestions": suggestions,
@@ -245,6 +249,63 @@ class BusinessInvoiceDetailView(APIView):
             return Response({"detail": str(exc)}, status=403)
         if not _can_view_finance(business, member, request.user):
             return Response({"detail": "Financial access required."}, status=403)
+        data = _invoice_payload(invoice, include_events=True)
+        # Limited card metadata only. Never return or store raw PAN, expiry or CVC.
+        data["card_last4"] = None
+        data["card_brand"] = None
+        if invoice.stripe_payment_intent_id:
+            try:
+                import stripe
+                stripe.api_key = settings.STRIPE_SECRET_KEY
+                intent = stripe.PaymentIntent.retrieve(invoice.stripe_payment_intent_id, expand=["latest_charge"])
+                charge = intent.get("latest_charge") or {}
+                if not isinstance(charge, dict):
+                    charge = stripe.Charge.retrieve(charge) if charge else {}
+                card = ((charge.get("payment_method_details") or {}).get("card") or {})
+                data["card_last4"] = card.get("last4")
+                data["card_brand"] = card.get("brand")
+            except Exception:
+                # Invoice access must not depend on Stripe metadata availability.
+                pass
+        data["refund_eligible_for_review"] = bool(invoice.stripe_payment_intent_id and _money(invoice.amount_paid) > 0)
+        data["can_manage_invoices"] = _can_manage_invoices(business, member, request.user)
+        return Response(data)
+
+    @transaction.atomic
+    def patch(self, request, invoice_id: int):
+        try:
+            business, member = _business_context(request)
+            invoice = _get_invoice(business, invoice_id)
+        except LookupError as exc:
+            return Response({"detail": str(exc)}, status=404)
+        except PermissionError as exc:
+            return Response({"detail": str(exc)}, status=403)
+        if not _can_manage_invoices(business, member, request.user):
+            return Response({"detail": "Invoice management permission required."}, status=403)
+        if invoice.status != Invoice.Status.DRAFT or _money(invoice.amount_paid) > 0:
+            return Response({"detail": "Only unpaid draft invoices can be edited."}, status=409)
+        changes = []
+        for field, limit in (("title", 255), ("notes", 4000)):
+            if field in request.data:
+                value = str(request.data.get(field) or "").strip()
+                if len(value) > limit:
+                    return Response({"detail": f"{field} is too long."}, status=400)
+                setattr(invoice, field, value)
+                changes.append(field)
+        if "due_date" in request.data:
+            try:
+                raw = str(request.data["due_date"] or "")
+                parsed = date.fromisoformat(raw)
+            except ValueError:
+                return Response({"detail": "Use YYYY-MM-DD for the due date."}, status=400)
+            invoice.due_date = parsed
+            changes.append("due_date")
+        if not changes:
+            return Response({"detail": "No supported invoice fields supplied."}, status=400)
+        invoice.save(update_fields=changes + ["updated_at"])
+        InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.UPDATED,
+                                    actor=request.user, message="Draft invoice edited.",
+                                    metadata={"fields": changes})
         return Response(_invoice_payload(invoice, include_events=True))
 
 
@@ -308,6 +369,65 @@ class BusinessInvoiceActionView(APIView):
                 _send_invoice(invoice, business, actor=request.user, automated=False)
             except ValueError as exc:
                 return Response({"detail": str(exc)}, status=409)
+        elif action_name == "email":
+            # Mail is sent only for an already-issued invoice. Never email a
+            # draft that the customer's own portal intentionally hides.
+            if invoice.status not in {Invoice.Status.SENT, Invoice.Status.PAID}:
+                return Response({"detail": "Issue the invoice in SyncWorks before emailing it."}, status=409)
+            recipient = getattr(getattr(invoice.ticket, "customer", None), "email", "") if invoice.ticket else ""
+            if not recipient:
+                return Response({"detail": "Customer has no email address. Use the manual mail draft or update their profile."}, status=409)
+            from user_accounts.models import CommunicationPreference
+            pref = CommunicationPreference.objects.filter(user=invoice.ticket.customer, business=None).first()
+            if pref and not pref.email_notifications_enabled:
+                return Response({"detail": "Customer email notifications are disabled."}, status=409)
+            backend = str(getattr(settings, "EMAIL_BACKEND", "") or "").lower()
+            if any(marker in backend for marker in ("console", "locmem", "dummy", "filebased")):
+                return Response({"detail": "Transactional email provider is not configured. Use the prefilled email draft."}, status=503)
+            if InvoiceEvent.objects.filter(invoice=invoice, event_type=InvoiceEvent.EventType.SENT,
+                    metadata__channel="email", occurred_at__gte=timezone.now()-timedelta(seconds=60)).exists():
+                return Response({"detail": "Invoice email was recently submitted. Review the timeline before sending again."}, status=409)
+            frontend = (getattr(settings, "FRONTEND_URL", "https://syncworksapp.com") or "https://syncworksapp.com").rstrip("/")
+            url = f"{frontend}/customer/invoices?invoice_id={invoice.id}"
+            total = _money(invoice.total)
+            balance = max(Decimal("0.00"), total - _money(invoice.amount_paid))
+            due = invoice.due_date.isoformat() if invoice.due_date else "See invoice"
+            subject = f"Invoice #{invoice.id} from {business.name}"
+            body = (
+                f"Hello,\n\n{business.name} has issued invoice #{invoice.id}.\n"
+                f"Service: {invoice.title or 'Services'}\nInvoice date: {invoice.created_at.date().isoformat()}\nTotal: ${total}\n"
+                f"Balance due: ${balance}\nDue date: {due}\n\n"
+                f"View your invoice or pay securely by card in SyncWorks:\n{url}\n\n"
+                "You may be asked to sign in to view your invoice.\nThank you."
+            )
+            if not getattr(settings, "DEFAULT_FROM_EMAIL", None):
+                return Response({"detail": "Transactional sender address is not configured. Use the prefilled email draft."}, status=503)
+            try:
+                accepted = send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, [recipient], fail_silently=False)
+            except Exception:
+                return Response({"detail": "Email provider could not accept the invoice. Use the prefilled email draft."}, status=503)
+            if accepted != 1:
+                return Response({"detail": "Email provider did not accept the invoice. Use the prefilled email draft."}, status=503)
+            InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.SENT, actor=request.user,
+                message="Invoice email accepted by the configured provider; recipient delivery is not confirmed.",
+                metadata={"channel":"email", "provider_accepted":True})
+        elif action_name == "request-refund":
+            if _money(invoice.amount_paid) <= 0:
+                return Response({"detail": "There is no recorded payment to refund."}, status=409)
+            try:
+                requested = Decimal(str(request.data.get("amount") or "0")).quantize(Decimal("0.01"))
+            except (InvalidOperation, ValueError, TypeError):
+                return Response({"detail": "Enter a valid refund amount."}, status=400)
+            if requested <= 0 or requested > _money(invoice.amount_paid):
+                return Response({"detail": "Refund request must be positive and not exceed the recorded payment."}, status=400)
+            reason = str(request.data.get("reason") or "").strip()[:300]
+            if not reason:
+                return Response({"detail": "A refund reason is required."}, status=400)
+            if InvoiceEvent.objects.filter(invoice=invoice, payment_source="REFUND_REQUEST", metadata__refund_status="REVIEW_REQUIRED").exists():
+                return Response({"detail": "A refund review is already pending for this invoice."}, status=409)
+            InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.NOTE, actor=request.user,
+                message="Refund review requested; no funds have been returned.", amount=requested,
+                payment_source="REFUND_REQUEST", metadata={"reason":reason,"refund_status":"REVIEW_REQUIRED","processor":"STRIPE" if invoice.stripe_payment_intent_id else "EXTERNAL"})
         elif action_name == "reminder":
             if invoice.status != Invoice.Status.SENT:
                 return Response({"detail": "Only sent invoices can receive a payment reminder."}, status=409)
@@ -320,13 +440,20 @@ class BusinessInvoiceActionView(APIView):
             invoice.save(update_fields=["status", "updated_at"])
             InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.VOIDED, actor=request.user, message=str(request.data.get("reason") or "Invoice voided."))
         elif action_name == "record-payment":
-            if invoice.status == Invoice.Status.VOID:
-                return Response({"detail": "Cannot record payment on a void invoice."}, status=409)
+            if invoice.status in {Invoice.Status.VOID, Invoice.Status.PAID}:
+                return Response({"detail": "Cannot record payment on a closed invoice."}, status=409)
             amount = _money(request.data.get("amount"))
             if amount <= 0:
                 return Response({"detail": "Payment amount must be greater than zero."}, status=400)
             source = str(request.data.get("source") or "OTHER").upper()
-            reference = str(request.data.get("reference") or "")[:255]
+            if source not in {"CASH","CHECK","VENMO","EXTERNAL_POS","OTHER"}:
+                return Response({"detail": "Only external payment methods can be manually recorded. Card payments must be confirmed by Stripe."}, status=400)
+            reference = str(request.data.get("reference") or "").strip()[:255]
+            if source in {"CHECK","VENMO","EXTERNAL_POS"} and not reference:
+                return Response({"detail": "A receipt or transaction reference is required for this payment method."}, status=400)
+            balance = max(Decimal("0.00"), _money(invoice.total) - _money(invoice.amount_paid))
+            if amount > balance:
+                return Response({"detail": "Payment exceeds the outstanding balance."}, status=400)
             new_paid = min(_money(invoice.total), _money(invoice.amount_paid) + amount)
             invoice.amount_paid = new_paid
             fully_paid = _money(invoice.total) > 0 and new_paid >= _money(invoice.total)
@@ -347,4 +474,7 @@ class BusinessInvoiceActionView(APIView):
             return Response({"detail": "Unknown invoice action."}, status=404)
 
         invoice.refresh_from_db()
-        return Response(_invoice_payload(invoice, include_events=True))
+        payload = _invoice_payload(invoice, include_events=True)
+        if action_name == "email":
+            payload["email_status"] = "PROVIDER_ACCEPTED_NOT_CONFIRMED_DELIVERED"
+        return Response(payload)

@@ -1,3 +1,4 @@
+from unittest.mock import patch
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -80,7 +81,7 @@ class InvoiceExperienceTests(APITestCase):
         self.auth_owner()
         response = self.client.post(
             f"/api/v1/sync-ai/business/invoices/{invoice.id}/record-payment/",
-            {"amount": "25.00", "source": "CHECK"},
+            {"amount": "25.00", "source": "CHECK", "reference":"CHECK-1001"},
             format="json",
         )
         self.assertEqual(response.status_code, 200)
@@ -104,3 +105,81 @@ class InvoiceExperienceTests(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Token {self.accounting_token.key}", HTTP_X_BUSINESS_ID=str(self.business.id))
         response = self.client.post(f"/api/v1/sync-ai/business/invoices/from-ticket/{ticket.id}/", {}, format="json")
         self.assertEqual(response.status_code, 201)
+
+    def test_draft_quick_edit_is_logged_and_only_before_issue(self):
+        invoice = Invoice.objects.create(ticket=self.make_ticket(), title="Original", subtotal=Decimal("125"), total=Decimal("125"))
+        self.auth_owner()
+        url = f"/api/v1/sync-ai/business/invoices/{invoice.id}/"
+        response = self.client.patch(url, {"title":"Revised repair","notes":"Materials checked","due_date":"2026-12-05"}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["title"], "Revised repair")
+        self.assertEqual(str(response.data["due_date"]), "2026-12-05")
+        self.assertEqual(response.data["customer_email"], self.customer.email)
+        self.assertTrue(InvoiceEvent.objects.filter(invoice=invoice,event_type=InvoiceEvent.EventType.UPDATED).exists())
+        self.client.post(f"/api/v1/sync-ai/business/invoices/{invoice.id}/send/", {},format="json")
+        denied = self.client.patch(url, {"title":"Unauthorized after issue"},format="json")
+        self.assertEqual(denied.status_code,409)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.title,"Revised repair")
+
+    def test_manual_stripe_payment_cannot_be_faked_or_exceed_balance(self):
+        invoice=Invoice.objects.create(ticket=self.make_ticket(),title="Repair",subtotal=Decimal("125"),total=Decimal("125"),status=Invoice.Status.SENT)
+        self.auth_owner()
+        url=f"/api/v1/sync-ai/business/invoices/{invoice.id}/record-payment/"
+        fake=self.client.post(url,{"amount":"10.00","source":"SYNC_CARD"},format="json")
+        self.assertEqual(fake.status_code,400)
+        excess=self.client.post(url,{"amount":"130.00","source":"CASH"},format="json")
+        self.assertEqual(excess.status_code,400)
+        unreferenced=self.client.post(url,{"amount":"10.00","source":"VENMO"},format="json")
+        self.assertEqual(unreferenced.status_code,400)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid,Decimal("0"))
+
+    def test_venmo_payment_and_refund_request_never_claim_funds_sent(self):
+        invoice=Invoice.objects.create(ticket=self.make_ticket(),title="Repair",subtotal=Decimal("125"),total=Decimal("125"),status=Invoice.Status.SENT)
+        self.auth_owner()
+        base=f"/api/v1/sync-ai/business/invoices/{invoice.id}/"
+        paid=self.client.post(base+"record-payment/",{"amount":"50.00","source":"VENMO","reference":"VENMO-123"},format="json")
+        self.assertEqual(paid.status_code,200,paid.data)
+        self.assertEqual(paid.data["balance_due"],"75.00")
+        requested=self.client.post(base+"request-refund/",{"amount":"20.00","reason":"Duplicate amount"},format="json")
+        self.assertEqual(requested.status_code,200,requested.data)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.amount_paid,Decimal("50.00"))
+        event=InvoiceEvent.objects.filter(invoice=invoice,payment_source="REFUND_REQUEST").first()
+        self.assertIsNotNone(event)
+        self.assertEqual(event.metadata["refund_status"],"REVIEW_REQUIRED")
+        self.assertEqual(event.amount,Decimal("20.00"))
+
+    def test_cross_business_draft_edit_is_forbidden(self):
+        other_ticket=self.make_ticket(business=self.other_business)
+        invoice=Invoice.objects.create(ticket=other_ticket,title="Other",subtotal=Decimal("99"),total=Decimal("99"))
+        self.auth_owner()
+        response=self.client.patch(f"/api/v1/sync-ai/business/invoices/{invoice.id}/",{"title":"Cross tenant"},format="json")
+        self.assertEqual(response.status_code,404)
+
+    @override_settings(DEFAULT_FROM_EMAIL="invoices@syncworksapp.com", EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend")
+    @patch("user_accounts.viewsets.invoice_experience.send_mail")
+    def test_issued_invoice_email_is_provider_accepted_not_confirmed_delivered(self, mocked_send):
+        invoice=Invoice.objects.create(ticket=self.make_ticket(),title="Completed repair",subtotal=Decimal("125"),total=Decimal("125"),status=Invoice.Status.SENT)
+        mocked_send.return_value=1
+        self.auth_owner()
+        url=f"/api/v1/sync-ai/business/invoices/{invoice.id}/email/"
+        response=self.client.post(url,{},format="json")
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertEqual(response.data["email_status"],"PROVIDER_ACCEPTED_NOT_CONFIRMED_DELIVERED")
+        self.assertIn("customer-invoice@example.com",mocked_send.call_args.args[3])
+        event=InvoiceEvent.objects.filter(invoice=invoice,event_type=InvoiceEvent.EventType.SENT,metadata__channel="email").first()
+        self.assertIsNotNone(event)
+        repeated=self.client.post(url,{},format="json")
+        self.assertEqual(repeated.status_code,409)
+        self.assertEqual(mocked_send.call_count,1)
+
+    @override_settings(DEFAULT_FROM_EMAIL="invoices@syncworksapp.com", EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend")
+    @patch("user_accounts.viewsets.invoice_experience.send_mail")
+    def test_email_must_be_issued_first(self,mocked_send):
+        invoice=Invoice.objects.create(ticket=self.make_ticket(),title="Draft",subtotal=Decimal("125"),total=Decimal("125"))
+        self.auth_owner()
+        response=self.client.post(f"/api/v1/sync-ai/business/invoices/{invoice.id}/email/",{},format="json")
+        self.assertEqual(response.status_code,409)
+        mocked_send.assert_not_called()

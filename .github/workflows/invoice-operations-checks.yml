@@ -1,0 +1,29 @@
+name: Invoice operations and refund-review checks
+on:
+  pull_request:
+    paths:
+      - 'user_accounts/viewsets/invoice_experience.py'
+      - 'sync_ai/test_invoice_experience.py'
+      - '.github/workflows/invoice-operations-checks.yml'
+  workflow_dispatch:
+jobs:
+  invoice-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 24
+    env:
+      DB_ENGINE: sqlite
+      DJANGO_DEBUG: 'true'
+      DJANGO_SECRET_KEY: 'invoice-operations-ci-not-production'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Check Python compilation
+        run: python -m compileall -q user_accounts/viewsets/invoice_experience.py sync_ai/test_invoice_experience.py
+      - name: Django checks
+        run: python manage.py check
+      - name: Invoice lifecycle and cross-tenant tests
+        run: python manage.py test sync_ai.test_invoice_experience sync_ai.test_invoice_customer_loop --verbosity 2
