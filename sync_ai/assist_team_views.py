@@ -32,15 +32,20 @@ PHOTO_CHOICES = {
     "/jarvis-avatars/victoria.jpeg", "/jarvis-avatars/james.jpeg",
     "/jarvis-avatars/elizabeth.jpeg", "/jarvis-avatars/william.jpeg",
     "/lady10.png",
+    "/jarvis-avatars/Victoria.png",
+    "/jarvis-avatars/Charlotte.png",
+    "/jarvis-avatars/Elizabeth.png",
+    "/jarvis-avatars/Scarlett.png",
+    "/jarvis-avatars/Sophia.png",
 }
 DEFAULT_PHOTOS = {
-    "executive-female": "/lady10.png",
-    "executive-male": "",
-    "future-female": "/jarvis-avatars/elizabeth.jpeg",
-    "future-male": "",
+    "executive-female": "/jarvis-avatars/Victoria.png",
+    "executive-male": "/jarvis-avatars/Scarlett.png",
+    "future-female": "/jarvis-avatars/Elizabeth.png",
+    "future-male": "/jarvis-avatars/Sophia.png",
     "executive-assistant": "/jarvis-avatars/victoria.jpeg",
     "business-manager": "/jarvis-avatars/james.jpeg",
-    "finance-manager": "",
+    "finance-manager": "/jarvis-avatars/Charlotte.png",
     "property-manager": "/jarvis-avatars/elizabeth.jpeg",
     "customer-service": "/jarvis-avatars/victoria.jpeg",
     "personal-trainer": "/jarvis-avatars/james.jpeg",
@@ -66,7 +71,7 @@ def team_snapshot(user):
                         items[key]["name"] = SLOTS[key]["name"] if name.strip() == old_defaults.get(key) else name.strip()
                     if photo in PHOTO_CHOICES:
                         old_photos = {"executive-male": "/jarvis-avatars/james.jpeg", "future-male": "/jarvis-avatars/william.jpeg", "finance-manager": "/jarvis-avatars/william.jpeg"}
-                        items[key]["photo"] = DEFAULT_PHOTOS[key] if photo == old_photos.get(key) else photo
+                        items[key]["photo"] = DEFAULT_PHOTOS[key] if photo == old_photos.get(key) or (photo == "" and key in {"executive-male","future-male","finance-manager"}) else photo
     return {
         "employees": [
             {**item, "execution_status": "internal_pilot" if item["role"] in EXECUTABLE_ROLES else "not_implemented"}
