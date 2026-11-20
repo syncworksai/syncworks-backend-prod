@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 from django.db import transaction
 from django.utils import timezone
 from django.conf import settings
+from django.core.mail import send_mail
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -368,6 +369,48 @@ class BusinessInvoiceActionView(APIView):
                 _send_invoice(invoice, business, actor=request.user, automated=False)
             except ValueError as exc:
                 return Response({"detail": str(exc)}, status=409)
+        elif action_name == "email":
+            # Mail is sent only for an already-issued invoice. Never email a
+            # draft that the customer's own portal intentionally hides.
+            if invoice.status not in {Invoice.Status.SENT, Invoice.Status.PAID}:
+                return Response({"detail": "Issue the invoice in SyncWorks before emailing it."}, status=409)
+            recipient = getattr(getattr(invoice.ticket, "customer", None), "email", "") if invoice.ticket else ""
+            if not recipient:
+                return Response({"detail": "Customer has no email address. Use the manual mail draft or update their profile."}, status=409)
+            from user_accounts.models import CommunicationPreference
+            pref = CommunicationPreference.objects.filter(user=invoice.ticket.customer, business=None).first()
+            if pref and not pref.email_notifications_enabled:
+                return Response({"detail": "Customer email notifications are disabled."}, status=409)
+            backend = str(getattr(settings, "EMAIL_BACKEND", "") or "").lower()
+            if any(marker in backend for marker in ("console", "locmem", "dummy", "filebased")):
+                return Response({"detail": "Transactional email provider is not configured. Use the prefilled email draft."}, status=503)
+            if InvoiceEvent.objects.filter(invoice=invoice, event_type=InvoiceEvent.EventType.SENT,
+                    metadata__channel="email", occurred_at__gte=timezone.now()-timedelta(seconds=60)).exists():
+                return Response({"detail": "Invoice email was recently submitted. Review the timeline before sending again."}, status=409)
+            frontend = (getattr(settings, "FRONTEND_URL", "https://syncworksapp.com") or "https://syncworksapp.com").rstrip("/")
+            url = f"{frontend}/customer/invoices?invoice_id={invoice.id}"
+            total = _money(invoice.total)
+            balance = max(Decimal("0.00"), total - _money(invoice.amount_paid))
+            due = invoice.due_date.isoformat() if invoice.due_date else "See invoice"
+            subject = f"Invoice #{invoice.id} from {business.name}"
+            body = (
+                f"Hello,\\n\\n{business.name} has issued invoice #{invoice.id}.\\n"
+                f"Service: {invoice.title or 'Services'}\\nTotal: ${total}\\n"
+                f"Balance due: ${balance}\\nDue date: {due}\\n\\n"
+                f"View your invoice or pay securely by card in SyncWorks:\\n{url}\\n\\n"
+                "You may be asked to sign in to view your invoice.\\nThank you."
+            )
+            if not getattr(settings, "DEFAULT_FROM_EMAIL", None):
+                return Response({"detail": "Transactional sender address is not configured. Use the prefilled email draft."}, status=503)
+            try:
+                accepted = send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, [recipient], fail_silently=False)
+            except Exception:
+                return Response({"detail": "Email provider could not accept the invoice. Use the prefilled email draft."}, status=503)
+            if accepted != 1:
+                return Response({"detail": "Email provider did not accept the invoice. Use the prefilled email draft."}, status=503)
+            InvoiceEvent.objects.create(invoice=invoice, event_type=InvoiceEvent.EventType.SENT, actor=request.user,
+                message="Invoice email accepted by the configured provider; recipient delivery is not confirmed.",
+                metadata={"channel":"email", "provider_accepted":True})
         elif action_name == "request-refund":
             if _money(invoice.amount_paid) <= 0:
                 return Response({"detail": "There is no recorded payment to refund."}, status=409)
@@ -431,4 +474,7 @@ class BusinessInvoiceActionView(APIView):
             return Response({"detail": "Unknown invoice action."}, status=404)
 
         invoice.refresh_from_db()
-        return Response(_invoice_payload(invoice, include_events=True))
+        payload = _invoice_payload(invoice, include_events=True)
+        if action_name == "email":
+            payload["email_status"] = "PROVIDER_ACCEPTED_NOT_CONFIRMED_DELIVERED"
+        return Response(payload)
