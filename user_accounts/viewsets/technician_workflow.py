@@ -445,7 +445,9 @@ class TechnicianTeamBoardView(APIView):
                 "jobs":jobs_by_user.get(person.user_id,[]),
                 "is_self":person.user_id==request.user.id,
             })
+        pending_pickups = list(Notification.objects.filter(data__source=PICKUP_TAG, data__business_id=business.id, data__requester_id=request.user.id, is_read=False).values_list("data", flat=True))
         return Response({"staff":rows,"unassigned":unassigned,
+                         "pending_pickup_ticket_ids":list({item.get("ticket_id") for item in pending_pickups if item.get("ticket_id")}),
                          "business_id":business.id,"can_dispatch":_dispatcher(request.user,business,member)})
 
 
