@@ -1,5 +1,8 @@
 from .settings import *  # noqa: F401,F403
 
+if "technician_time.apps.TechnicianTimeConfig" not in INSTALLED_APPS:
+    INSTALLED_APPS = [*INSTALLED_APPS, "technician_time.apps.TechnicianTimeConfig"]
+
 if "pm_workspace.apps.PMWorkspaceConfig" not in INSTALLED_APPS:
     INSTALLED_APPS = [*INSTALLED_APPS, "pm_workspace.apps.PMWorkspaceConfig"]
 

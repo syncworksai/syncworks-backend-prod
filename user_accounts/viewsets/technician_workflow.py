@@ -18,6 +18,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from user_accounts.models import BusinessMember, Notification, Ticket, TicketOperationalProfile
+from technician_time.models import TechnicianJobEvent
 
 logger = logging.getLogger(__name__)
 STATUS_TIMESTAMPS = {
@@ -25,8 +26,8 @@ STATUS_TIMESTAMPS = {
     "ON_SITE": "on_site_at", "IN_PROGRESS": "started_at",
     "COMPLETED": "completed_at", "CANCELLED": "cancelled_at",
 }
-FIELD_STATUSES = {"EN_ROUTE", "ON_SITE", "IN_PROGRESS", "COMPLETED"}
-DISPATCH_STATUSES = set(STATUS_TIMESTAMPS) | {"ASSIGNED"}
+FIELD_STATUSES = {"EN_ROUTE", "ON_SITE", "IN_PROGRESS", "NEEDS_QUOTE", "COMPLETED"}
+DISPATCH_STATUSES = set(STATUS_TIMESTAMPS) | {"ASSIGNED", "NEEDS_QUOTE"}
 FINAL = {"CANCELLED", "CLOSED", "PAID", "COMPLETED", "INVOICED"}
 PICKUP_TAG = "TECH_JOB_PICKUP_REQUEST"
 
@@ -243,6 +244,8 @@ class TechnicianTicketActionView(APIView):
             return Response({"detail":"This status requires dispatch permission."}, status=403)
         if ticket.status in FINAL and action != ticket.status:
             return Response({"detail":"This ticket is already finalized."}, status=409)
+        if action == "NEEDS_QUOTE" and not reason:
+            return Response({"detail":"Describe the work that needs a quote."}, status=400)
         if action == "COMPLETED" and not reason:
             return Response({"detail":"Add a completion summary."}, status=400)
         if action == "CANCELLED" and not reason:
@@ -274,6 +277,7 @@ class TechnicianTicketActionView(APIView):
             setattr(ticket, stamped, timezone.now())
             updates.append(stamped)
         ticket.save(update_fields=updates)
+        TechnicianJobEvent.objects.create(business=business, ticket=ticket, technician=request.user, action=action, note=reason)
         if action in {"IN_PROGRESS","COMPLETED","CANCELLED"}:
             ops,_ = TicketOperationalProfile.objects.select_for_update().get_or_create(ticket=ticket)
             if action == "IN_PROGRESS" and not ops.actual_started_at:
@@ -410,6 +414,10 @@ class TechnicianTeamBoardView(APIView):
         people = BusinessMember.objects.filter(business=business,is_active=True).select_related("user")
         jobs_by_user = {}
         unassigned = []
+        from technician_time.models import TechnicianJobEvent
+        quote_events = {}
+        for event in TechnicianJobEvent.objects.filter(ticket__in=qs, action="NEEDS_QUOTE").order_by("occurred_at"):
+            quote_events[event.ticket_id] = event.occurred_at.isoformat()
         for ticket in qs:
             ops = TicketOperationalProfile.objects.filter(ticket=ticket).first()
             row = {
@@ -419,6 +427,12 @@ class TechnicianTeamBoardView(APIView):
                 "scheduled_end":ops.scheduled_end.isoformat() if ops and ops.scheduled_end else None,
                 "required_skills":ops.required_skills if ops else [],
                 "assigned_member_id":ticket.assigned_member_id,
+                "en_route_at":ticket.en_route_at.isoformat() if ticket.en_route_at else None,
+                "on_site_at":ticket.on_site_at.isoformat() if ticket.on_site_at else None,
+                "work_started_at":ticket.started_at.isoformat() if ticket.started_at else None,
+                "completed_at":ticket.completed_at.isoformat() if ticket.completed_at else None,
+                "actual_work_seconds":ops.actual_work_seconds if ops else 0,
+                "needs_quote_at":quote_events.get(ticket.id),
             }
             if ticket.assigned_member_id:
                 jobs_by_user.setdefault(ticket.assigned_member_id,[]).append(row)
@@ -438,7 +452,9 @@ class TechnicianTeamBoardView(APIView):
                 "jobs":jobs_by_user.get(person.user_id,[]),
                 "is_self":person.user_id==request.user.id,
             })
+        pending_pickups = list(Notification.objects.filter(data__source=PICKUP_TAG, data__business_id=business.id, data__requester_id=request.user.id, is_read=False).values_list("data", flat=True))
         return Response({"staff":rows,"unassigned":unassigned,
+                         "pending_pickup_ticket_ids":list({item.get("ticket_id") for item in pending_pickups if item.get("ticket_id")}),
                          "business_id":business.id,"can_dispatch":_dispatcher(request.user,business,member)})
 
 
