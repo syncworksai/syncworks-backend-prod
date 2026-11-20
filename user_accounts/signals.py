@@ -41,7 +41,7 @@ def keep_ticket_on_customer_calendar(sender, instance, created=False, **kwargs):
     sync_ticket_to_business_calendar(instance)
     # Founder pilot only: enqueue read-only owner review once the business is known.
     # Do not change tickets, invoice, email or schedule automatically.
-    if instance.assigned_business_id and (created or instance.status in {"NEW","ASSIGNED"}):
+    if instance.assigned_business_id and instance.status in {"NEW","ASSIGNED","ACCEPTED","SCHEDULED"}:
         from django.db import transaction
         ticket_id=instance.pk
         from sync_ai.assist_ticket_intake import intake_ticket_for_victoria
