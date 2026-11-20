@@ -394,11 +394,11 @@ class BusinessInvoiceActionView(APIView):
             due = invoice.due_date.isoformat() if invoice.due_date else "See invoice"
             subject = f"Invoice #{invoice.id} from {business.name}"
             body = (
-                f"Hello,\\n\\n{business.name} has issued invoice #{invoice.id}.\\n"
-                f"Service: {invoice.title or 'Services'}\\nTotal: ${total}\\n"
-                f"Balance due: ${balance}\\nDue date: {due}\\n\\n"
-                f"View your invoice or pay securely by card in SyncWorks:\\n{url}\\n\\n"
-                "You may be asked to sign in to view your invoice.\\nThank you."
+                f"Hello,\n\n{business.name} has issued invoice #{invoice.id}.\n"
+                f"Service: {invoice.title or 'Services'}\nTotal: ${total}\n"
+                f"Balance due: ${balance}\nDue date: {due}\n\n"
+                f"View your invoice or pay securely by card in SyncWorks:\n{url}\n\n"
+                "You may be asked to sign in to view your invoice.\nThank you."
             )
             if not getattr(settings, "DEFAULT_FROM_EMAIL", None):
                 return Response({"detail": "Transactional sender address is not configured. Use the prefilled email draft."}, status=503)
