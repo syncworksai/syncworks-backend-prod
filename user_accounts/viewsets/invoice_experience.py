@@ -226,6 +226,7 @@ class BusinessInvoiceCenterView(APIView):
         return Response({
             "business_id": business.id,
             "business_name": business.name,
+            "permissions": {"can_manage_invoices": _can_manage_invoices(business, member, request.user)},
             "summary": {"invoice_count": len(all_invoices), "outstanding": str(outstanding.quantize(Decimal("0.01"))), "overdue_count": len(overdue), "due_soon_count": len(due_soon), "paid_this_month": str(paid_month.quantize(Decimal("0.01"))), "ready_to_bill_count": len(ready_tickets)},
             "automation": {"auto_send_invoices": automation.auto_send_invoices, "auto_reminders_enabled": automation.auto_reminders_enabled, "due_terms": automation.due_terms},
             "suggestions": suggestions,
@@ -266,6 +267,7 @@ class BusinessInvoiceDetailView(APIView):
                 # Invoice access must not depend on Stripe metadata availability.
                 pass
         data["refund_eligible_for_review"] = bool(invoice.stripe_payment_intent_id and _money(invoice.amount_paid) > 0)
+        data["can_manage_invoices"] = _can_manage_invoices(business, member, request.user)
         return Response(data)
 
     @transaction.atomic
