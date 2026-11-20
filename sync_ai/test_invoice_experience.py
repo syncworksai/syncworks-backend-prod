@@ -1,3 +1,4 @@
+from unittest.mock import patch
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -156,3 +157,29 @@ class InvoiceExperienceTests(APITestCase):
         self.auth_owner()
         response=self.client.patch(f"/api/v1/sync-ai/business/invoices/{invoice.id}/",{"title":"Cross tenant"},format="json")
         self.assertEqual(response.status_code,404)
+
+    @override_settings(DEFAULT_FROM_EMAIL="invoices@syncworksapp.com", EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend")
+    @patch("user_accounts.viewsets.invoice_experience.send_mail")
+    def test_issued_invoice_email_is_provider_accepted_not_confirmed_delivered(self, mocked_send):
+        invoice=Invoice.objects.create(ticket=self.make_ticket(),title="Completed repair",subtotal=Decimal("125"),total=Decimal("125"),status=Invoice.Status.SENT)
+        mocked_send.return_value=1
+        self.auth_owner()
+        url=f"/api/v1/sync-ai/business/invoices/{invoice.id}/email/"
+        response=self.client.post(url,{},format="json")
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertEqual(response.data["email_status"],"PROVIDER_ACCEPTED_NOT_CONFIRMED_DELIVERED")
+        self.assertIn("customer-invoice@example.com",mocked_send.call_args.args[3])
+        event=InvoiceEvent.objects.filter(invoice=invoice,event_type=InvoiceEvent.EventType.SENT,metadata__channel="email").first()
+        self.assertIsNotNone(event)
+        repeated=self.client.post(url,{},format="json")
+        self.assertEqual(repeated.status_code,409)
+        self.assertEqual(mocked_send.call_count,1)
+
+    @override_settings(DEFAULT_FROM_EMAIL="invoices@syncworksapp.com", EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend")
+    @patch("user_accounts.viewsets.invoice_experience.send_mail")
+    def test_email_must_be_issued_first(self,mocked_send):
+        invoice=Invoice.objects.create(ticket=self.make_ticket(),title="Draft",subtotal=Decimal("125"),total=Decimal("125"))
+        self.auth_owner()
+        response=self.client.post(f"/api/v1/sync-ai/business/invoices/{invoice.id}/email/",{},format="json")
+        self.assertEqual(response.status_code,409)
+        mocked_send.assert_not_called()
