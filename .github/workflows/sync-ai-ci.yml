@@ -1,6 +1,12 @@
 name: SyncWorks SYNC AI CI
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "sync_ai/assist_team_views.py"
+      - "sync_ai/test_assist_team.py"
+      - ".github/workflows/sync-ai-ci.yml"
   pull_request:
     paths:
       - "sync_ai/**"
