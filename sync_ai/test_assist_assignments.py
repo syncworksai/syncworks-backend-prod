@@ -79,3 +79,47 @@ class AIAssignmentIntakeTests(APITestCase):
                                   status="NEW",work_title="Other company job")
         self.assertEqual(AuditLog.objects.filter(actor=self.owner,
             action="sync_assist.assignment.created",metadata__source="AUTO_TICKET_INTAKE").count(),0)
+
+    def test_employee_work_inbox_is_fixed_role_scoped_and_review_only(self):
+        for role in ("CHIEF_OF_STAFF", "FINANCE_MANAGER"):
+            created=self.client.post(URL,{"request_id":str(uuid4()),"kind":"TASK","role":role,
+                "description":f"Review {role} priorities."},format="json")
+            self.assertEqual(created.status_code,201,created.data)
+        chief=self.client.get("/api/v1/sync-ai/assist/pilot/employees/CHIEF_OF_STAFF/work/")
+        finance=self.client.get("/api/v1/sync-ai/assist/pilot/employees/FINANCE_MANAGER/work/")
+        self.assertEqual(chief.status_code,200,chief.data)
+        self.assertEqual(finance.status_code,200,finance.data)
+        self.assertEqual(chief.data["pending_count"],1)
+        self.assertEqual(finance.data["pending_count"],1)
+        self.assertEqual(len(chief.data["assignments"]),1)
+        self.assertEqual(len(finance.data["assignments"]),1)
+        self.assertTrue(chief.data["internal_worker_available"])
+        self.assertFalse(finance.data["internal_worker_available"])
+        self.assertEqual(chief.data["execution_mode"],"REVIEW_ONLY")
+
+    def test_employee_work_inbox_reflects_ticket_status_changes_without_mutation(self):
+        business=Business.objects.create(name="Pilot Work Inbox",owner=self.owner)
+        with self.captureOnCommitCallbacks(execute=True):
+            ticket=Ticket.objects.create(customer=self.other,assigned_business=business,
+                status="NEW",work_title="Plumbing job for review")
+        first=self.client.get("/api/v1/sync-ai/assist/pilot/employees/CHIEF_OF_STAFF/work/")
+        self.assertEqual(first.status_code,200,first.data)
+        assigned=next(row for row in first.data["assignments"] if row["ticket_id"]==ticket.pk)
+        self.assertEqual(assigned["ticket_status"],"NEW")
+        self.assertFalse(assigned["status_changed_since_review"])
+        self.assertTrue(assigned["recommendation_is_historical"])
+        with self.captureOnCommitCallbacks(execute=True):
+            ticket.status="IN_PROGRESS"
+            ticket.save(update_fields=["status"])
+        newer=self.client.get("/api/v1/sync-ai/assist/pilot/employees/CHIEF_OF_STAFF/work/")
+        assigned=next(row for row in newer.data["assignments"] if row["ticket_id"]==ticket.pk)
+        self.assertEqual(assigned["ticket_status"],"IN_PROGRESS")
+        self.assertTrue(assigned["status_changed_since_review"])
+
+    def test_non_pilot_cannot_read_any_employee_work_inbox(self):
+        self.client.post(URL,{"request_id":str(uuid4()),"kind":"TASK","role":"FINANCE_MANAGER",
+            "description":"Review invoice queue."},format="json")
+        self.client.force_authenticate(self.other)
+        self.assertEqual(self.client.get("/api/v1/sync-ai/assist/pilot/employees/FINANCE_MANAGER/work/").status_code,403)
+        self.client.force_authenticate(self.owner)
+        self.assertEqual(self.client.get("/api/v1/sync-ai/assist/pilot/employees/ROOT_ADMIN/work/").status_code,404)
