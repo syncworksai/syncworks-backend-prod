@@ -2,7 +2,7 @@ from uuid import uuid4
 from django.test import override_settings
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
-from user_accounts.models import AuditLog
+from user_accounts.models import AuditLog, Business, Ticket
 
 URL="/api/v1/sync-ai/assist/pilot/assignments/"
 
@@ -56,3 +56,26 @@ class AIAssignmentIntakeTests(APITestCase):
         self.assertEqual(response.status_code,200,response.data)
         self.assertEqual(response.data["assignments"][0]["state"],"ACKNOWLEDGED")
         self.assertFalse(AuditLog.objects.filter(actor=self.owner,action="sync_assist.workday.worker_receipt").exists())
+
+    def test_new_owner_business_ticket_auto_creates_one_victoria_review(self):
+        business=Business.objects.create(name="Pilot Operations",owner=self.owner)
+        with self.captureOnCommitCallbacks(execute=True):
+            ticket=Ticket.objects.create(customer=self.other,assigned_business=business,
+                status="NEW",work_title="Test plumbing repair")
+        auto=AuditLog.objects.filter(actor=self.owner,action="sync_assist.assignment.created",
+                                     metadata__automatic_ticket_id=ticket.pk)
+        self.assertEqual(auto.count(),1)
+        self.assertEqual(auto.first().metadata["role"],"CHIEF_OF_STAFF")
+        self.assertEqual(auto.first().metadata["source"],"AUTO_TICKET_INTAKE")
+        with self.captureOnCommitCallbacks(execute=True):
+            ticket.status="ASSIGNED"
+            ticket.save(update_fields=["status"])
+        self.assertEqual(auto.count(),1)
+
+    def test_unrelated_business_never_creates_founder_ai_task(self):
+        business=Business.objects.create(name="Outside Operations",owner=self.other)
+        with self.captureOnCommitCallbacks(execute=True):
+            Ticket.objects.create(customer=self.owner,assigned_business=business,
+                                  status="NEW",work_title="Other company job")
+        self.assertEqual(AuditLog.objects.filter(actor=self.owner,
+            action="sync_assist.assignment.created",metadata__source="AUTO_TICKET_INTAKE").count(),0)
