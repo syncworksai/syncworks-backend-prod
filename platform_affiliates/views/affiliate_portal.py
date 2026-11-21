@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -13,6 +14,7 @@ from platform_affiliates.serializers import (
     ReferralAttributionSerializer,
 )
 from platform_affiliates.services.attribution_service import get_client_ip
+from platform_affiliates.services.agreement_service import get_or_create_active_agreement_template
 from platform_affiliates.services.metrics_service import get_affiliate_dashboard_metrics
 
 
@@ -84,3 +86,15 @@ class AffiliateMeCommissionsView(APIView):
             affiliate=affiliate
         )
         return Response({"results": AffiliateCommissionLedgerSerializer(qs, many=True).data})
+
+class AffiliateAgreementView(APIView):
+    """Give applicants the exact agreement snapshot they must accept."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        agreement = get_or_create_active_agreement_template()
+        return Response({
+            "title": agreement.title,
+            "version": agreement.version,
+            "body": agreement.body,
+        })
