@@ -6,6 +6,7 @@ from platform_affiliates.views.affiliate_portal import (
     AffiliateMeBusinessesView,
     AffiliateMeCommissionsView,
     AffiliateMeView,
+    AffiliateAgreementView,
 )
 from platform_affiliates.views.claim_code import ClaimAffiliateCodeView
 from platform_affiliates.views.godmode_affiliates import (
@@ -30,6 +31,7 @@ from platform_affiliates.views.tracking import (
 
 urlpatterns = [
     path("me/", AffiliateMeView.as_view(), name="affiliate-me"),
+    path("agreement/", AffiliateAgreementView.as_view(), name="affiliate-agreement"),
     path("me/businesses/", AffiliateMeBusinessesView.as_view(), name="affiliate-me-businesses"),
     path("me/commissions/", AffiliateMeCommissionsView.as_view(), name="affiliate-me-commissions"),
 
