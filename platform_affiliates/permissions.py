@@ -14,7 +14,7 @@ class IsGodModeAffiliateAdmin(BasePermission):
 
 
 class IsCustomerAffiliateApplicant(BasePermission):
-    message = "Only customer accounts can apply for the affiliate program."
+    message = "Affiliate applications are limited to customers and verified business owners."
 
     def has_permission(self, request, view) -> bool:
         user = getattr(request, "user", None)
@@ -28,4 +28,14 @@ class IsCustomerAffiliateApplicant(BasePermission):
         owns_business = Business.objects.filter(owner=user).exists()
         active_business_member = BusinessMember.objects.filter(user=user, is_active=True).exists()
 
-        return not owns_business and not active_business_member
+        if owns_business:
+            return True
+
+        # Verified OWNER memberships qualify; employee roles do not.
+        owns_via_membership = BusinessMember.objects.filter(
+            user=user, is_active=True, role=BusinessMember.ROLE_OWNER
+        ).exists()
+        if owns_via_membership:
+            return True
+
+        return not active_business_member
