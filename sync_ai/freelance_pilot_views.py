@@ -148,8 +148,10 @@ class FreelancePilotAccessView(APIView):
         return Response({
             "enabled": True, "account_id": request.user.pk,
             "capabilities": {
-                "project_records": True, "csv_process": True,
-                "jarvis_plan": True, "client_file_storage": False,
+                "project_records": True,
+                "csv_process": getattr(settings, "FREELANCE_CSV_PROCESS_ENABLED", False) is True,
+                "jarvis_plan": getattr(settings, "FREELANCE_AI_PLAN_ENABLED", False) is True,
+                "client_file_storage": False,
                 "upwork_connection": False, "auto_delivery": False,
                 "background_execution": False,
             },
@@ -272,6 +274,8 @@ class FreelanceCSVProcessView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
+        if getattr(settings, "FREELANCE_CSV_PROCESS_ENABLED", False) is not True:
+            return Response({"detail": "CSV processing is disabled pending privacy review."}, status=403)
         upload = request.FILES.get("file")
         if not upload:
             return Response({"detail": "CSV file required."}, status=400)
@@ -298,6 +302,8 @@ class FreelanceJarvisPlanView(APIView):
     parser_classes = [JSONParser]
 
     def post(self, request):
+        if getattr(settings, "FREELANCE_AI_PLAN_ENABLED", False) is not True:
+            return Response({"detail": "Freelance paid AI planning is disabled until budget approval."}, status=403)
         if request.data.get("consent") is not True:
             return Response({"detail": "Explicit AI processing consent required."}, status=400)
         # Only high-level task descriptions; never upload or forward source documents.
