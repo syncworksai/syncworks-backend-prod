@@ -50,6 +50,11 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path('freelance/pilot/jarvis-plan/', FreelanceJarvisPlanView.as_view(), name='freelance-pilot-jarvis-plan'),
+    path('freelance/pilot/process-csv/', FreelanceCSVProcessView.as_view(), name='freelance-pilot-process-csv'),
+    path('freelance/pilot/projects/<uuid:project_id>/', FreelanceProjectDetailView.as_view(), name='freelance-pilot-project-detail'),
+    path('freelance/pilot/projects/', FreelanceProjectsView.as_view(), name='freelance-pilot-projects'),
+    path('freelance/pilot/access/', FreelancePilotAccessView.as_view(), name='freelance-pilot-access'),
     path("freelance/pilot/synthetic-jobs/<uuid:job_id>/download/", FreelanceSyntheticDownloadView.as_view(), name="freelance-synthetic-download"),
     path("freelance/pilot/synthetic-jobs/<uuid:job_id>/", FreelanceSyntheticJobView.as_view(), name="freelance-synthetic-job"),
     path("freelance/pilot/synthetic-jobs/", FreelanceSyntheticJobsView.as_view(), name="freelance-synthetic-jobs"),
