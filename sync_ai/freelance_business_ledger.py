@@ -7,6 +7,7 @@ Events remain append-only in the existing AuditLog model.
 from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid4
+from urllib.parse import urlsplit
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import JSONParser
@@ -80,8 +81,10 @@ def validate(data, partial=False):
         fields.setdefault("category","JOB")
         fields.setdefault("status","SAVED")
         fields["source"]="MANUAL"
-    if "url" in fields and fields["url"] and not fields["url"].startswith("https://www.upwork.com/"):
-        raise ValidationError("Only official HTTPS Upwork posting links are accepted.")
+    if "url" in fields and fields["url"]:
+        parsed = urlsplit(fields["url"])
+        if parsed.scheme != "https" or parsed.hostname != "www.upwork.com" or parsed.username or parsed.password or parsed.port not in (None, 443):
+            raise ValidationError("Only official HTTPS Upwork posting links are accepted.")
     return fields
 
 def snapshot(owner):
