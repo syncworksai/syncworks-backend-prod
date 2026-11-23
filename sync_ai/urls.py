@@ -1,3 +1,6 @@
+from .freelance_pilot_views import FreelancePilotAccessView, FreelanceProjectsView, FreelanceProjectDetailView, FreelanceCSVProcessView, FreelanceJarvisPlanView
+from .freelance_synthetic_views import FreelanceSyntheticJobsView, FreelanceSyntheticJobView, FreelanceSyntheticDownloadView
+from .freelance_business_ledger import FreelanceBusinessLedgerView, FreelanceBusinessRecordView
 from .forge_memory_views import ForgeProfileView, ForgeHistoryView
 from .forge_reflection_views import ForgeReflectionView
 from django.urls import path
@@ -49,6 +52,16 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path("freelance/pilot/business-ledger/", FreelanceBusinessLedgerView.as_view(), name="freelance-business-ledger"),
+    path("freelance/pilot/business-ledger/<uuid:record_id>/", FreelanceBusinessRecordView.as_view(), name="freelance-business-record"),
+    path("freelance/pilot/synthetic-jobs/", FreelanceSyntheticJobsView.as_view(), name="freelance-synthetic-jobs"),
+    path("freelance/pilot/synthetic-jobs/<uuid:job_id>/", FreelanceSyntheticJobView.as_view(), name="freelance-synthetic-job"),
+    path("freelance/pilot/synthetic-jobs/<uuid:job_id>/download/", FreelanceSyntheticDownloadView.as_view(), name="freelance-synthetic-download"),
+    path('freelance/pilot/access/', FreelancePilotAccessView.as_view(), name='freelance-pilot-access'),
+    path('freelance/pilot/projects/', FreelanceProjectsView.as_view(), name='freelance-pilot-projects'),
+    path('freelance/pilot/projects/<uuid:project_id>/', FreelanceProjectDetailView.as_view(), name='freelance-pilot-project-detail'),
+    path('freelance/pilot/process-csv/', FreelanceCSVProcessView.as_view(), name='freelance-pilot-process-csv'),
+    path('freelance/pilot/jarvis-plan/', FreelanceJarvisPlanView.as_view(), name='freelance-pilot-jarvis-plan'),
     path("assist/pilot/mailboxes/", MultiMailboxView.as_view(), name="assist-multi-mailboxes"),
     path("assist/pilot/mailboxes/connect/", MultiMailboxConnect.as_view(), name="assist-multi-mailboxes-connect"),
     path("assist/pilot/mailboxes/callback/", MultiMailboxCallback.as_view(), name="assist-multi-mailboxes-callback"),
