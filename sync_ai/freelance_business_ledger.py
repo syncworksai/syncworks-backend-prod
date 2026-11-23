@@ -82,8 +82,14 @@ def validate(data, partial=False):
         fields.setdefault("status","SAVED")
         fields["source"]="MANUAL"
     if "url" in fields and fields["url"]:
-        parsed = urlsplit(fields["url"])
-        if parsed.scheme != "https" or parsed.hostname != "www.upwork.com" or parsed.username or parsed.password or parsed.port not in (None, 443):
+        try:
+            parsed = urlsplit(fields["url"])
+            valid = (parsed.scheme == "https" and parsed.hostname == "www.upwork.com"
+                     and not parsed.username and not parsed.password
+                     and parsed.port in (None, 443))
+        except ValueError:
+            valid = False
+        if not valid:
             raise ValidationError("Only official HTTPS Upwork posting links are accepted.")
     return fields
 
