@@ -134,6 +134,9 @@ class FreelanceBusinessLedgerView(APIView):
             owner=get_user_model().objects.select_for_update().get(pk=request.user.pk)
             existing=snapshot(owner)
             if len(existing)>=MAX_RECORDS:return Response({"detail":"Ledger pilot limit reached."},status=429)
+            job_id=fields.get("upwork_job_id","")
+            if job_id and fields.get("category")=="JOB" and any(r.get("category")=="JOB" and r.get("upwork_job_id")==job_id for r in existing):
+                return Response({"detail":"This Upwork job is already tracked."},status=409)
             rid=str(uuid4())
             AuditLog.objects.create(actor=owner,action=ADD,metadata={"record_id":rid,"fields":fields})
         return Response({"record_id":rid,"records":snapshot(request.user)},status=201)
