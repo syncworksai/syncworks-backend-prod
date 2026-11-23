@@ -18,6 +18,7 @@ from .assist_growth_operations_views import SyncAssistGrowthCampaignView, SyncAs
 from .assist_daily_views import SyncAssistDailyView, SyncAssistDailyItemView
 from .assist_chief_views import JarvisCasesView, JarvisCaseDecisionView, JarvisChiefBriefingView
 from .assist_outlook_views import OutlookStatus, OutlookConnect, OutlookCallback, OutlookInbox, OutlookDraft, OutlookSend, OutlookDisconnect
+from .assist_multi_mailbox_views import MultiMailboxView, MultiMailboxConnect, MultiMailboxCallback, MultiMailboxInbox
 from .assist_email_intelligence import JarvisWritingPreferencesView, JarvisOutlookSuggestView, JarvisOutlookBriefView
 
 from user_accounts.viewsets.invoice_experience import (
@@ -48,6 +49,10 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path("assist/pilot/mailboxes/", MultiMailboxView.as_view(), name="assist-multi-mailboxes"),
+    path("assist/pilot/mailboxes/connect/", MultiMailboxConnect.as_view(), name="assist-multi-mailboxes-connect"),
+    path("assist/pilot/mailboxes/callback/", MultiMailboxCallback.as_view(), name="assist-multi-mailboxes-callback"),
+    path("assist/pilot/mailboxes/<str:account_id>/inbox/", MultiMailboxInbox.as_view(), name="assist-multi-mailboxes-inbox"),
     path("assist/pilot/manual-tests/", SyncAssistManualRoleTestView.as_view(), name="assist-manual-role-tests"),
     path('assist/pilot/assignments/<str:assignment_id>/weekly-plan/', VictoriaWeeklyPlanView.as_view(), name='assist-victoria-weekly-plan'),
     path('assist/pilot/assignments/', SyncAssistAssignmentsView.as_view(), name='assist-assignments'),
