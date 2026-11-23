@@ -51,6 +51,11 @@ def _founder_authorized(user):
     return bool(configured and _pilot(user) and user.email_verified and str(user.pk) == configured)
 
 
+def _feature_enabled(name):
+    configured = getattr(settings, name, None)
+    return configured is True if configured is not None else os.getenv(name, "false").strip().lower() == "true"
+
+
 class FounderFreelancePermission(BasePermission):
     def has_permission(self, request, view):
         return _founder_authorized(request.user)
@@ -149,8 +154,8 @@ class FreelancePilotAccessView(APIView):
             "enabled": True, "account_id": request.user.pk,
             "capabilities": {
                 "project_records": True,
-                "csv_process": getattr(settings, "FREELANCE_CSV_PROCESS_ENABLED", False) is True,
-                "jarvis_plan": getattr(settings, "FREELANCE_AI_PLAN_ENABLED", False) is True,
+                "csv_process": _feature_enabled("FREELANCE_CSV_PROCESS_ENABLED"),
+                "jarvis_plan": _feature_enabled("FREELANCE_AI_PLAN_ENABLED"),
                 "client_file_storage": False,
                 "upwork_connection": False, "auto_delivery": False,
                 "background_execution": False,
@@ -274,7 +279,7 @@ class FreelanceCSVProcessView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
-        if getattr(settings, "FREELANCE_CSV_PROCESS_ENABLED", False) is not True:
+        if not _feature_enabled("FREELANCE_CSV_PROCESS_ENABLED"):
             return Response({"detail": "CSV processing is disabled pending privacy review."}, status=403)
         upload = request.FILES.get("file")
         if not upload:
@@ -302,7 +307,7 @@ class FreelanceJarvisPlanView(APIView):
     parser_classes = [JSONParser]
 
     def post(self, request):
-        if getattr(settings, "FREELANCE_AI_PLAN_ENABLED", False) is not True:
+        if not _feature_enabled("FREELANCE_AI_PLAN_ENABLED"):
             return Response({"detail": "Freelance paid AI planning is disabled until budget approval."}, status=403)
         if request.data.get("consent") is not True:
             return Response({"detail": "Explicit AI processing consent required."}, status=400)
