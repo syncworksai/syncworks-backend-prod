@@ -8,6 +8,7 @@ from .assist_budget_views import SyncAssistBudgetView
 from .assist_delegation_views import SyncAssistDelegationView
 from .assist_team_views import SyncAssistTeamView
 from .assist_assignment_views import SyncAssistAssignmentsView, SyncAssistAssignmentDecisionView, SyncAssistEmployeeWorkView
+from .assist_weekly_schedule_views import VictoriaWeeklyPlanView
 from .assist_work_history import SyncAssistWorkHistoryView
 from .assist_communications_views import SyncAssistCommunicationsView, SyncAssistWhatsAppInboundView
 from .assist_internal_connections import SyncAssistInternalConnectionsView
@@ -46,6 +47,7 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path('assist/pilot/assignments/<str:assignment_id>/weekly-plan/', VictoriaWeeklyPlanView.as_view(), name='assist-victoria-weekly-plan'),
     path('assist/pilot/assignments/', SyncAssistAssignmentsView.as_view(), name='assist-assignments'),
     path('assist/pilot/employees/<str:role>/work/', SyncAssistEmployeeWorkView.as_view(), name='assist-employee-work'),
     path('assist/pilot/assignments/<str:assignment_id>/decision/', SyncAssistAssignmentDecisionView.as_view(), name='assist-assignment-decision'),
