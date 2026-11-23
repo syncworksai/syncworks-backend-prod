@@ -1,3 +1,4 @@
+from .freelance_business_ledger import FreelanceBusinessLedgerView, FreelanceBusinessRecordView
 from .freelance_synthetic_views import FreelanceSyntheticJobsView, FreelanceSyntheticJobView, FreelanceSyntheticDownloadView
 from django.urls import path
 from .freelance_pilot_views import FreelancePilotAccessView, FreelanceProjectsView, FreelanceProjectDetailView, FreelanceCSVProcessView, FreelanceJarvisPlanView
@@ -39,6 +40,8 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path("freelance/pilot/business-ledger/", FreelanceBusinessLedgerView.as_view(), name="freelance-business-ledger"),
+    path("freelance/pilot/business-ledger/<uuid:record_id>/", FreelanceBusinessRecordView.as_view(), name="freelance-business-record"),
     path("freelance/pilot/synthetic-jobs/", FreelanceSyntheticJobsView.as_view(), name="freelance-synthetic-jobs"),
     path("freelance/pilot/synthetic-jobs/<uuid:job_id>/", FreelanceSyntheticJobView.as_view(), name="freelance-synthetic-job"),
     path("freelance/pilot/synthetic-jobs/<uuid:job_id>/download/", FreelanceSyntheticDownloadView.as_view(), name="freelance-synthetic-download"),
