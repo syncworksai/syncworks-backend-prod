@@ -109,6 +109,24 @@ class VictoriaWeeklyPlanView(APIView):
             existing.append({"id": e.pk, "title": e.title[:160],
                 "start": e.start_at.astimezone(ZONE), "end": event_end.astimezone(ZONE),
                 "source": e.source})
+        # Decision-support only: these instructions are derived from the owner's
+        # priorities, not live financial, email, or job-verification data.
+        workstreams = [
+            ("FINANCE", "Finances and collections", "Check bills, mortgage due dates, rent collection and unanswered Section 8 items against verified records.", "List each confirmed amount, due date, missing record and responsible follow-up."),
+            ("PRODUCT", "SyncWorks development", "Choose one product blocker, reproduce it, and run an acceptance test before considering it complete.", "One tested change or an actionable blocker report."),
+            ("REVENUE", "Upwork opportunities", "Review suitable projects, validate scope, draft a proposal and request approval before submitting.", "A vetted opportunity and reviewable proposal."),
+            ("GROWTH", "Small-business marketing", "Choose a customer segment and prepare one permission-aware marketing or outreach draft.", "One draft and a measurable next step."),
+        ]
+        focus_lower = focus.lower()
+        keys = {
+            "FINANCE": ("financ", "rent", "mortgage", "section 8", "payment", "bill"),
+            "PRODUCT": ("syncworks", "app", "build", "software", "product"),
+            "REVENUE": ("upwork", "freelance", "job"),
+            "GROWTH": ("market", "social", "lead", "business", "funnel"),
+        }
+        selected = [stream for stream in workstreams if any(word in focus_lower for word in keys[stream[0]])]
+        if not selected:
+            selected = workstreams[:2]
         days = []
         conflict_count = 0
         warnings = []
@@ -141,14 +159,24 @@ class VictoriaWeeklyPlanView(APIView):
                     add(slots, date, email_at, 30, "Email review and to-do triage", "ADMIN")
             if data["lunch_enabled"]:
                 add(slots, date, lunch_at, 45, "Lunch", "PERSONAL")
+            management_actions = []
+            if idx in workdays:
+                for order, (code, title, instruction, result) in enumerate(selected[:3], start=1):
+                    management_actions.append({
+                        "priority": order, "category": code, "title": title,
+                        "instruction": instruction, "done_when": result,
+                        "status": "PROPOSED", "requires_review": True,
+                        "source": "owner_entered_priorities",
+                    })
             committed = [{"title": e["title"], "start": e["start"].isoformat(),
                           "end": e["end"].isoformat(), "source": e["source"],
                           "existing": True} for e in existing if e["start"].date() == date]
             days.append({"date": date.isoformat(), "day": DAY_NAMES[idx],
-                         "existing": committed, "suggestions": [serialize(s) for s in sorted(slots, key=lambda s: s["start"])]})
+                         "existing": committed, "management_actions": management_actions, "suggestions": [serialize(s) for s in sorted(slots, key=lambda s: s["start"])]})
         draft = {"week_start": monday.isoformat(), "week_end": (end_date - timedelta(days=1)).isoformat(),
                  "timezone": str(ZONE), "days": days, "calendar_event_count": sum(len(d["existing"]) for d in days),
                  "potential_overlap_count": conflict_count, "focus": focus,
+                 "management_mode": "owner_guided_rule_based",
                  "preferences": {key: data.get(key) for key in ("work_start", "work_end", "gym_time", "forge_time", "lunch_time", "email_time", "work_days", "gym_days", "forge_enabled", "lunch_enabled", "email_enabled", "focus")},
                  "warnings": warnings,
                  "connection_note": "Only appointments currently in SyncWorks Calendar were read; external calendars not yet synced may be missing.",
