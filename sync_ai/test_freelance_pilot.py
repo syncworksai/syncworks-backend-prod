@@ -15,7 +15,7 @@ class FreelancePilotAPITests(TestCase):
         self.other = User.objects.create_user(username="freelance-other", email="other@example.com", password="x")
         self.founder.email_verified = True
         self.founder.save(update_fields=["email_verified"])
-        self._settings = override_settings(FREELANCE_PILOT_USER_ID=str(self.founder.pk))
+        self._settings = override_settings(FREELANCE_PILOT_USER_ID=str(self.founder.pk), FREELANCE_CSV_PROCESS_ENABLED=True, FREELANCE_AI_PLAN_ENABLED=True)
         self._settings.enable()
         self.addCleanup(self._settings.disable)
         self.client = APIClient()
