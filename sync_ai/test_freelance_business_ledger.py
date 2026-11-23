@@ -1,11 +1,14 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
+from django.core.cache import cache
 from rest_framework.test import APIClient
 
 ROOT="/api/v1/sync-ai/freelance/pilot/business-ledger/"
 
 class BusinessLedgerTests(TestCase):
     def setUp(self):
+        # Each test is isolated from the rate limiter's shared cache.
+        cache.clear()
         User=get_user_model()
         self.owner=User.objects.create_user(username="ledger-owner",email="jacoblord7@outlook.com",password="x")
         self.owner.email_verified=True
