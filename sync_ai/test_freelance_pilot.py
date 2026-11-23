@@ -33,6 +33,20 @@ class FreelancePilotAPITests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.data["capabilities"]["client_file_storage"])
 
+    def test_csv_and_ai_are_disabled_by_default(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        self.auth(self.founder)
+        with override_settings(FREELANCE_CSV_PROCESS_ENABLED=False, FREELANCE_AI_PLAN_ENABLED=False):
+            access = self.client.get(ROOT + "access/")
+            self.assertFalse(access.data["capabilities"]["csv_process"])
+            self.assertFalse(access.data["capabilities"]["jarvis_plan"])
+            upload = SimpleUploadedFile("test.csv", b"name\\nSample\\n", content_type="text/csv")
+            self.assertEqual(self.client.post(ROOT + "process-csv/", {"file": upload}, format="multipart").status_code, 403)
+            with patch("sync_ai.freelance_pilot_views.create_sync_response") as provider:
+                response = self.client.post(ROOT + "jarvis-plan/", {"task": "test", "consent": True}, format="json")
+                self.assertEqual(response.status_code, 403)
+                provider.assert_not_called()
+
     def test_email_alone_is_not_an_entitlement(self):
         from django.contrib.auth import get_user_model
         impersonator = get_user_model().objects.create_user(username="imposter", email="jacoblord7@outlook.com", password="x")
