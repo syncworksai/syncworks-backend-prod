@@ -18,6 +18,7 @@ from .profiles import CustomerProfile, SmallBusinessOwnerProfile, SubcontractorP
 from .identity import PersonalIdentity, UserLocation, BusinessVerification
 from .audit import AuditLog
 from .sync_assist_jobs import SyncAssistJob
+from .freelance_synthetic_job import FreelanceSyntheticJob
 from .notifications import Notification, PlatformNewsItem
 from .categories import ServiceCategory
 from .business import Business, BusinessMember, BusinessCategory, BusinessMemberRole
