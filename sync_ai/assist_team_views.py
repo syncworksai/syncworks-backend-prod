@@ -22,7 +22,7 @@ SLOTS = {
     "executive-assistant": {"name": "Executive Assistant", "role": "EXECUTIVE_ASSISTANT"},
     "business-manager": {"name": "Business Operations", "role": "BUSINESS_MANAGER"},
     "finance-manager": {"name": "Charlotte", "role": "FINANCE_MANAGER"},
-    "property-manager": {"name": "Property Assistant", "role": "PROPERTY_MANAGER"},
+    "property-manager": {"name": "Sarah", "role": "PROPERTY_MANAGER"},
     "customer-service": {"name": "Customer Service", "role": "CUSTOMER_SERVICE"},
     "personal-trainer": {"name": "Fitness Coach", "role": "PERSONAL_TRAINER"},
 }
@@ -37,6 +37,7 @@ PHOTO_CHOICES = {
     "/jarvis-avatars/Elizabeth.png",
     "/jarvis-avatars/Scarlett.png",
     "/jarvis-avatars/Sophia.png",
+    "/jarvis-avatars/Sarah.png",
 }
 DEFAULT_PHOTOS = {
     "executive-female": "/jarvis-avatars/Victoria.png",
@@ -46,7 +47,7 @@ DEFAULT_PHOTOS = {
     "executive-assistant": "/jarvis-avatars/victoria.jpeg",
     "business-manager": "/jarvis-avatars/james.jpeg",
     "finance-manager": "/jarvis-avatars/Charlotte.png",
-    "property-manager": "/jarvis-avatars/elizabeth.jpeg",
+    "property-manager": "/jarvis-avatars/Sarah.png",
     "customer-service": "/jarvis-avatars/victoria.jpeg",
     "personal-trainer": "/jarvis-avatars/james.jpeg",
 }
