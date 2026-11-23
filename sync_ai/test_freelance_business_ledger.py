@@ -36,7 +36,7 @@ class BusinessLedgerTests(TestCase):
         data=self.client.get(ROOT).data
         self.assertEqual(data["summary"]["potential_gross"],"100.00")
         self.assertEqual(data["summary"]["contracted_gross"],"80.00")
-        self.assertEqual(data["summary"]["received_gross"],"0")
+        self.assertEqual(data["summary"]["received_gross"],"0.00")
         self.assertFalse(data["summary"]["verified_upwork_feed"])
         expense=self.client.post(ROOT,{"category":"EXPENSE","title":"Application supplies","cash_spent":"4.00","connects_used":10},format="json")
         self.assertEqual(expense.status_code,201,expense.data)
