@@ -97,8 +97,6 @@ class VictoriaWeeklyPlanView(APIView):
         # Upcoming Monday (including current Monday) ensures consistent week display.
         today = timezone.localtime(timezone.now(), ZONE).date()
         monday = today - timedelta(days=today.weekday())
-        if today.weekday() > 0:
-            monday += timedelta(days=7)
         end_date = monday + timedelta(days=7)
         # Only owned active records, including already-synced external calendar events.
         records = list(PersonalCalendarEvent.objects.filter(owner=request.user, status="ACTIVE",
@@ -113,13 +111,19 @@ class VictoriaWeeklyPlanView(APIView):
                 "source": e.source})
         days = []
         conflict_count = 0
+        warnings = []
+        if data["lunch_enabled"] and (minutes(lunch_at) < 10 * 60 or minutes(lunch_at) > 15 * 60):
+            warnings.append("Lunch is set outside typical midday hours. Confirm AM/PM before adding it to a calendar.")
+        if minutes(end) - minutes(start) > 8 * 60:
+            warnings.append("Your availability exceeds eight hours; treat this as an available window, not continuous assigned work.")
         def add(slots, date, at, duration, title, category):
             nonlocal conflict_count
             beginning = clock_at(date, at)
             finish = beginning + timedelta(minutes=duration)
             overlapping = [e["title"] for e in existing if e["start"] < finish and e["end"] > beginning]
-            overlapping += [s["title"] for s in slots if s["start"] < finish and s["end"] > beginning]
-            if overlapping:
+            if category != "WORK":
+                overlapping += [s["title"] for s in slots if s["category"] != "WORK" and s["start"] < finish and s["end"] > beginning]
+            if overlapping and category != "WORK":
                 conflict_count += 1
             slots.append({"title": title, "start": beginning, "end": finish,
                           "category": category, "conflicts": overlapping[:5]})
@@ -145,6 +149,8 @@ class VictoriaWeeklyPlanView(APIView):
         draft = {"week_start": monday.isoformat(), "week_end": (end_date - timedelta(days=1)).isoformat(),
                  "timezone": str(ZONE), "days": days, "calendar_event_count": sum(len(d["existing"]) for d in days),
                  "potential_overlap_count": conflict_count, "focus": focus,
+                 "preferences": {key: data.get(key) for key in ("work_start", "work_end", "gym_time", "forge_time", "lunch_time", "email_time", "work_days", "gym_days", "forge_enabled", "lunch_enabled", "email_enabled", "focus")},
+                 "warnings": warnings,
                  "connection_note": "Only appointments currently in SyncWorks Calendar were read; external calendars not yet synced may be missing.",
                  "finance_note": "Payment amounts, due dates, mortgage balances, and rent collections were not retrieved. Connect verified financial and property sources before adding these to the schedule.",
                  "health_note": "Gym sessions are proposed time blocks, not generated workout prescriptions.",
