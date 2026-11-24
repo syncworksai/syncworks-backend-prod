@@ -51,6 +51,21 @@ class FreelanceSyntheticQueueTests(TestCase):
         self.assertEqual(self.client.get(ROOT + job_id + "/").status_code, 403)
         self.assertEqual(self.client.get(ROOT + job_id + "/download/").status_code, 403)
 
+    def test_targeted_worker_only_processes_specified_job(self):
+        self.client.force_authenticate(user=self.founder)
+        one = self.client.post(ROOT, {"row_count": 100, "seed": 42, "consent_synthetic_only": True}, format="json")
+        two = self.client.post(ROOT, {"row_count": 200, "seed": 45, "consent_synthetic_only": True}, format="json")
+        self.assertEqual(one.status_code, 201, one.data)
+        self.assertEqual(two.status_code, 201, two.data)
+        first = one.data["job"]["id"]
+        second = two.data["job"]["id"]
+        from uuid import UUID
+        self.assertEqual(run_batch(limit=1, target_job_id=UUID(second)), ["REVIEW"])
+        self.assertEqual(FreelanceSyntheticJob.objects.get(pk=first).state, "QUEUED")
+        self.assertEqual(FreelanceSyntheticJob.objects.get(pk=second).state, "REVIEW")
+        self.assertEqual(run_batch(limit=1, target_job_id=UUID(second)), [])
+        self.assertEqual(FreelanceSyntheticJob.objects.get(pk=first).attempts, 0)
+
     def test_cancel_before_worker_runs(self):
         self.client.force_authenticate(user=self.founder)
         created = self.client.post(ROOT, {"row_count": 12, "consent_synthetic_only": True}, format="json")

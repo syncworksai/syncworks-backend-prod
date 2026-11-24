@@ -42,10 +42,12 @@ def make_report(job):
         "review_required": True,
     }
 
-def claim():
+def claim(target_job_id=None):
     now = timezone.now()
     with transaction.atomic():
         query = FreelanceSyntheticJob.objects.filter(state="QUEUED").order_by("created_at")
+        if target_job_id is not None:
+            query = query.filter(pk=target_job_id)
         if connection.features.has_select_for_update_skip_locked:
             query = query.select_for_update(skip_locked=True)
         else:
@@ -105,11 +107,11 @@ def run_one(job_id, token):
         current.save()
         return current.state
 
-def run_batch(limit=1):
+def run_batch(limit=1, target_job_id=None):
     recover_expired()
     results = []
     for _ in range(min(MAX_JOBS_PER_TICK,max(0,int(limit)))):
-        claimed = claim()
+        claimed = claim(target_job_id=target_job_id)
         if not claimed:
             break
         results.append(run_one(*claimed))
