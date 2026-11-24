@@ -45,6 +45,23 @@ FOLLOWUP = ("please respond", "please confirm", "please provide", "please send",
             "schedule an inspection", "need to schedule", "please schedule")
 SALES = ("unsubscribe", "sale ends", "black friday", "discount", "promo code",
          "shop now", "book your appointment", "newsletter", "special offer")
+# Strong property association is required before Sarah sees a financial message.
+# Generic words (payment, transfer, deposit, overdue) do not prove that a
+# message concerns rent or housing assistance.
+PROPERTY_SENDER_TERMS = ("housingauthority", "housing-authority", "section8",
+    "section-8", "montgomeryhousing", "propertymanager", "property-management",
+    "landlord", "rentcafe")
+PROPERTY_SUBJECT_TERMS = ("section 8", "housing authority", "rental assistance",
+    "housing assistance", "rent ledger", "tenant rent", "rent collection",
+    "rent increase", "lease", "reinspection", "inspection", "abatement",
+    "property management", "landlord", "housing voucher", "housing quality",
+    "smoke detector", "certificate of occupancy", "work order")
+NON_PROPERTY_SENDER_TERMS = ("robinhood.com", "nelnet.", "creditkarma.",
+    "capitalone.", "experian.", "coinbase.", "topstep.", "fidelity.",
+    "schwab.", "etrade.", "newsletter.", "marketing.")
+NON_PROPERTY_SUBJECT_TERMS = ("instant deposit", "trading", "investment",
+    "credit card", "stock market", "crypto", "black friday", "personal loan",
+    "account is past due", "avoid default", "funds available for investing")
 MAX_SCAN = 75
 MAX_FINDINGS = 30
 
@@ -68,10 +85,18 @@ def classify(message):
                      if _signal(content, terms)), None)
     if not category and re.search(r"\\b(hap|mha|hqs|coo|section\\s*8)\\b", content):
         category = "PAYMENT" if re.search(r"\\bhap\\b", content) else "TENANT"
-    property_context = category is not None or _signal(sender_l, SENDER_HINTS)
-    if _signal(content, SALES) and not category:
+    sender_property = _signal(sender_l, PROPERTY_SENDER_TERMS)
+    subject_property = _signal(content, PROPERTY_SUBJECT_TERMS) or bool(
+        re.search(r"\\b(section\\s*8|mha|hqs|hap)\\b", content))
+    explicit_property = sender_property or subject_property
+    unrelated_finance = (_signal(sender_l, NON_PROPERTY_SENDER_TERMS) or
+                         _signal(content, NON_PROPERTY_SUBJECT_TERMS))
+    if unrelated_finance and not explicit_property:
         return None
-    if not property_context:
+    if _signal(content, SALES) and not explicit_property:
+        return None
+    # Generic finance-related subjects must go to a finance bot, not Sarah.
+    if not explicit_property:
         return None
     if not category:
         category = "REVIEW"
