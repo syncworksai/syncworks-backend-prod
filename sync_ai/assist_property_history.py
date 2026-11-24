@@ -53,7 +53,8 @@ def matches(message, profile):
     subject = str(message.get("subject") or "")[:500].lower()
     body = str(message.get("bodyPreview") or "")[:1000].lower()
     sender = str(((message.get("from") or {}).get("emailAddress") or {}).get("address") or "").lower()
-    context = subject + " " + body
+    sender_name = str(((message.get("from") or {}).get("emailAddress") or {}).get("name") or "").lower()
+    context = subject + " " + body + " " + sender_name
     matched = []
     for term in profile["terms"]:
         if re.search(r"(?<!\w)" + re.escape(term.lower()) + r"(?!\w)", context):
