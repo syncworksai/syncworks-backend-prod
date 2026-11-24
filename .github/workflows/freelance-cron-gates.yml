@@ -1,0 +1,52 @@
+name: Freelance cron gate isolation
+on:
+  pull_request:
+    paths:
+      - scripts/run_sync_assist_cron.sh
+      - .github/workflows/freelance-cron-gates.yml
+  push:
+    branches:
+      - fix/freelance-cron-independent-gate-20261124
+    paths:
+      - scripts/run_sync_assist_cron.sh
+      - .github/workflows/freelance-cron-gates.yml
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Check shell and worker isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/run_sync_assist_cron.sh
+          mkdir -p /tmp/sw-freelance-ci
+          cat >/tmp/sw-freelance-ci/python <<'MOCK'
+          #!/usr/bin/env bash
+          printf 'PYTHON %s\n' "$*" >> "$WORKER_CALLS"
+          exit 0
+          MOCK
+          chmod +x /tmp/sw-freelance-ci/python
+          export PATH="/tmp/sw-freelance-ci:$PATH"
+          export WORKER_CALLS="$RUNNER_TEMP/freelance-cron-calls"
+          export FREELANCE_PILOT_USER_ID="1"
+          export FREELANCE_SYNTHETIC_PILOT_JOB_ID="10b5a588-7e4b-4db8-96bb-854261f34a38"
+          export SYNC_ASSIST_DURABLE_WORKER_ENABLED=false
+          export SYNC_ASSIST_DURABLE_SCHEDULED_ENABLED=false
+          export SYNC_ASSIST_PREFLIGHT_ONLY=false
+          export SYNC_ASSIST_SARAH_SCAN_ENABLED=false
+          export FREELANCE_SYNTHETIC_WORKER_ENABLED=true
+          : >"$WORKER_CALLS"
+          bash scripts/run_sync_assist_cron.sh
+          grep -F 'freelance_synthetic_worker --once --max-jobs 1 --job-id 10b5a588-7e4b-4db8-96bb-854261f34a38' "$WORKER_CALLS"
+          if grep -q 'sync_assist_queue_worker' "$WORKER_CALLS"; then
+            echo "Unrelated worker ran despite its gates being disabled" >&2
+            exit 1
+          fi
+          : >"$WORKER_CALLS"
+          export FREELANCE_SYNTHETIC_WORKER_ENABLED=false
+          bash scripts/run_sync_assist_cron.sh
+          if [[ -s "$WORKER_CALLS" ]]; then
+            echo "Disabled workers must not invoke Python" >&2
+            exit 1
+          fi
