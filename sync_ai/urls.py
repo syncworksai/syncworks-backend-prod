@@ -24,7 +24,7 @@ from .assist_chief_views import JarvisCasesView, JarvisCaseDecisionView, JarvisC
 from .assist_outlook_views import OutlookStatus, OutlookConnect, OutlookCallback, OutlookInbox, OutlookDraft, OutlookSend, OutlookDisconnect
 from .assist_multi_mailbox_views import MultiMailboxView, MultiMailboxConnect, MultiMailboxCallback, MultiMailboxInbox
 from .assist_property_mail_analysis import SarahPropertyMailAnalysisView
-from .assist_property_history import PropertySearchProfilesView, PropertyHistoricalSearchView
+from .assist_property_history import PropertySearchProfilesView, PropertyHistoricalSearchView, PropertyCorrespondenceReportView
 from .assist_mail_router import AssistMailRoutingView
 from .assist_email_intelligence import JarvisWritingPreferencesView, JarvisOutlookSuggestView, JarvisOutlookBriefView
 
@@ -70,6 +70,7 @@ urlpatterns = [
     path("assist/pilot/mailboxes/", MultiMailboxView.as_view(), name="assist-multi-mailboxes"),
     path("assist/pilot/mailboxes/<uuid:account_id>/route-review/", AssistMailRoutingView.as_view(), name="assist-mail-route-review"),
     path("assist/pilot/mailboxes/<uuid:account_id>/property-profiles/", PropertySearchProfilesView.as_view(), name="assist-property-search-profiles"),
+    path("assist/pilot/pm-properties/<int:property_id>/correspondence-reports/", PropertyCorrespondenceReportView.as_view(), name="assist-property-correspondence-reports"),
     path("assist/pilot/mailboxes/<uuid:account_id>/property-history/", PropertyHistoricalSearchView.as_view(), name="assist-property-history"),
     path("assist/pilot/mailboxes/<uuid:account_id>/sarah-analysis/", SarahPropertyMailAnalysisView.as_view(), name="assist-sarah-property-mail-analysis"),
     path("assist/pilot/mailboxes/connect/", MultiMailboxConnect.as_view(), name="assist-multi-mailboxes-connect"),
