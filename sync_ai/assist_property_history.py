@@ -124,17 +124,35 @@ class PropertySearchProfilesView(APIView):
             return Response({"detail": "Property mailbox not connected or access denied."}, status=403)
         prior = next((p for p in profiles(request.user, str(account_id))
                       if p["profile_id"] == str(request.data.get("profile_id") or "")), None)
-        pm_property = property_for_user(request.user, request.data.get("pm_property_id"))
-        if not prior or not pm_property:
-            return Response({"detail": "Saved search or authorized property not found."}, status=404)
-        if any(x.get("profile_id") != prior["profile_id"]
-               and x.get("pm_property_id") == pm_property.id
-               for x in profiles(request.user, str(account_id))):
-            return Response({"detail": "Property already linked to another profile."}, status=409)
-        prior.update({"name": pm_property.name, "pm_property_id": pm_property.id,
-                      "property_address": pm_property.address})
+        if not prior:
+            return Response({"detail": "Saved search not found."}, status=404)
+        pm_id = request.data.get("pm_property_id")
+        if pm_id:
+            prop = property_for_user(request.user, pm_id)
+            if not prop:
+                return Response({"detail": "Authorized PM property not found."}, status=404)
+            if any(x.get("profile_id") != prior["profile_id"]
+                   and x.get("pm_property_id") == prop.id
+                   for x in profiles(request.user, str(account_id))):
+                return Response({"detail": "Property already linked to another profile."}, status=409)
+            prior.update({"name": prop.name, "pm_property_id": prop.id,
+                          "property_address": prop.address})
+        # Extra contact names are search hints, not verified senders.
+        if "terms" in request.data:
+            terms = request.data["terms"]
+            if not isinstance(terms, list) or not 1 <= len(terms) <= MAX_TERMS or any(
+                    not isinstance(t, str) or not 2 <= len(t.strip()) <= 100 for t in terms):
+                return Response({"detail": "Provide 1–15 valid search terms."}, status=400)
+            prior["terms"] = list(dict.fromkeys(t.strip().lower() for t in terms))
+        if "contacts" in request.data:
+            contacts = request.data["contacts"]
+            if not isinstance(contacts, list) or len(contacts) > 12 or any(
+                    not isinstance(t, str) or not (3 <= len(t.strip()) <= 100)
+                    or "@" not in t or " " in t for t in contacts):
+                return Response({"detail": "Provide up to 12 complete sender email addresses."}, status=400)
+            prior["contacts"] = list(dict.fromkeys(t.strip().lower() for t in contacts))
         AuditLog.objects.create(actor=request.user, action=PROFILE, metadata=prior)
-        return Response({"profile": prior, "notice": "Linked to Property Management; no mail changed."})
+        return Response({"profile": prior, "notice": "Property search updated; Outlook not modified."})
 
 
 class PropertyHistoricalSearchView(APIView):
