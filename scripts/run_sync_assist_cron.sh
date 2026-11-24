@@ -2,8 +2,18 @@
 # Render cron: fail closed unless approved for the restricted private pilot.
 set -euo pipefail
 
-if [[ "${SYNC_ASSIST_PREFLIGHT_ONLY:-false}" != "true" && ( "${SYNC_ASSIST_DURABLE_WORKER_ENABLED:-false}" != "true" || "${SYNC_ASSIST_DURABLE_SCHEDULED_ENABLED:-false}" != "true" ) ]]; then
-  echo "SYNC Assist scheduled execution disabled (no jobs executed)."
+# Each worker is independently gated. Do not require the unrelated SYNC Assist
+# worker to be active for one tightly scoped synthetic freelance test.
+sync_assist_run=false
+if [[ "${SYNC_ASSIST_DURABLE_WORKER_ENABLED:-false}" == "true" && "${SYNC_ASSIST_DURABLE_SCHEDULED_ENABLED:-false}" == "true" ]]; then
+  sync_assist_run=true
+fi
+freelance_test_run=false
+if [[ "${FREELANCE_SYNTHETIC_WORKER_ENABLED:-false}" == "true" && -n "${FREELANCE_SYNTHETIC_PILOT_JOB_ID:-}" ]]; then
+  freelance_test_run=true
+fi
+if [[ "${SYNC_ASSIST_PREFLIGHT_ONLY:-false}" != "true" && "$sync_assist_run" != "true" && "$freelance_test_run" != "true" ]]; then
+  echo "All scheduled workers disabled (no jobs executed)."
   exit 0
 fi
 
@@ -56,9 +66,12 @@ fi
 # Optional bounded freelance synthetic test. Target UUID is mandatory and claim
 # scope cannot fall back to another queued job. Zero model/provider calls.
 # Keep this separate from the primary Sync Assist task execution.
-if [[ "${FREELANCE_SYNTHETIC_WORKER_ENABLED:-false}" == "true" && -n "${FREELANCE_SYNTHETIC_PILOT_JOB_ID:-}" ]]; then
+if [[ "$freelance_test_run" == "true" ]]; then
   python manage.py freelance_synthetic_worker --once --max-jobs 1 --job-id "$FREELANCE_SYNTHETIC_PILOT_JOB_ID"
 fi
 
-# Run at most one internally authorized step; no external sends or searches.
-exec python manage.py sync_assist_queue_worker --once --scheduled --max-jobs 1
+# Run the separate SYNC Assist worker only if its own gates are enabled.
+if [[ "$sync_assist_run" == "true" ]]; then
+  exec python manage.py sync_assist_queue_worker --once --scheduled --max-jobs 1
+fi
+echo "Bounded freelance-only run complete (SYNC Assist scheduled execution remains disabled)."
