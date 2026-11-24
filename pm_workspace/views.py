@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from urllib.parse import urlencode
+from io import BytesIO
+from PIL import Image, UnidentifiedImageError
+from django.core.files.base import ContentFile
 
 from datetime import timedelta
 
@@ -16,6 +19,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .models import PMProject, PMProjectUpdate, PMProperty, PMTenant, PMTenantInvitation, PMWorkspace
+from .document_models import PMPropertyDocument
 from .serializers import (
     PMProjectSerializer,
     PMProjectUpdateSerializer,
@@ -121,6 +125,46 @@ class PMPropertyViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(workspace=_requested_workspace(self.request), created_by=self.request.user)
+
+    @action(detail=True, methods=["post"], url_path="cover-photo")
+    def cover_photo(self, request, pk=None):
+        """Owner-scoped, bounded image upload using existing PM document storage."""
+        prop = self.get_object()
+        incoming = request.FILES.get("photo")
+        if not incoming:
+            raise ValidationError({"photo": "Select a property image."})
+        if incoming.size > 5 * 1024 * 1024:
+            raise ValidationError({"photo": "Image must be 5 MB or smaller."})
+        try:
+            raw = incoming.read()
+            img = Image.open(BytesIO(raw))
+            img.verify()
+            img = Image.open(BytesIO(raw))
+            if img.format not in ("JPEG", "PNG", "WEBP") or img.width * img.height > 24000000:
+                raise ValidationError({"photo": "Use a JPEG, PNG, or WebP up to 24 megapixels."})
+            from PIL import ImageOps
+            img = ImageOps.exif_transpose(img).convert("RGB")
+            img.thumbnail((1600, 1200), Image.Resampling.LANCZOS)
+            output = BytesIO()
+            img.save(output, format="JPEG", quality=82, optimize=True)
+        except (UnidentifiedImageError, OSError, ValueError):
+            raise ValidationError({"photo": "This is not a valid image."})
+        previous = PMPropertyDocument.objects.filter(
+            workspace=prop.workspace, property=prop, category="OTHER",
+            checklist_key="PROPERTY_COVER_PHOTO", status="ACTIVE"
+        )
+        # Preserve older uploads as archival records; no cross-property access.
+        with transaction.atomic():
+            previous.update(status="ARCHIVED")
+            doc = PMPropertyDocument.objects.create(
+                workspace=prop.workspace, property=prop, category="OTHER",
+                title="Property cover photo", checklist_key="PROPERTY_COVER_PHOTO",
+                status="ACTIVE", created_by=request.user,
+                document=ContentFile(output.getvalue(), name=f"property-{prop.pk}-cover.jpg"),
+            )
+        return Response({"photo_url": request.build_absolute_uri(doc.document.url),
+                         "property_id": prop.pk, "document_id": doc.pk,
+                         "notice": "Property photo uploaded."}, status=201)
 
 
 class PMProjectViewSet(viewsets.ModelViewSet):
