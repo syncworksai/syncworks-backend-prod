@@ -9,7 +9,7 @@ import re
 from collections import Counter
 from datetime import timedelta
 from uuid import uuid4
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from pm_workspace.models import PMProperty
 
 import requests
