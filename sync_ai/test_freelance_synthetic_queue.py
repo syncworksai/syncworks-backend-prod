@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
+from django.core.cache import cache
 from rest_framework.test import APIClient
 from user_accounts.models import FreelanceSyntheticJob
 from sync_ai.freelance_synthetic_queue import run_batch
@@ -8,6 +9,7 @@ ROOT = "/api/v1/sync-ai/freelance/pilot/synthetic-jobs/"
 
 class FreelanceSyntheticQueueTests(TestCase):
     def setUp(self):
+        cache.clear()  # Isolate owner-scoped rate limits between test cases.
         User = get_user_model()
         self.founder = User.objects.create_user(username="founder-synthetic", email="jacoblord7@outlook.com", password="x")
         self.founder.email_verified = True
