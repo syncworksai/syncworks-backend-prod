@@ -39,6 +39,20 @@ class RoutingTests(SimpleTestCase):
         self.assertEqual(result["category"], "REVIEW")
         self.assertEqual(result["filing_action"], "KEEP_IN_INBOX")
 
+    def test_debt_relief_email_goes_to_finance(self):
+        result = route(msg("Re: Emily from Pacific Debt",
+            "emily@engage.pacificdebt.com",
+            "The bigger concern right now is monthly payments or balances"))
+        self.assertEqual(result["category"], "FINANCE")
+        self.assertEqual(result["priority"], "HIGH")
+        self.assertEqual(result["filing_action"], "KEEP_IN_INBOX")
+
+    def test_personalized_offer_goes_to_personal(self):
+        result = route(msg("jacob, this offer is just for you",
+            "noreply@email.sionicdriven.com",
+            "Redeem your offer while it's here"))
+        self.assertEqual(result["category"], "PERSONAL")
+
     def test_security_alert_protected(self):
         result = route(msg("Security alert: unusual sign-in",
                            "security@example.org"))
