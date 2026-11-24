@@ -302,9 +302,14 @@ class MultiMailboxCallback(APIView):
             return finish("connected")
         except signing.SignatureExpired:
             return finish("state_expired")
-        except (signing.BadSignature, KeyError, TypeError,
-                get_user_model().DoesNotExist):
-            logger.warning("Multi-mailbox callback invalid state or user")
+        except signing.BadSignature:
+            logger.warning("Multi-mailbox callback state signature invalid; verify OAuth start and callback use Ohio backend")
+            return finish("state_invalid")
+        except get_user_model().DoesNotExist:
+            logger.warning("Multi-mailbox OAuth callback user not present on callback backend")
+            return finish("account_context_mismatch")
+        except (KeyError, TypeError):
+            logger.warning("Multi-mailbox callback state missing required fields")
             return finish("state_invalid")
         except requests.Timeout:
             return finish("provider_timeout")
