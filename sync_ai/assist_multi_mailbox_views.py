@@ -254,7 +254,7 @@ class MultiMailboxCallback(APIView):
             if response.status_code != 200:
                 # Microsoft may provide AADSTS numeric codes. Only the number
                 # is logged; full descriptions may contain account information.
-                microsoft_code = re.search(r"AADSTS(\\d{5,8})",
+                microsoft_code = re.search(r"AADSTS(\d{5,8})",
                     str(response.text or "")[:5000])
                 logger.warning("Multi-mailbox token exchange failed: http=%s aadsts=%s",
                                response.status_code,
