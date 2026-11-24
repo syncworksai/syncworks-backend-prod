@@ -3,7 +3,8 @@
 No Outlook emails are moved or sent, no ledger entry is created, and no
 correspondence is auto-attached by this module.
 """
-from collections import Counter
+from collections import Counter, defaultdict
+from datetime import timedelta
 from uuid import uuid4
 
 from django.db import transaction
@@ -11,7 +12,7 @@ from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from pm_workspace.models import PMProperty
+from pm_workspace.models import PMProperty, PMProject, PMTenant
 from user_accounts.models import AuditLog
 from .assist_pilot_views import _pilot
 from .assist_property_history import (
@@ -102,6 +103,18 @@ class PropertyPortfolioBriefView(APIView):
             return Response({"detail": "Not authorized."}, status=403)
         owned = list(owned_properties(request.user)[:MAX_PROFILES + 1])
         ids = {p.id for p in owned}
+        today = timezone.localdate()
+        project_counts = Counter()
+        overdue_projects = Counter()
+        leases_ending = defaultdict(list)
+        for task in PMProject.objects.filter(property_id__in=ids).exclude(
+                status__in=["COMPLETED", "ARCHIVED"]):
+            project_counts[task.property_id] += 1
+            if task.target_date and task.target_date < today:
+                overdue_projects[task.property_id] += 1
+        for resident in PMTenant.objects.filter(property_id__in=ids).exclude(status="INACTIVE"):
+            if resident.lease_end and today <= resident.lease_end <= today + timedelta(days=60):
+                leases_ending[resident.property_id].append(resident.lease_end.isoformat())
         reports = {}
         events = AuditLog.objects.filter(actor=request.user, action=REPORT).order_by("-id")[:2500]
         for event in events:
@@ -127,6 +140,13 @@ class PropertyPortfolioBriefView(APIView):
                 "status": prop.status, "correspondence_count": len(items),
                 "latest_correspondence_at": items[0].get("received_at") if items else None,
                 "categories": dict(counts),
+                "operations": {
+                    "open_projects": project_counts[prop.id],
+                    "overdue_projects": overdue_projects[prop.id],
+                    "recorded_leases_ending_within_60_days": len(leases_ending[prop.id]),
+                    "lease_end_dates": sorted(leases_ending[prop.id])[:10],
+                    "requires_financial_reconciliation": True,
+                },
                 "requires_review": any(r.get("status") == "CORRESPONDENCE_REVIEW_ONLY" for r in history),
                 "detail_url": f"/pm/properties/{prop.id}?tab=correspondence",
             })
@@ -134,6 +154,11 @@ class PropertyPortfolioBriefView(APIView):
             "generated_at": timezone.now().isoformat(),
             "properties": properties, "portfolio_property_count": len(owned),
             "reviewed_correspondence_by_category": dict(totals),
+            "operations_totals": {
+                "open_projects": sum(project_counts.values()),
+                "overdue_projects": sum(overdue_projects.values()),
+                "recorded_leases_ending_within_60_days": sum(len(v) for v in leases_ending.values()),
+            },
             "source": "PM_PROPERTIES_AND_REVIEWED_CORRESPONDENCE_REPORTS",
             "coverage_note": "Only explicitly reviewed correspondence is included; no automated inbox scan was run.",
             "caveat": "No receivable, inspection, lease renewal or work-order conclusion can be inferred from reviewed email subjects alone.",
