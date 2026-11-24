@@ -15,6 +15,7 @@ from .assist_pilot_views import _pilot
 from .assist_daily_views import _build
 from .assist_outlook_views import _settings, _latest
 from .assist_assignment_views import _snapshot as assignment_snapshot
+from .assist_property_portfolio import PropertyPortfolioBriefView
 
 CREATED="sync_assist.chief.case_created"
 CHANGED="sync_assist.chief.case_changed"
@@ -110,6 +111,20 @@ class JarvisChiefBriefingView(APIView):
         pending_assignments=[x for x in assignment_snapshot(request.user)["assignments"] if x["state"]=="AWAITING_REVIEW"]
         cfg=_settings()
         outlook_connected=bool(cfg and _latest(request.user))
+        portfolio = PropertyPortfolioBriefView().get(request).data
+        pm_totals = portfolio.get("operations_totals") or {}
+        pm_properties = portfolio.get("properties") or []
+        pm_actions = sorted(
+            [p for p in pm_properties if
+             p.get("operations", {}).get("overdue_projects", 0)
+             or p.get("operations", {}).get("recorded_leases_ending_within_60_days", 0)
+             or p.get("correspondence_count", 0)],
+            key=lambda p: (
+                -(p.get("operations", {}).get("overdue_projects", 0)),
+                -(p.get("operations", {}).get("recorded_leases_ending_within_60_days", 0)),
+                -(p.get("correspondence_count", 0)),
+            ),
+        )
         sections=[
             {"key":"today","title":"Today","headline":f"{len(tasks)} open tasks, {len(high)} high priority","items":[
                 {"title":x["title"],"source":x["source"],"category":x["category"],"next_action":x["action"]}
@@ -118,8 +133,11 @@ class JarvisChiefBriefingView(APIView):
                 {"title":x["title"],"source":"owner_entered","category":x["category"],"next_action":x["next_step"] or "Review case"}
                 for x in open_cases[:3]],"scope":"Cases manually entered or updated by account owner"},
             {"key":"delegation","title":"AI assignments awaiting review","headline":f"{len(pending_assignments)} tasks or tickets need owner review","items":[{"title":f"{x['role'].replace('_',' ').title()} · {x['kind'].lower()}"+(f" #{x['ticket_id']}" if x.get("ticket_id") else ""),"source":"owner_assigned","category":"BUSINESS","next_action":x["suggested_next_action"]} for x in pending_assignments[:3]],"scope":"Review-only owner assignments; no external actions"},
-            {"key":"portfolio","title":"Business & properties","headline":f"{daily['data_diagnostics']['owned_businesses']} owned businesses, {daily['data_diagnostics']['owned_properties']} linked properties","items":[],"scope":daily["data_diagnostics"]["scan_limit"]},
-            {"key":"email","title":"Email","headline":"Outlook connected; open Mail Desk for an on-demand inbox brief" if outlook_connected else "Outlook is not connected inside SyncWorks","items":[],"scope":"No email content included in this briefing"},
+            {"key":"portfolio","title":"Sarah · Property Management","headline":f"{len(pm_properties)} properties, {pm_totals.get('overdue_projects', 0)} overdue projects, {pm_totals.get('recorded_leases_ending_within_60_days', 0)} upcoming lease end dates","items":[
+                {"title":p["name"],"source":"property_management_and_reviewed_correspondence","category":"PROPERTY",
+                 "next_action":f"Review {p['operations']['overdue_projects']} overdue projects, {p['operations']['recorded_leases_ending_within_60_days']} upcoming lease end dates, {p['correspondence_count']} reviewed email references"}
+                for p in pm_actions[:5]],"scope":"Owner-scoped PM project status, recorded lease dates and reviewed email references; no payment or inspection verification"},
+            {"key":"email","title":"Email","headline":"Outlook connected; open Mail Desk for an on-demand inbox brief" if outlook_connected else "Outlook is not connected inside SyncWorks","items":[],"scope":"Reviewed property email reference counts only; no direct mailbox scan"},
         ]
         return Response({
             "date":daily["date"],"generated_at":timezone.now().isoformat(),"mode":"on_demand",
