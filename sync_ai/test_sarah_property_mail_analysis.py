@@ -51,6 +51,24 @@ class SarahClassifierTests(SimpleTestCase):
             "Please confirm the HAP payment for the rental unit",
             "housing@example.org"))["category"], "PAYMENT")
 
+    def test_microsoft_security_notice_not_property(self):
+        self.assertIsNone(classify(message(
+            "New app(s) connected to your Microsoft account",
+            "If you didn't grant this access, please remove the app.",
+            "account-security-noreply@accountprotection.microsoft.com")))
+
+    def test_please_does_not_match_lease(self):
+        self.assertIsNone(classify(message(
+            "A quick note", "Please review your account.",
+            "contact@outside.example")))
+
+    def test_real_lease_still_classified(self):
+        result = classify(message(
+            "Lease agreement update",
+            "Please review the revised lease for the tenant.",
+            "manager@housing.example"))
+        self.assertIsNotNone(result)
+
     def test_unrelated_personal_mail_does_not_trigger(self):
         self.assertIsNone(classify(message("Dinner tonight?", "See you at seven",
                                    "friend@example.org")))
