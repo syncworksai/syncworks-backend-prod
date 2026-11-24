@@ -33,6 +33,24 @@ class SarahClassifierTests(SimpleTestCase):
         row=classify(message("HAP payment", "", "sender@example.org"))
         self.assertEqual(row["category"], "PAYMENT")
 
+    def test_robinhood_instant_deposit_not_property(self):
+        self.assertIsNone(classify(message(
+            "Funds available for investing",
+            "You have an instant deposit from your bank transfer",
+            "noreply@robinhood.com")))
+
+    def test_student_loan_debt_not_property(self):
+        self.assertIsNone(classify(message(
+            "Avoid default on your account",
+            "Your account is six months past due.",
+            "noreply@nelnet.studentaid.gov")))
+
+    def test_housing_assistance_payment_is_property(self):
+        self.assertEqual(classify(message(
+            "Housing assistance payment update",
+            "Please confirm the HAP payment for the rental unit",
+            "housing@example.org"))["category"], "PAYMENT")
+
     def test_unrelated_personal_mail_does_not_trigger(self):
         self.assertIsNone(classify(message("Dinner tonight?", "See you at seven",
                                    "friend@example.org")))
