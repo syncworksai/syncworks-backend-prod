@@ -56,6 +56,11 @@ PROPERTY_SUBJECT_TERMS = ("section 8", "housing authority", "rental assistance",
     "rent increase", "lease", "reinspection", "inspection", "abatement",
     "property management", "landlord", "housing voucher", "housing quality",
     "smoke detector", "certificate of occupancy", "work order")
+SECURITY_SENDERS = ("accountprotection.microsoft.com",
+    "account-security-noreply", "security-noreply", "accounts.google.com")
+SECURITY_SUBJECTS = ("new app(s) connected", "new apps connected",
+    "security alert", "unusual sign-in", "password reset",
+    "verify your account", "two-step verification", "new sign-in")
 NON_PROPERTY_SENDER_TERMS = ("robinhood.com", "nelnet.", "creditkarma.",
     "capitalone.", "experian.", "coinbase.", "topstep.", "fidelity.",
     "schwab.", "etrade.", "newsletter.", "marketing.")
@@ -67,11 +72,13 @@ MAX_FINDINGS = 30
 
 
 def _signal(value, choices):
-    return any(x in value for x in choices)
+    # Whole-word/phrase matching avoids matching "lease" inside "please".
+    return any(re.search(r"(?<!\\w)" + re.escape(x) + r"(?!\\w)", value)
+               for x in choices)
 
 
 def _clean(value, limit):
-    return re.sub(r"\\s+", " ", str(value or "")).strip()[:limit]
+    return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
 
 
 def classify(message):
@@ -80,14 +87,16 @@ def classify(message):
     sender = _clean(((message.get("from") or {}).get("emailAddress") or {}).get("address"), 180)
     sender_l = sender.lower()
     content = (subject + " " + preview).lower()
+    if _signal(sender_l, SECURITY_SENDERS) or _signal(subject.lower(), SECURITY_SUBJECTS):
+        return None
     # Ignore marketing messages unless they have a genuine property-management signal.
     category = next((cat for cat, terms in CATEGORIES.items()
                      if _signal(content, terms)), None)
-    if not category and re.search(r"\\b(hap|mha|hqs|coo|section\\s*8)\\b", content):
-        category = "PAYMENT" if re.search(r"\\bhap\\b", content) else "TENANT"
+    if not category and re.search(r"\b(hap|mha|hqs|coo|section\\s*8)\b", content):
+        category = "PAYMENT" if re.search(r"\bhap\b", content) else "TENANT"
     sender_property = _signal(sender_l, PROPERTY_SENDER_TERMS)
     subject_property = _signal(content, PROPERTY_SUBJECT_TERMS) or bool(
-        re.search(r"\\b(section\\s*8|mha|hqs|hap)\\b", content))
+        re.search(r"\b(section\\s*8|mha|hqs|hap)\b", content))
     explicit_property = sender_property or subject_property
     unrelated_finance = (_signal(sender_l, NON_PROPERTY_SENDER_TERMS) or
                          _signal(content, NON_PROPERTY_SUBJECT_TERMS))
