@@ -25,7 +25,7 @@ from .assist_property_mail_analysis import classify
 logger = logging.getLogger(__name__)
 PROFILE = "sync_assist.property.search_profile"
 REPORT = "sync_assist.property.correspondence_report"
-MAX_PROFILES = 20
+MAX_PROFILES = 500
 MAX_TERMS = 15
 MAX_MESSAGES = 300
 
@@ -50,7 +50,7 @@ def property_for_user(user, property_id):
 
 
 def matches(message, profile):
-    subject = str(message.get("subject") or "")[:250].lower()
+    subject = str(message.get("subject") or "")[:500].lower()
     body = str(message.get("bodyPreview") or "")[:1000].lower()
     sender = str(((message.get("from") or {}).get("emailAddress") or {}).get("address") or "").lower()
     context = subject + " " + body
