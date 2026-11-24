@@ -57,10 +57,15 @@ class PMPropertySerializer(serializers.ModelSerializer):
     def get_photo_url(self, obj):
         doc = obj.documents.filter(category="OTHER", checklist_key="PROPERTY_COVER_PHOTO",
                                    status="ACTIVE").order_by("-id").first()
-        if not doc or not doc.document:
+        if not doc:
             return ""
         request = self.context.get("request")
-        return request.build_absolute_uri(doc.document.url) if request else doc.document.url
+        if not request:
+            return ""
+        if (doc.extracted_terms or {}).get("storage") == "pm_database_thumbnail_v1":
+            from .views import property_cover_url
+            return property_cover_url(request, obj.pk, doc.pk)
+        return request.build_absolute_uri(doc.document.url) if doc.document else ""
 
     def validate_state(self, value):
         return str(value or "").strip().upper()[:2]
