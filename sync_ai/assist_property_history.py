@@ -24,6 +24,7 @@ from .assist_property_mail_analysis import classify
 
 logger = logging.getLogger(__name__)
 PROFILE = "sync_assist.property.search_profile"
+REPORT = "sync_assist.property.correspondence_report"
 MAX_PROFILES = 20
 MAX_TERMS = 15
 MAX_MESSAGES = 300
@@ -228,3 +229,78 @@ class PropertyHistoricalSearchView(APIView):
             "reconciliation": "No property balance or inspection status was independently verified.",
             "outlook_modified": False, "model_cost_usd": 0,
         })
+
+class PropertyCorrespondenceReportView(APIView):
+    """Attach explicitly reviewed Outlook references to an owned PM property.
+
+    Never creates accounting transactions, changes Outlook, or asserts actual
+    payment/inspection completion. Re-reads each selected message from Graph
+    so client-provided subjects and categories cannot contaminate the record.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, property_id):
+        prop = property_for_user(request.user, property_id)
+        if not prop or not _pilot(request.user):
+            return Response({"detail": "Property not accessible."}, status=404)
+        events = AuditLog.objects.filter(actor=request.user, action=REPORT).order_by("-id")
+        reports = [(e.metadata or {}) for e in events
+                   if (e.metadata or {}).get("pm_property_id") == prop.id][:15]
+        return Response({"property": {"id": prop.id, "name": prop.name},
+                         "reports": reports})
+
+    def post(self, request, property_id):
+        prop = property_for_user(request.user, property_id)
+        if not prop or not _pilot(request.user):
+            return Response({"detail": "Property not accessible."}, status=404)
+        mailbox_id = str(request.data.get("mailbox_id") or "")
+        account = mailbox(request, mailbox_id)
+        if not account:
+            return Response({"detail": "Property mailbox not accessible."}, status=403)
+        profile_id = str(request.data.get("profile_id") or "")
+        profile = next((p for p in profiles(request.user, mailbox_id)
+                        if p["profile_id"] == profile_id
+                        and p.get("pm_property_id") == prop.id), None)
+        if not profile:
+            return Response({"detail": "Link this search profile to the property first."}, status=409)
+        ids = request.data.get("message_ids")
+        if not isinstance(ids, list) or not (1 <= len(ids) <= 20):
+            return Response({"detail": "Select between 1 and 20 verified email references."}, status=400)
+        if any(not isinstance(i, str) or not (1 <= len(i) <= 300) for i in ids) or len(set(ids)) != len(ids):
+            return Response({"detail": "Invalid message reference."}, status=400)
+        cfg = settings()
+        if not cfg:
+            return Response({"detail": "Outlook integration unavailable."}, status=503)
+        references = []
+        try:
+            for identifier in ids:
+                m = graph(request.user, cfg, mailbox_id,
+                          "/me/messages/" + quote(identifier, safe=""),
+                          params={"$select": "id,subject,from,receivedDateTime,bodyPreview,webLink"})
+                matched = matches(m, profile)
+                if not matched:
+                    return Response({"detail": "A selected email no longer matches the property search."}, status=409)
+                sender = str(((m.get("from") or {}).get("emailAddress") or {}).get("address") or "")
+                finding = classify(m)
+                references.append({
+                    "message_id": m.get("id"),
+                    "subject": str(m.get("subject") or "(No subject)")[:200],
+                    "sender": sender[:180],
+                    "received_at": m.get("receivedDateTime"),
+                    "category": finding["category"] if finding else "REVIEW",
+                    "matched_terms": matched[:10],
+                    "outlook_url": m.get("webLink") if str(m.get("webLink") or "").startswith("https://outlook.") else None,
+                    "status": "REVIEWED_EMAIL_REFERENCE_NOT_VERIFIED_PAYMENT",
+                })
+        except (requests.RequestException, ValueError):
+            return Response({"detail": "Could not independently verify all selected emails with Outlook."}, status=502)
+        report = {"report_id": str(uuid4()), "pm_property_id": prop.id,
+                  "property_name": prop.name, "mailbox_id": mailbox_id,
+                  "profile_id": profile_id, "created_at": timezone.now().isoformat(),
+                  "category_counts": dict(Counter(r["category"] for r in references)),
+                  "email_count": len(references), "references": references,
+                  "status": "CORRESPONDENCE_REVIEW_ONLY",
+                  "limitations": "Emails are not financial ledger proof, confirmation of funds received, or a completed inspection.",
+                  "outlook_modified": False, "pm_ledger_modified": False}
+        AuditLog.objects.create(actor=request.user, action=REPORT, metadata=report)
+        return Response({"report": report, "notice": "Reviewed correspondence linked to PM property; no financial records or emails modified."}, status=201)
