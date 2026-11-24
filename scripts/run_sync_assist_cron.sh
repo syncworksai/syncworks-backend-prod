@@ -47,5 +47,11 @@ if [[ "${SYNC_ASSIST_PREFLIGHT_ONLY:-false}" == "true" ]]; then
   exit 0
 fi
 
+# Optional hourly Sarah mailbox scan; requires explicit opt-in and OAuth credentials
+# on this SAME cron service. The command checks the last scan time per mailbox.
+if [[ "${SYNC_ASSIST_SARAH_SCAN_ENABLED:-false}" == "true" ]]; then
+  python manage.py sarah_property_mail_scan || echo "Sarah mailbox review skipped after an error."
+fi
+
 # Run at most one internally authorized step; no external sends or searches.
 exec python manage.py sync_assist_queue_worker --once --scheduled --max-jobs 1
