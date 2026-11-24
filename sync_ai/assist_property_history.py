@@ -10,6 +10,7 @@ from collections import Counter
 from datetime import timedelta
 from uuid import uuid4
 from urllib.parse import urlparse
+from pm_workspace.models import PMProperty
 
 import requests
 from django.utils import timezone
@@ -40,6 +41,13 @@ def profiles(user, mailbox):
     return list(results.values())
 
 
+def property_for_user(user, property_id):
+    if not str(property_id or "").isdigit():
+        return None
+    return PMProperty.objects.filter(pk=property_id, workspace__owner=user,
+                                     workspace__is_active=True).first()
+
+
 def matches(message, profile):
     subject = str(message.get("subject") or "")[:250].lower()
     body = str(message.get("bodyPreview") or "")[:1000].lower()
@@ -47,7 +55,7 @@ def matches(message, profile):
     context = subject + " " + body
     matched = []
     for term in profile["terms"]:
-        if re.search(r"(?<!\\w)" + re.escape(term.lower()) + r"(?!\\w)", context):
+        if re.search(r"(?<!\w)" + re.escape(term.lower()) + r"(?!\w)", context):
             matched.append(term)
     for contact in profile["contacts"]:
         if sender == contact.lower():
@@ -68,8 +76,14 @@ class PropertySearchProfilesView(APIView):
     def get(self, request, account_id):
         if not mailbox(request, account_id):
             return Response({"detail": "Property mailbox not connected or access denied."}, status=403)
+        owned = PMProperty.objects.filter(workspace__owner=request.user,
+                                          workspace__is_active=True).order_by("name", "id")[:250]
         return Response({"profiles": profiles(request.user, str(account_id)),
-                         "max_profiles": MAX_PROFILES, "mode": "READ_ONLY_SEARCH"})
+                         "pm_properties": [
+                             {"id": p.id, "name": p.name,
+                              "address": ", ".join(filter(None, [p.address, p.city, p.state, p.zip]))}
+                             for p in owned
+                         ], "max_profiles": MAX_PROFILES, "mode": "READ_ONLY_SEARCH"})
 
     def post(self, request, account_id):
         if not mailbox(request, account_id):
@@ -90,10 +104,36 @@ class PropertySearchProfilesView(APIView):
         contacts = list(dict.fromkeys(x.strip().lower() for x in raw_contacts))
         if any("@" not in x or " " in x for x in contacts):
             return Response({"detail": "Contacts must be complete email addresses."}, status=400)
+        pm_id = request.data.get("pm_property_id")
+        pm_property = property_for_user(request.user, pm_id) if pm_id else None
+        if pm_id and not pm_property:
+            return Response({"detail": "Choose a Property Management property you own."}, status=403)
+        if pm_property and any(x.get("pm_property_id") == pm_property.id for x in existing):
+            return Response({"detail": "Property already linked to a search profile."}, status=409)
         profile = {"profile_id": str(uuid4()), "mailbox_id": str(account_id),
-                   "name": name, "terms": terms, "contacts": contacts}
+                   "name": pm_property.name if pm_property else name,
+                   "terms": terms, "contacts": contacts,
+                   "pm_property_id": pm_property.id if pm_property else None,
+                   "property_address": pm_property.address if pm_property else ""}
         AuditLog.objects.create(actor=request.user, action=PROFILE, metadata=profile)
         return Response({"profile": profile, "notice": "Search profile saved. No Outlook mail was changed."}, status=201)
+
+    def patch(self, request, account_id):
+        if not mailbox(request, account_id):
+            return Response({"detail": "Property mailbox not connected or access denied."}, status=403)
+        prior = next((p for p in profiles(request.user, str(account_id))
+                      if p["profile_id"] == str(request.data.get("profile_id") or "")), None)
+        pm_property = property_for_user(request.user, request.data.get("pm_property_id"))
+        if not prior or not pm_property:
+            return Response({"detail": "Saved search or authorized property not found."}, status=404)
+        if any(x.get("profile_id") != prior["profile_id"]
+               and x.get("pm_property_id") == pm_property.id
+               for x in profiles(request.user, str(account_id))):
+            return Response({"detail": "Property already linked to another profile."}, status=409)
+        prior.update({"name": pm_property.name, "pm_property_id": pm_property.id,
+                      "property_address": pm_property.address})
+        AuditLog.objects.create(actor=request.user, action=PROFILE, metadata=prior)
+        return Response({"profile": prior, "notice": "Linked to Property Management; no mail changed."})
 
 
 class PropertyHistoricalSearchView(APIView):
@@ -147,6 +187,12 @@ class PropertyHistoricalSearchView(APIView):
                     matched = matches(message, profile)
                     if not matched:
                         continue
+                    sender_address = str(((message.get("from") or {}).get("emailAddress") or {}).get("address") or "").lower()
+                    verified_contact = sender_address in profile["contacts"]
+                    address = str(profile.get("property_address") or "").strip().lower()
+                    context = (str(message.get("subject") or "") + " " + str(message.get("bodyPreview") or "")).lower()
+                    explicit_property = bool(address and len(address) > 6 and address in context)
+                    confidence = "STRONG" if verified_contact or explicit_property else "REVIEW_ONLY"
                     finding = classify(message)
                     findings.append({
                         "message_id": message.get("id"),
@@ -155,6 +201,8 @@ class PropertyHistoricalSearchView(APIView):
                         "received_at": message.get("receivedDateTime"),
                         "preview": str(message.get("bodyPreview") or "")[:500],
                         "matched_terms": matched,
+                        "confidence": confidence,
+                        "auto_attach_allowed": False,
                         "category": finding["category"] if finding else "REVIEW",
                         "priority": finding["priority"] if finding else "LOW",
                         "has_attachments": bool(message.get("hasAttachments")),
@@ -171,7 +219,8 @@ class PropertyHistoricalSearchView(APIView):
                              else "Microsoft mail search is unavailable."}, status=502)
         counts = dict(Counter(x["category"] for x in findings))
         return Response({
-            "property": {"id": profile["profile_id"], "name": profile["name"]},
+            "property": {"id": profile["profile_id"], "name": profile["name"],
+                         "pm_property_id": profile.get("pm_property_id")},
             "mailbox": account["label"], "days": days, "scanned": scanned,
             "findings": findings, "counts": counts, "partial": more,
             "search_limit": MAX_MESSAGES,
