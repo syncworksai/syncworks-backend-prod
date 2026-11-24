@@ -47,11 +47,20 @@ class PMWorkspaceSerializer(serializers.ModelSerializer):
 class PMPropertySerializer(serializers.ModelSerializer):
     available_units = serializers.SerializerMethodField()
     total_units = serializers.SerializerMethodField()
+    photo_url = serializers.SerializerMethodField()
 
     class Meta:
         model = PMProperty
         fields = "__all__"
-        read_only_fields = ("id", "workspace", "created_by", "created_at", "updated_at", "available_units", "total_units")
+        read_only_fields = ("id", "workspace", "created_by", "created_at", "updated_at", "available_units", "total_units", "photo_url")
+
+    def get_photo_url(self, obj):
+        doc = obj.documents.filter(category="OTHER", checklist_key="PROPERTY_COVER_PHOTO",
+                                   status="ACTIVE").order_by("-id").first()
+        if not doc or not doc.document:
+            return ""
+        request = self.context.get("request")
+        return request.build_absolute_uri(doc.document.url) if request else doc.document.url
 
     def validate_state(self, value):
         return str(value or "").strip().upper()[:2]
