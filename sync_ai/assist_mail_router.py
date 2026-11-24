@@ -25,6 +25,8 @@ SUPPORT = ("support ticket", "trouble logging in", "can't log in", "cannot log i
 BUSINESS = ("syncworks", "invoice", "new service request", "customer booking",
             "technician", "dispatch", "service ticket", "business account")
 FINANCE = ("mortgage", "credit card statement", "autopay", "bill due",
+           "debt collector", "debt collection", "settlement offer", "past due balance",
+           "monthly payments", "your balances", "avoid default",
            "payment reminder", "bank statement", "income payment",
            "payroll", "deposit received", "loan statement", "insurance premium",
            "payment past due", "student loan", "account past due")
@@ -34,8 +36,13 @@ MARKETS = ("stock market", "market outlook", "trading signals", "futures",
 GROWTH = ("upwork", "proposal accepted", "freelance", "business lead",
           "new lead", "marketing campaign", "client inquiry", "job posting")
 PROMOTIONS = ("unsubscribe", "black friday", "half off", "50% off",
+              "offer is just for you", "redeem your offer", "redeem offer",
+              "your exclusive offer", "promo", "coupon", "save today",
               "shop now", "discount code", "limited-time sale", "flash sale",
               "deal ends", "special offer")
+DEBT_SENDERS = ("pacificdebt", "nationaldebtrelief", "freedomdebtrelief",
+                "debtsettlement", "collections.")
+PROMO_SENDERS = ("sionicdriven", "retailnewsletter", "deals.", "promotions.")
 HIGH = ("urgent", "action required", "deadline today", "final notice",
         "payment overdue", "failed inspection", "account locked",
         "security alert", "unusual sign-in")
@@ -81,7 +88,9 @@ def route(message):
         ("housingauthority", "montgomeryhousing", "section8", "propertymanager"))
     explicit_support = matches(context, SUPPORT)
     explicit_markets = matches(context, MARKETS) or matches(sender.lower(), ("robinhood.", "topstep.", "fidelity.", "schwab."))
-    explicit_finance = matches(context, FINANCE) or matches(sender.lower(), ("nelnet.", "experian.", "capitalone."))
+    debt_related = matches(context, ("debt collector", "debt collection", "debt settlement",
+                                     "past due balance", "avoid default")) or matches(sender.lower(), DEBT_SENDERS)
+    explicit_finance = debt_related or matches(context, FINANCE) or matches(sender.lower(), ("nelnet.", "experian.", "capitalone."))
     candidates = []
     if property_evidence: candidates.append("PROPERTY")
     if explicit_support: candidates.append("SUPPORT")
@@ -92,7 +101,11 @@ def route(message):
     candidates = list(dict.fromkeys(candidates))
     protected = matches(context, PROTECTED)
     priority = "HIGH" if matches(context, HIGH) or protected else "NORMAL"
-    promotional = matches(context, PROMOTIONS)
+    promotional = matches(context, PROMOTIONS) or matches(sender.lower(), PROMO_SENDERS)
+    # Broad generic matches are common in marketing emails. Do not allow a
+    # promotion to masquerade as customer-support or Growth work.
+    if promotional and not property_evidence and not explicit_support and not explicit_finance and not explicit_markets:
+        candidates = []
     if len(candidates) > 1:
         # Conflicting labels must be resolved by a human, not guessed.
         category, confidence, reason = "REVIEW", "LOW", "Multiple possible work areas"
@@ -104,6 +117,8 @@ def route(message):
         category, confidence, reason = "REVIEW", "LOW", "No reliable specialist match"
     if protected:
         category, confidence, reason = "REVIEW", "LOW", "Protected or sensitive correspondence"
+    if debt_related and category == "FINANCE":
+        priority, reason = "HIGH", "Debt correspondence requires financial review"
     # No mailbox writes are currently enabled, even for high-confidence items.
     filing = "KEEP_IN_INBOX" if protected or priority == "HIGH" or category == "REVIEW" else "SUGGEST_FOLDER"
     return {
