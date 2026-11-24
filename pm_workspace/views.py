@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from urllib.parse import urlencode
 from io import BytesIO
+from binascii import Error as Base64Error
+from base64 import b64encode, b64decode
+from django.core import signing
+from django.http import HttpResponse, Http404
+from rest_framework.permissions import AllowAny
 from PIL import Image, UnidentifiedImageError
 from django.core.files.base import ContentFile
 
@@ -115,6 +120,14 @@ class PMWorkspaceViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK if workspace else status.HTTP_201_CREATED)
 
 
+def property_cover_url(request, property_id, doc_id):
+    from django.urls import reverse
+    from urllib.parse import quote
+    signed = signing.TimestampSigner(salt="pm-property-cover-v1").sign(f"{property_id}:{doc_id}")
+    path = reverse("pm-properties-cover-photo-image", kwargs={"pk": property_id})
+    return request.build_absolute_uri(path + "?sig=" + quote(signed, safe=""))
+
+
 class PMPropertyViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = PMPropertySerializer
@@ -128,7 +141,11 @@ class PMPropertyViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="cover-photo")
     def cover_photo(self, request, pk=None):
-        """Owner-scoped, bounded image upload using existing PM document storage."""
+        """Owner-only photo upload. Compressed bytes persist in the PM database.
+
+        This avoids relying on temporary Render media files until dedicated
+        private object storage is configured for the full-scale product.
+        """
         prop = self.get_object()
         incoming = request.FILES.get("photo")
         if not incoming:
@@ -141,30 +158,59 @@ class PMPropertyViewSet(viewsets.ModelViewSet):
             img.verify()
             img = Image.open(BytesIO(raw))
             if img.format not in ("JPEG", "PNG", "WEBP") or img.width * img.height > 24000000:
-                raise ValidationError({"photo": "Use a JPEG, PNG, or WebP up to 24 megapixels."})
+                raise ValidationError({"photo": "Use a JPEG, PNG or WebP up to 24 megapixels."})
             from PIL import ImageOps
             img = ImageOps.exif_transpose(img).convert("RGB")
-            img.thumbnail((1600, 1200), Image.Resampling.LANCZOS)
+            img.thumbnail((960, 720), Image.Resampling.LANCZOS)
             output = BytesIO()
-            img.save(output, format="JPEG", quality=82, optimize=True)
+            img.save(output, format="JPEG", quality=77, optimize=True)
+            if len(output.getvalue()) > 450000:
+                raise ValidationError({"photo": "Photo could not be reduced below the safe thumbnail size."})
         except (UnidentifiedImageError, OSError, ValueError):
             raise ValidationError({"photo": "This is not a valid image."})
-        previous = PMPropertyDocument.objects.filter(
-            workspace=prop.workspace, property=prop, category="OTHER",
-            checklist_key="PROPERTY_COVER_PHOTO", status="ACTIVE"
-        )
-        # Preserve older uploads as archival records; no cross-property access.
         with transaction.atomic():
-            previous.update(status="ARCHIVED")
+            PMPropertyDocument.objects.filter(
+                workspace=prop.workspace, property=prop, category="OTHER",
+                checklist_key="PROPERTY_COVER_PHOTO", status="ACTIVE"
+            ).update(status="ARCHIVED")
             doc = PMPropertyDocument.objects.create(
                 workspace=prop.workspace, property=prop, category="OTHER",
                 title="Property cover photo", checklist_key="PROPERTY_COVER_PHOTO",
                 status="ACTIVE", created_by=request.user,
-                document=ContentFile(output.getvalue(), name=f"property-{prop.pk}-cover.jpg"),
+                extracted_terms={
+                    "image_b64": b64encode(output.getvalue()).decode("ascii"),
+                    "content_type": "image/jpeg", "storage": "pm_database_thumbnail_v1"
+                },
             )
-        return Response({"photo_url": request.build_absolute_uri(doc.document.url),
+        return Response({"photo_url": property_cover_url(request, prop.pk, doc.pk),
                          "property_id": prop.pk, "document_id": doc.pk,
-                         "notice": "Property photo uploaded."}, status=201)
+                         "notice": "Property thumbnail stored in your portfolio."}, status=201)
+
+    @action(detail=True, methods=["get"], url_path="cover-photo/image",
+            permission_classes=[AllowAny], authentication_classes=[])
+    def cover_photo_image(self, request, pk=None):
+        """Short-lived signed image URL; only the photo is exposed, never PM records."""
+        token = str(request.query_params.get("sig") or "")
+        try:
+            value = signing.TimestampSigner(salt="pm-property-cover-v1").unsign(token, max_age=3600)
+            item_id, document_id = value.split(":", 1)
+            if item_id != str(pk):
+                raise ValueError("Wrong property")
+            doc = PMPropertyDocument.objects.only(
+                "id", "extracted_terms"
+            ).get(pk=document_id, property_id=pk, checklist_key="PROPERTY_COVER_PHOTO",
+                  status="ACTIVE", category="OTHER")
+            content = b64decode((doc.extracted_terms or {}).get("image_b64") or "", validate=True)
+            if not content or len(content) > 450000:
+                raise ValueError("Invalid thumbnail")
+        except (ValueError, Base64Error, signing.BadSignature, PMPropertyDocument.DoesNotExist):
+            raise Http404()
+        # Invalid base64 is treated as unavailable, not as a server traceback.
+        response = HttpResponse(content, content_type="image/jpeg")
+        response["Cache-Control"] = "private, max-age=1800"
+        response["X-Content-Type-Options"] = "nosniff"
+        response["Referrer-Policy"] = "no-referrer"
+        return response
 
 
 class PMProjectViewSet(viewsets.ModelViewSet):
