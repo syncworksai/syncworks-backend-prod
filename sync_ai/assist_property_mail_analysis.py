@@ -73,7 +73,7 @@ MAX_FINDINGS = 30
 
 def _signal(value, choices):
     # Whole-word/phrase matching avoids matching "lease" inside "please".
-    return any(re.search(r"(?<!\\w)" + re.escape(x) + r"(?!\\w)", value)
+    return any(re.search(r"(?<!\w)" + re.escape(x) + r"(?!\w)", value)
                for x in choices)
 
 
