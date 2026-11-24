@@ -1,3 +1,4 @@
+from .freelance_synthetic_preview import FreelanceSyntheticPreviewView
 from .assist_property_portfolio import PropertyLinkAllView, PropertyPortfolioBriefView
 from .freelance_inline_test_views import FreelanceSyntheticInlineTestView
 from .freelance_pilot_views import FreelancePilotAccessView, FreelanceProjectsView, FreelanceProjectDetailView, FreelanceCSVProcessView, FreelanceJarvisPlanView
@@ -57,6 +58,7 @@ from .workflow_intake import SyncWorkflowIntakePreviewView, SyncWorkflowPMWorkOr
 from .voice_views import SyncVoiceStatusView, SyncVoiceSynthesizeView
 
 urlpatterns = [
+    path('freelance/pilot/synthetic-jobs/<uuid:job_id>/preview/', FreelanceSyntheticPreviewView.as_view(), name='freelance-synthetic-preview'),
     path('freelance/pilot/synthetic-jobs/<uuid:job_id>/run-test/', FreelanceSyntheticInlineTestView.as_view(), name='freelance-synthetic-inline-test'),
     path("freelance/pilot/business-ledger/", FreelanceBusinessLedgerView.as_view(), name="freelance-business-ledger"),
     path("freelance/pilot/business-ledger/<uuid:record_id>/", FreelanceBusinessRecordView.as_view(), name="freelance-business-record"),

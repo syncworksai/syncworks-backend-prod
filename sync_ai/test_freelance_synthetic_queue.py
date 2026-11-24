@@ -53,6 +53,29 @@ class FreelanceSyntheticQueueTests(TestCase):
         self.assertEqual(self.client.get(ROOT + job_id + "/").status_code, 403)
         self.assertEqual(self.client.get(ROOT + job_id + "/download/").status_code, 403)
 
+    def test_preview_requires_processed_owner_result_and_validates_quality(self):
+        self.client.force_authenticate(user=self.founder)
+        resp = self.client.post(ROOT, {"row_count": 100, "seed": 42, "consent_synthetic_only": True}, format="json")
+        self.assertEqual(resp.status_code, 201)
+        key = resp.data["job"]["id"]
+        url = ROOT + key + "/preview/"
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertEqual(run_batch(limit=1), ["REVIEW"])
+        preview = self.client.get(url)
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertTrue(preview.data["all_passed"])
+        self.assertEqual(preview.data["total_rows"], 91)
+        self.assertEqual(preview.data["report"]["duplicates_removed"], 9)
+        self.assertEqual(len(preview.data["preview_rows"]), 8)
+        self.assertEqual(preview.data["columns"], ["record_id", "name", "email", "amount"])
+        self.client.force_authenticate(user=self.other)
+        self.assertEqual(self.client.get(url).status_code, 403)
+        self.client.force_authenticate(user=self.founder)
+        bad = FreelanceSyntheticJob.objects.get(pk=key)
+        bad.result = {**bad.result, "output_sha256": "0" * 64}
+        bad.save(update_fields=["result"])
+        self.assertEqual(self.client.get(url).status_code, 409)
+
     def test_targeted_worker_only_processes_specified_job(self):
         self.client.force_authenticate(user=self.founder)
         one = self.client.post(ROOT, {"row_count": 100, "seed": 42, "consent_synthetic_only": True}, format="json")
