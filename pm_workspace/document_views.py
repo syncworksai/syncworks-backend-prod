@@ -58,7 +58,7 @@ class PMPropertyDocumentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         workspace = requested_workspace(self.request)
-        qs = PMPropertyDocument.objects.filter(workspace=workspace).select_related("property", "tenant", "lease", "property_owner")
+        qs = PMPropertyDocument.objects.filter(workspace=workspace).exclude(checklist_key="PROPERTY_COVER_PHOTO").select_related("property", "tenant", "lease", "property_owner")
         property_id = self.request.query_params.get("property_id")
         tenant_id = self.request.query_params.get("tenant_id")
         category = str(self.request.query_params.get("category") or "").upper()
