@@ -1,3 +1,4 @@
+from .assist_property_portfolio import PropertyLinkAllView, PropertyPortfolioBriefView
 from .freelance_inline_test_views import FreelanceSyntheticInlineTestView
 from .freelance_pilot_views import FreelancePilotAccessView, FreelanceProjectsView, FreelanceProjectDetailView, FreelanceCSVProcessView, FreelanceJarvisPlanView
 from .freelance_synthetic_views import FreelanceSyntheticJobsView, FreelanceSyntheticJobView, FreelanceSyntheticDownloadView
@@ -69,6 +70,8 @@ urlpatterns = [
     path('freelance/pilot/jarvis-plan/', FreelanceJarvisPlanView.as_view(), name='freelance-pilot-jarvis-plan'),
     path("assist/pilot/mailboxes/", MultiMailboxView.as_view(), name="assist-multi-mailboxes"),
     path("assist/pilot/mailboxes/<uuid:account_id>/route-review/", AssistMailRoutingView.as_view(), name="assist-mail-route-review"),
+    path("assist/pilot/mailboxes/<uuid:account_id>/property-link-all/", PropertyLinkAllView.as_view(), name="assist-property-link-all"),
+    path("assist/pilot/property-portfolio/brief/", PropertyPortfolioBriefView.as_view(), name="assist-property-portfolio-brief"),
     path("assist/pilot/mailboxes/<uuid:account_id>/property-profiles/", PropertySearchProfilesView.as_view(), name="assist-property-search-profiles"),
     path("assist/pilot/pm-properties/<int:property_id>/correspondence-reports/", PropertyCorrespondenceReportView.as_view(), name="assist-property-correspondence-reports"),
     path("assist/pilot/mailboxes/<uuid:account_id>/property-history/", PropertyHistoricalSearchView.as_view(), name="assist-property-history"),
