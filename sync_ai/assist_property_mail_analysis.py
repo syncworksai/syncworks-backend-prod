@@ -8,7 +8,6 @@ The analysis is deterministic and costs no language-model tokens.
 import re
 import logging
 from collections import Counter
-from datetime import datetime, timezone as dt_timezone
 
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
@@ -26,12 +25,12 @@ SCAN_ACTION = "sync_assist.property.mail_scan"
 CATEGORIES = {
     "INSPECTION": ("inspection", "reinspection", "re-inspection", "inspector",
                    "failed inspection", "pass inspection", "housing quality",
-                   "hqS", "smoke detector", "certificate of occupancy"),
-    "PAYMENT": ("hap", "housing assistance payment", "rent payment",
+                   "hqs", "smoke detector", "certificate of occupancy"),
+    "PAYMENT": ("housing assistance payment", "rent payment",
                 "housing payment", "missing funds", "payment adjustment",
                 "abatement", "abated", "reimbursement", "rent ledger",
                 "disbursement", "payment received", "deposit", "past due"),
-    "DOCUMENTS": ("lease agreement", "rental agreement", "coa", "coo",
+    "DOCUMENTS": ("lease agreement", "rental agreement", "certificate of occupancy",
                   "inspection report", "statement of account", "ledger request",
                   "document request", "notice of abatement"),
     "TENANT": ("tenant", "section 8", "voucher", "property management",
@@ -67,6 +66,8 @@ def classify(message):
     # Ignore marketing messages unless they have a genuine property-management signal.
     category = next((cat for cat, terms in CATEGORIES.items()
                      if _signal(content, terms)), None)
+    if not category and re.search(r"\\b(hap|mha|hqs|coo|section\\s*8)\\b", content):
+        category = "PAYMENT" if re.search(r"\\bhap\\b", content) else "TENANT"
     property_context = category is not None or _signal(sender_l, SENDER_HINTS)
     if _signal(content, SALES) and not category:
         return None
