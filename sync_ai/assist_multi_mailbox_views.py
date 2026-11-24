@@ -6,6 +6,8 @@ without a verified billing integration.
 """
 import hashlib
 import json
+import logging
+import re
 import os
 import secrets
 from datetime import timedelta
@@ -38,6 +40,7 @@ CATEGORIES = {"PERSONAL", "PROPERTY", "SYNCWORKS", "FINANCE", "OTHER"}
 PRIORITIES = {"CRITICAL", "HIGH", "NORMAL", "LOW"}
 SITE = "https://syncworksapp.com"
 STATE_SALT = "sync-assist-multi-mailbox-oauth-v1"
+logger = logging.getLogger(__name__)
 
 def settings():
     cid = os.getenv("SYNC_ASSIST_MS_CLIENT_ID", "").strip()
@@ -193,54 +196,125 @@ class MultiMailboxConnect(APIView):
         return Response({"authorization_url":url})
 
 class MultiMailboxCallback(APIView):
-    authentication_classes=[]
-    permission_classes=[AllowAny]
-    def get(self,request):
-        def finish(code):
-            return HttpResponseRedirect(SITE+"/sync/assist/email?mailbox_connection="+code)
-        cfg=settings()
-        if cfg is None or request.query_params.get("error") or not request.query_params.get("code"):
-            return finish("error")
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        # Never expose Microsoft authorization codes, tokens, or secrets in
+        # redirects or application logs. Only stable error categories are shown.
+        def finish(stage):
+            return HttpResponseRedirect(
+                SITE + "/sync/assist/email?mailbox_connection=" + stage
+            )
+
+        cfg = settings()
+        if cfg is None:
+            return finish("config_missing")
+        if request.query_params.get("error"):
+            microsoft_error = str(request.query_params.get("error") or "").lower()
+            logger.warning("Multi-mailbox OAuth rejected by Microsoft: %s",
+                           re.sub(r"[^a-z_]", "", microsoft_error)[:50])
+            if microsoft_error == "access_denied":
+                return finish("consent_denied")
+            return finish("microsoft_rejected")
+        if not request.query_params.get("code"):
+            return finish("authorization_missing")
+
+        stage = "state_invalid"
         try:
-            state=signing.loads(request.query_params.get("state",""),salt=STATE_SALT,max_age=600)
-            user=get_user_model().objects.get(pk=state["user_id"],is_active=True)
-            if not _pilot(user):return finish("unauthorized")
-            hashed=hashlib.sha256(state["nonce"].encode()).hexdigest()
+            state = signing.loads(request.query_params.get("state", ""),
+                                  salt=STATE_SALT, max_age=600)
+            user = get_user_model().objects.get(pk=state["user_id"], is_active=True)
+            if not _pilot(user):
+                return finish("unauthorized")
+
+            stage = "state_expired"
+            digest = hashlib.sha256(state["nonce"].encode()).hexdigest()
             with transaction.atomic():
                 get_user_model().objects.select_for_update().get(pk=user.pk)
-                started=AuditLog.objects.filter(actor=user,action=START,metadata__nonce_hash=hashed,
+                started = AuditLog.objects.filter(
+                    actor=user, action=START, metadata__nonce_hash=digest,
                     created_at__gte=timezone.now()-timedelta(minutes=10)).exists()
-                used=AuditLog.objects.filter(actor=user,action=CONSUMED,metadata__nonce_hash=hashed).exists()
-                if not started or used:return finish("expired")
-                AuditLog.objects.create(actor=user,action=CONSUMED,metadata={"nonce_hash":hashed})
-            response=requests.post(AUTH+"/token",data={
-                "grant_type":"authorization_code","code":request.query_params["code"],
-                "client_id":cfg[0],"client_secret":cfg[1],"redirect_uri":cfg[2],
-                "scope":SCOPES},timeout=20)
-            if response.status_code!=200:return finish("error")
-            token=response.json()
+                used = AuditLog.objects.filter(
+                    actor=user, action=CONSUMED, metadata__nonce_hash=digest).exists()
+                if not started or used:
+                    return finish("state_expired")
+                AuditLog.objects.create(actor=user, action=CONSUMED,
+                                        metadata={"nonce_hash":digest})
+
+            stage = "token_exchange_failed"
+            response = requests.post(AUTH + "/token", data={
+                "grant_type":"authorization_code",
+                "code":request.query_params["code"],
+                "client_id":cfg[0],
+                "client_secret":cfg[1],
+                "redirect_uri":cfg[2],
+                "scope":SCOPES,
+            }, timeout=20)
+            if response.status_code != 200:
+                # Microsoft may provide AADSTS numeric codes. Only the number
+                # is logged; full descriptions may contain account information.
+                microsoft_code = re.search(r"AADSTS(\\d{5,8})",
+                    str(response.text or "")[:5000])
+                logger.warning("Multi-mailbox token exchange failed: http=%s aadsts=%s",
+                               response.status_code,
+                               microsoft_code.group(1) if microsoft_code else "unknown")
+                return finish("token_exchange_failed")
+            token = response.json()
             if not token.get("access_token") or not token.get("refresh_token"):
-                return finish("error")
-            profile=requests.get(GRAPH+"/me",headers={"Authorization":"Bearer "+token["access_token"]},timeout=15)
-            if profile.status_code!=200:return finish("error")
-            p=profile.json()
-            email=str(p.get("mail") or p.get("userPrincipalName") or "").strip().lower()
-            if not email or "@" not in email or len(email)>254:return finish("error")
+                return finish("token_incomplete")
+
+            stage = "profile_failed"
+            profile = requests.get(GRAPH + "/me", headers={
+                "Authorization":"Bearer " + token["access_token"]
+            }, timeout=15)
+            if profile.status_code != 200:
+                logger.warning("Multi-mailbox profile lookup failed: http=%s",
+                               profile.status_code)
+                return finish("profile_failed")
+            account = profile.json()
+            email = str(account.get("mail") or account.get("userPrincipalName") or "").strip().lower()
+            if not email or "@" not in email or len(email) > 254:
+                return finish("account_missing")
+
+            stage = "save_failed"
             with transaction.atomic():
                 get_user_model().objects.select_for_update().get(pk=user.pk)
-                if len(snapshot(user))>=MAX_PILOT_MAILBOXES:return finish("limit")
-                old=next((v for v in snapshot(user) if v["email"].lower()==email),None)
-                account_id=old["account_id"] if old else str(uuid4())
-                AuditLog.objects.create(actor=user,action=EVENT,metadata={
-                    "account_id":account_id,"email":email,"label":state["label"][:50],
-                    "category":state["category"],"priority":state["priority"],
-                    "encrypted":encrypt(cfg,{"access_token":token["access_token"],
+                existing = snapshot(user)
+                old = next((v for v in existing if v["email"].lower() == email), None)
+                if len(existing) >= MAX_PILOT_MAILBOXES and not old:
+                    return finish("limit")
+                account_id = old["account_id"] if old else str(uuid4())
+                AuditLog.objects.create(actor=user, action=EVENT, metadata={
+                    "account_id":account_id,
+                    "email":email,
+                    "label":str(state["label"])[:50],
+                    "category":state["category"],
+                    "priority":state["priority"],
+                    "encrypted":encrypt(cfg, {
+                        "access_token":token["access_token"],
                         "refresh_token":token["refresh_token"],
-                        "expires_at":timezone.now().timestamp()+int(token.get("expires_in",3600))}),
-                    "provider":"microsoft_graph","encrypted_at_rest":True})
+                        "expires_at":timezone.now().timestamp() + int(token.get("expires_in",3600)),
+                    }),
+                    "provider":"microsoft_graph",
+                    "encrypted_at_rest":True,
+                })
             return finish("connected")
-        except (signing.BadSignature,ValueError,KeyError,TypeError,requests.RequestException,get_user_model().DoesNotExist):
-            return finish("error")
+        except signing.SignatureExpired:
+            return finish("state_expired")
+        except (signing.BadSignature, KeyError, TypeError,
+                get_user_model().DoesNotExist):
+            logger.warning("Multi-mailbox callback invalid state or user")
+            return finish("state_invalid")
+        except requests.Timeout:
+            return finish("provider_timeout")
+        except requests.RequestException:
+            return finish("provider_unavailable")
+        except (ValueError, json.JSONDecodeError):
+            return finish(stage)
+        except Exception:
+            logger.exception("Multi-mailbox OAuth callback failed at stage=%s", stage)
+            return finish(stage)
 
 class MultiMailboxInbox(APIView):
     permission_classes=[IsAuthenticated]
