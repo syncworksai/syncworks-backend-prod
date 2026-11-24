@@ -53,5 +53,12 @@ if [[ "${SYNC_ASSIST_SARAH_SCAN_ENABLED:-false}" == "true" ]]; then
   python manage.py sarah_property_mail_scan || echo "Sarah mailbox review skipped after an error."
 fi
 
+# Optional bounded freelance synthetic test. Target UUID is mandatory and claim
+# scope cannot fall back to another queued job. Zero model/provider calls.
+# Keep this separate from the primary Sync Assist task execution.
+if [[ "${FREELANCE_SYNTHETIC_WORKER_ENABLED:-false}" == "true" && -n "${FREELANCE_SYNTHETIC_PILOT_JOB_ID:-}" ]]; then
+  python manage.py freelance_synthetic_worker --once --max-jobs 1 --job-id "$FREELANCE_SYNTHETIC_PILOT_JOB_ID"
+fi
+
 # Run at most one internally authorized step; no external sends or searches.
 exec python manage.py sync_assist_queue_worker --once --scheduled --max-jobs 1
