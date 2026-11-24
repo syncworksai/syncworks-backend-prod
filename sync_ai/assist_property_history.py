@@ -276,12 +276,32 @@ class PropertyCorrespondenceReportView(APIView):
             for identifier in ids:
                 m = graph(request.user, cfg, mailbox_id,
                           "/me/messages/" + quote(identifier, safe=""),
-                          params={"$select": "id,subject,from,receivedDateTime,bodyPreview,webLink"})
+                          params={"$select": "id,subject,from,receivedDateTime,bodyPreview,webLink,hasAttachments"})
                 matched = matches(m, profile)
                 if not matched:
                     return Response({"detail": "A selected email no longer matches the property search."}, status=409)
                 sender = str(((m.get("from") or {}).get("emailAddress") or {}).get("address") or "")
                 finding = classify(m)
+                # Index attachment metadata for review; never download or interpret
+                # financial documents without explicit user approval.
+                attachments = []
+                attachments_status = "NO_ATTACHMENTS"
+                if m.get("hasAttachments"):
+                    try:
+                        att = graph(request.user, cfg, mailbox_id,
+                            "/me/messages/" + quote(identifier, safe="") + "/attachments",
+                            params={"$top": 25, "$select": "id,name,size,contentType,isInline"})
+                        for entry in (att.get("value") or [])[:25]:
+                            if not entry.get("isInline"):
+                                attachments.append({
+                                    "name": str(entry.get("name") or "")[:180],
+                                    "content_type": str(entry.get("contentType") or "")[:100],
+                                    "size_bytes": entry.get("size"),
+                                    "status": "NOT_DOWNLOADED_UNVERIFIED",
+                                })
+                        attachments_status = "METADATA_ONLY"
+                    except (requests.RequestException, ValueError):
+                        attachments_status = "METADATA_UNAVAILABLE"
                 references.append({
                     "message_id": m.get("id"),
                     "subject": str(m.get("subject") or "(No subject)")[:200],
@@ -289,6 +309,8 @@ class PropertyCorrespondenceReportView(APIView):
                     "received_at": m.get("receivedDateTime"),
                     "category": finding["category"] if finding else "REVIEW",
                     "matched_terms": matched[:10],
+                    "attachments": attachments,
+                    "attachments_status": attachments_status,
                     "outlook_url": m.get("webLink") if str(m.get("webLink") or "").startswith("https://outlook.") else None,
                     "status": "REVIEWED_EMAIL_REFERENCE_NOT_VERIFIED_PAYMENT",
                 })
