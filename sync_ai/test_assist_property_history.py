@@ -25,6 +25,17 @@ class PropertyHistoryMatchingTests(SimpleTestCase):
         self.assertEqual(matches(msg("Please respond"), profile), [])
         self.assertEqual(matches(msg("Lease agreement"), profile), ["lease"])
 
+    def test_rent_keyword_not_embedded_in_current(self):
+        profile = {"terms": ["rent"], "contacts": []}
+        self.assertEqual(matches(msg("Current withdrawal", "Your current balance"), profile), [])
+        self.assertEqual(matches(msg("Rent ledger"), profile), ["rent"])
+
+    def test_sender_lookalike_not_trusted(self):
+        profile = {"terms": [], "contacts": ["housing@city.example"]}
+        self.assertEqual(matches(msg("Status", sender="housing@city.example.evil"), profile), [])
+        self.assertEqual(matches(msg("Inspection", sender="housing@city.example"), profile),
+                         ["contact:housing@city.example"])
+
     def test_generic_finance_unrelated_to_property(self):
         profile = {"terms": ["housing assistance", "inspection"], "contacts": []}
         self.assertEqual(matches(msg("Robinhood instant deposit"), profile), [])
