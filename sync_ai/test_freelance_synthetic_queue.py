@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
+from django.core.cache import cache
 from rest_framework.test import APIClient
 from user_accounts.models import FreelanceSyntheticJob
 from sync_ai.freelance_synthetic_queue import run_batch
@@ -8,6 +9,7 @@ ROOT = "/api/v1/sync-ai/freelance/pilot/synthetic-jobs/"
 
 class FreelanceSyntheticQueueTests(TestCase):
     def setUp(self):
+        cache.clear()  # Isolate owner-scoped rate limits between test cases.
         User = get_user_model()
         self.founder = User.objects.create_user(username="founder-synthetic", email="jacoblord7@outlook.com", password="x")
         self.founder.email_verified = True
@@ -65,6 +67,27 @@ class FreelanceSyntheticQueueTests(TestCase):
         self.assertEqual(FreelanceSyntheticJob.objects.get(pk=second).state, "REVIEW")
         self.assertEqual(run_batch(limit=1, target_job_id=UUID(second)), [])
         self.assertEqual(FreelanceSyntheticJob.objects.get(pk=first).attempts, 0)
+
+    def test_inline_one_job_requires_flag_consent_and_owner(self):
+        self.client.force_authenticate(user=self.founder)
+        created = self.client.post(ROOT, {"row_count": 100, "seed": 42, "consent_synthetic_only": True}, format="json")
+        self.assertEqual(created.status_code, 201)
+        jid = created.data["job"]["id"]
+        url = ROOT + jid + "/run-test/"
+        self.assertEqual(self.client.post(url, {"consent_synthetic_only": True}, format="json").status_code, 403)
+        with override_settings(FREELANCE_SYNTHETIC_INLINE_TEST_ENABLED=True):
+            self.assertEqual(self.client.post(url, {}, format="json").status_code, 400)
+            other = self.other
+            self.client.force_authenticate(user=other)
+            self.assertEqual(self.client.post(url, {"consent_synthetic_only": True}, format="json").status_code, 403)
+            self.client.force_authenticate(user=self.founder)
+            success = self.client.post(url, {"consent_synthetic_only": True}, format="json")
+            self.assertEqual(success.status_code, 200, success.data)
+            self.assertEqual(success.data["job"]["state"], "REVIEW")
+            self.assertEqual(success.data["job"]["result"]["ai_provider_cost_cents"], 0)
+            self.assertTrue(success.data["no_client_delivery"])
+            self.assertEqual(self.client.post(url, {"consent_synthetic_only": True}, format="json").status_code, 409)
+            self.assertEqual(FreelanceSyntheticJob.objects.get(pk=jid).attempts, 1)
 
     def test_cancel_before_worker_runs(self):
         self.client.force_authenticate(user=self.founder)
