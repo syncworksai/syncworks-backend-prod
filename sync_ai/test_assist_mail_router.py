@@ -53,6 +53,28 @@ class RoutingTests(SimpleTestCase):
             "Redeem your offer while it's here"))
         self.assertEqual(result["category"], "PERSONAL")
 
+    def test_paused_job_alert_goes_to_personal_filing_review(self):
+        item = route(msg("New remote job opportunity",
+                         "alerts@recruiter.example",
+                         "We are hiring for a remote contract position"))
+        self.assertEqual(item["category"], "PERSONAL")
+        self.assertEqual(item["filing_action"], "SUGGEST_FOLDER")
+
+    def test_active_matching_job_is_growth(self):
+        item = route(msg("New remote job opportunity",
+                         "alerts@recruiter.example",
+                         "Part-time remote virtual assistant needed"),
+                     {"job_search_active": True, "remote_only": True,
+                      "part_time_only": True, "keywords": ["virtual assistant"]})
+        self.assertEqual(item["category"], "GROWTH")
+
+    def test_job_application_status_never_archived(self):
+        item = route(msg("Your application status",
+                         "hiring@example.org",
+                         "Your application has advanced to an interview"))
+        self.assertEqual(item["category"], "REVIEW")
+        self.assertEqual(item["filing_action"], "KEEP_IN_INBOX")
+
     def test_security_alert_protected(self):
         result = route(msg("Security alert: unusual sign-in",
                            "security@example.org"))
