@@ -16,15 +16,17 @@ from .assist_pilot_views import _pilot
 ACTION = "sync_assist.team.config_updated"
 SLOTS = {
     "executive-female": {"name": "Sydney", "role": "CHIEF_OF_STAFF"},
-    "executive-male": {"name": "Scarlett", "role": "SALES_MANAGER"},
+    "executive-male": {"name": "Olivia", "role": "SALES_MANAGER"},
     "future-female": {"name": "Naomi", "role": "MARKETING_MANAGER"},
     "future-male": {"name": "Sophia", "role": "RESEARCH_ANALYST"},
-    "executive-assistant": {"name": "Executive Assistant", "role": "EXECUTIVE_ASSISTANT"},
-    "business-manager": {"name": "Business Operations", "role": "BUSINESS_MANAGER"},
-    "finance-manager": {"name": "Olivia", "role": "FINANCE_MANAGER"},
+    "executive-assistant": {"name": "Christy", "role": "EXECUTIVE_ASSISTANT"},
+    "business-manager": {"name": "Whitney", "role": "BUSINESS_MANAGER"},
+    "finance-manager": {"name": "Finance", "role": "FINANCE_MANAGER"},
     "property-manager": {"name": "Sarah", "role": "PROPERTY_MANAGER"},
     "customer-service": {"name": "Rebecca", "role": "CUSTOMER_SERVICE"},
     "personal-trainer": {"name": "Fitness Coach", "role": "PERSONAL_TRAINER"},
+    "technology-research": {"name": "Yasmine", "role": "TECHNOLOGY_RESEARCH"},
+    "quality-assurance": {"name": "Kylee", "role": "QUALITY_ASSURANCE"},
 }
 MAX_NAME_LENGTH = 32
 PHOTO_CHOICES = {
@@ -45,15 +47,17 @@ PHOTO_CHOICES = {
 }
 DEFAULT_PHOTOS = {
     "executive-female": "/jarvis-avatars/newvictoria.png",
-    "executive-male": "/jarvis-avatars/newscarlett.png",
+    "executive-male": "/jarvis-avatars/Charlotte.png",
     "future-female": "/jarvis-avatars/naomi.png",
     "future-male": "/jarvis-avatars/newsophia.png",
-    "executive-assistant": "/jarvis-avatars/victoria.jpeg",
-    "business-manager": "/jarvis-avatars/james.jpeg",
+    "executive-assistant": "/jarvis-avatars/christy2.png",
+    "business-manager": "/jarvis-avatars/Elizabeth.png",
     "finance-manager": "/jarvis-avatars/Charlotte.png",
     "property-manager": "/jarvis-avatars/Sarah.png",
     "customer-service": "/jarvis-avatars/customersupport1.png",
     "personal-trainer": "/jarvis-avatars/james.jpeg",
+    "technology-research": "/jarvis-avatars/yasmine.png",
+    "quality-assurance": "/jarvis-avatars/kylee.png",
 }
 
 # These roles presently have bounded, auditable internal task handlers.
@@ -85,6 +89,16 @@ def team_snapshot(user):
             items[key]["name"] = SLOTS[key]["name"]
         if items[key]["photo"] == previous["old_photo"]:
             items[key]["photo"] = DEFAULT_PHOTOS[key]
+    for key, old_names, old_photos in [
+        ("executive-male", {"Scarlett"}, {"/jarvis-avatars/newscarlett.png", "/jarvis-avatars/Scarlett.png"}),
+        ("finance-manager", {"Olivia", "Charlotte"}, set()),
+        ("executive-assistant", {"Executive Assistant"}, {"/jarvis-avatars/victoria.jpeg"}),
+        ("business-manager", {"Business Operations"}, {"/jarvis-avatars/james.jpeg"}),
+    ]:
+        if items[key]["name"] in old_names:
+            items[key]["name"] = SLOTS[key]["name"]
+        if items[key]["photo"] in old_photos:
+            items[key]["photo"] = DEFAULT_PHOTOS[key]
     return {
         "employees": [
             {**item, "execution_status": "internal_pilot" if item["role"] in EXECUTABLE_ROLES else "not_implemented"}
@@ -110,7 +124,7 @@ class SyncAssistTeamView(APIView):
             return Response({"detail": "Private pilot only."}, status=403)
         submitted = request.data.get("employees")
         if not isinstance(submitted, list) or len(submitted) != len(SLOTS):
-            return Response({"detail": "Provide exactly the ten fixed employee role slots."}, status=400)
+            return Response({"detail": "Provide all current fixed employee role slots."}, status=400)
         overrides = {}
         for row in submitted:
             if not isinstance(row, dict) or set(row.keys()) not in ({"id", "name", "role"}, {"id", "name", "role", "photo"}):
