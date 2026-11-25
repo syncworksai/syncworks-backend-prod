@@ -101,15 +101,16 @@ def _personal_requests_state(user):
 
 def _finance_state(user, today):
     accounts = FinanceAccount.objects.filter(user=user, is_hidden=False)
-    obligations = FinanceObligation.objects.filter(user=user, active=True, next_due_date__isnull=False, next_due_date__lte=today + timedelta(days=7)).order_by("next_due_date")[:10]
-    liabilities = FinanceLiability.objects.filter(user=user, next_payment_date__isnull=False, next_payment_date__lte=today + timedelta(days=7)).order_by("next_payment_date")[:10]
+    obligations = FinanceObligation.objects.filter(user=user, active=True, next_due_date__isnull=False, next_due_date__lte=today + timedelta(days=30)).order_by("next_due_date")[:100]
+    liabilities = FinanceLiability.objects.filter(user=user, next_payment_date__isnull=False, next_payment_date__lte=today + timedelta(days=30)).order_by("next_payment_date")[:100]
     checking = [{"name": row.name, "balance": _decimal(row.current_balance), "available": _decimal(row.available_balance), "mask": row.mask} for row in accounts.filter(kind=FinanceAccount.Kind.CHECKING)[:5]]
     credit_cards = [{"name": row.name, "balance": _decimal(row.current_balance), "limit": _decimal(row.credit_limit), "mask": row.mask} for row in accounts.filter(kind=FinanceAccount.Kind.CREDIT_CARD)[:10]]
-    due = [{"type": "obligation", "name": row.name, "due_date": row.next_due_date.isoformat(), "amount": _decimal(row.expected_amount or row.minimum_amount), "autopay": row.autopay} for row in obligations]
-    due.extend({"type": "liability", "name": row.name, "due_date": row.next_payment_date.isoformat(), "amount": _decimal(row.next_payment_amount or row.minimum_payment), "autopay": False} for row in liabilities)
+    due = [{"type": "obligation", "id": row.pk, "name": row.name, "due_date": row.next_due_date.isoformat(), "amount": _decimal(row.expected_amount or row.minimum_amount), "autopay": row.autopay} for row in obligations]
+    due.extend({"type": "liability", "id": row.pk, "name": row.name, "due_date": row.next_payment_date.isoformat(), "amount": _decimal(row.next_payment_amount or row.minimum_payment), "autopay": False} for row in liabilities)
     due.sort(key=lambda item: item.get("due_date") or "9999-12-31")
-    total = sum(Decimal(str(item["amount"])) for item in due if item.get("amount") is not None)
-    return {"available": accounts.exists() or bool(due), "checking": checking, "credit_cards": credit_cards, "due_next_7_days": due[:12], "known_due_total_next_7_days": float(total), "url": "/customer/finance"}
+    week = [item for item in due if item["due_date"] <= (today + timedelta(days=7)).isoformat()]
+    total = sum(Decimal(str(item["amount"])) for item in week if item.get("amount") is not None)
+    return {"available": accounts.exists() or bool(due), "checking": checking, "credit_cards": credit_cards, "due_next_7_days": week[:100], "due_next_30_days": due, "coverage": "Recorded due dates only; obligations and liabilities may overlap; no payment verification", "known_due_total_next_7_days": float(total), "url": "/customer/finance"}
 
 
 def _business_state(user):
