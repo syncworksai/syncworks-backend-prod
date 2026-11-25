@@ -132,8 +132,8 @@ class JarvisChiefBriefingView(APIView):
             {"key":"cases","title":"Unresolved issues","headline":f"{len(open_cases)} unresolved case files ({len(priority_cases)} high priority)","items":[
                 {"title":x["title"],"source":"owner_entered","category":x["category"],"next_action":x["next_step"] or "Review case"}
                 for x in open_cases[:3]],"scope":"Cases manually entered or updated by account owner"},
-            {"key":"delegation","title":"AI assignments awaiting review","headline":f"{len(pending_assignments)} tasks or tickets need owner review","items":[{"title":f"{x['role'].replace('_',' ').title()} · {x['kind'].lower()}"+(f" #{x['ticket_id']}" if x.get("ticket_id") else ""),"source":"owner_assigned","category":"BUSINESS","next_action":x["suggested_next_action"]} for x in pending_assignments[:3]],"scope":"Review-only owner assignments; no external actions"},
-            {"key":"portfolio","title":"Sarah · Property Management","headline":f"{len(pm_properties)} properties, {pm_totals.get('overdue_projects', 0)} overdue projects, {pm_totals.get('recorded_leases_ending_within_60_days', 0)} upcoming lease end dates","items":[
+            {"key":"delegation","title":"AI assignments awaiting review","headline":f"{len(pending_assignments)} tasks or tickets need owner review","items":[{"title":str(x.get("description") or x["role"].replace("_"," ").title())[:180]+(f" #{x['ticket_id']}" if x.get("ticket_id") else ""),"source":"owner_assigned","category":"BUSINESS","next_action":x["suggested_next_action"]} for x in pending_assignments[:3]],"scope":"Review-only owner assignments; no external actions"},
+            {"key":"portfolio","title":"Sarah · Property Management","headline":f"{len(pm_actions)} properties with recorded follow-up evidence","items":[
                 {"title":p["name"],"source":"property_management_and_reviewed_correspondence","category":"PROPERTY",
                  "next_action":f"Review {p['operations']['overdue_projects']} overdue projects, {p['operations']['recorded_leases_ending_within_60_days']} upcoming lease end dates, {p['correspondence_count']} reviewed email references"}
                 for p in pm_actions[:5]],"scope":"Owner-scoped PM project status, recorded lease dates and reviewed email references; no payment or inspection verification"},
@@ -164,7 +164,7 @@ class JarvisChiefBriefingView(APIView):
                    "status": "UNAVAILABLE"}
         try:
             state = build_daily_state(request.user)
-            context.update({k: state.get(k) for k in ("local_time", "local_date", "timezone", "weather", "calendar", "money", "business", "personal_requests", "needs_attention")})
+            context.update({k: state.get(k) for k in ("local_time", "local_date", "timezone", "weather", "calendar", "money", "business", "personal_requests", "needs_attention", "health")})
             context["status"] = "CONNECTED_RECORDS"
         except Exception:
             import logging
@@ -192,6 +192,21 @@ class JarvisChiefBriefingView(APIView):
             elif available and key == "personal_requests":
                 items = [{"title": row.get("title"), "next_action": row.get("status_label"), "source": "personal_requests", "category": "PERSONAL"} for row in data.get("items", [])[:5]]
             sections.append({"key": key, "title": title, "headline": summary if available else "Source unavailable or not configured", "items": items, "scope": "Existing account records; no external actions", "detail_url": link})
+        health = context.get("health") or {}
+        today_health = health.get("today") or {}
+        nutrition = health.get("nutrition") or {}
+        health_items = []
+        if health.get("available"):
+            workout = today_health.get("planned_workout")
+            if workout:
+                health_items.append({"title": "Planned workout", "next_action": str(workout)[:300], "source": "health_records"})
+            breakfast = nutrition.get("planned_breakfast")
+            if breakfast:
+                health_items.append({"title": "Nutrition plan", "next_action": str(breakfast)[:300], "source": "health_records"})
+        sections.append({"key": "health", "title": "Health and fitness",
+            "headline": "Review your recorded wellness plan" if health.get("available") else "Health information unavailable",
+            "items": health_items, "detail_url": "/customer/health",
+            "scope": "Recorded wellness plans only; no inferred readiness or medical advice."})
         prospects = prospect_snapshot(request.user)
         counts = prospects["counts"]
         actionable = {"RESEARCH", "READY_FOR_REVIEW", "CONTACTED_MANUALLY", "RESPONDED", "DEMO_BOOKED", "TRIAL"}
