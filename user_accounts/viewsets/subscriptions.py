@@ -1,6 +1,7 @@
 # backend/user_accounts/viewsets/subscriptions.py
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone as dt_timezone
 from typing import Any
@@ -111,10 +112,33 @@ def _norm_module_key(raw: str) -> str:
     return s
 
 
-def _stripe_price_for_product(product_id: str) -> str:
+APPROVED_MONTHLY_CENTS = {"SBO": 1999, "PM": 4999, "SALESOS": 999, "FINANCE": 999, "FITNESS": 999}
+
+def _price_matches(price, module_key):
+    recurring = price.get("recurring") or {}
+    return (
+        price.get("active") is True
+        and price.get("currency") == "usd"
+        and price.get("unit_amount") == APPROVED_MONTHLY_CENTS.get(module_key)
+        and recurring.get("interval") == "month"
+        and recurring.get("interval_count") == 1
+        and recurring.get("usage_type") == "licensed"
+    )
+
+def _checkout_tax_options(secret_key):
+    decision = os.environ.get("SYNCWORKS_SUBSCRIPTION_TAX_MODE", "pending").strip().lower()
+    if decision not in ("collect", "do_not_collect", "pending"):
+        raise ValueError("Invalid subscription tax configuration.")
+    if decision == "pending" and not secret_key.startswith(("sk_test_", "rk_test_")):
+        raise ValueError("Live subscription checkout is awaiting tax configuration.")
+    if decision == "collect":
+        return {"automatic_tax": {"enabled": True}, "customer_update": {"address": "auto"}, "billing_address_collection": "required"}
+    return {"automatic_tax": {"enabled": False}}
+
+def _stripe_price_for_product(product_id: str, module_key: str) -> str:
     """
     Checkout subscription requires a PRICE id, not a product id.
-    This finds the first active monthly recurring price for the product.
+    This finds an active monthly USD price matching the approved module amount.
     """
     prices = stripe.Price.list(product=product_id, active=True, limit=100)
     for p in prices.get("data", []):
@@ -125,7 +149,8 @@ def _stripe_price_for_product(product_id: str) -> str:
             continue
         if int(rec.get("interval_count") or 1) != 1:
             continue
-        return str(p.get("id"))
+        if _price_matches(p, module_key):
+            return str(p.get("id"))
 
     raise ValueError(f"No active monthly recurring price found for product {product_id}")
 
@@ -137,13 +162,15 @@ def _resolve_price_id_for_module(module_key: str) -> str:
 
     price_id = getattr(settings, md.env_price, "") or ""
     if price_id:
+        if not _price_matches(stripe.Price.retrieve(price_id), module_key):
+            raise ValueError("Configured Stripe price does not match approved monthly pricing.")
         return price_id
 
     product_id = getattr(settings, md.env_product, "") or ""
     if not product_id:
         raise ValueError(f"{md.env_product} not configured for module {module_key}")
 
-    return _stripe_price_for_product(product_id)
+    return _stripe_price_for_product(product_id, module_key)
 
 
 def _setup_path_for_modules(modules: list[str]) -> str:
@@ -228,6 +255,10 @@ class CreateSubscriptionCheckoutSessionAPIView(APIView):
             return Response({"detail": "PLATFORM_BASE_URL not configured."}, status=500)
 
         stripe.api_key = settings.STRIPE_SECRET_KEY
+        try:
+            tax_options = _checkout_tax_options(settings.STRIPE_SECRET_KEY)
+        except ValueError:
+            return Response({"detail": "Subscription checkout is not yet available. Billing configuration is pending."}, status=503)
 
         body: dict[str, Any] = request.data if isinstance(request.data, dict) else {}
         modules_in = body.get("modules") or []
@@ -291,6 +322,7 @@ class CreateSubscriptionCheckoutSessionAPIView(APIView):
 
         try:
             session = stripe.checkout.Session.create(
+                **tax_options,
                 mode="subscription",
                 customer=user_profile.stripe_customer_id,
                 line_items=line_items,
