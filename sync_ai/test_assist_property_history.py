@@ -39,3 +39,27 @@ class PropertyHistoryMatchingTests(SimpleTestCase):
     def test_generic_finance_unrelated_to_property(self):
         profile = {"terms": ["housing assistance", "inspection"], "contacts": []}
         self.assertEqual(matches(msg("Robinhood instant deposit"), profile), [])
+
+    def test_sender_display_name_matches_property_search_terms(self):
+        profile = {"terms": ["marcus poole"], "contacts": []}
+        message = msg("Re: MHA packet", "Packet attached", "mpoole@mhatoday.org")
+        message["from"]["emailAddress"]["name"] = "Marcus Poole"
+        self.assertEqual(matches(message, profile), ["marcus poole"])
+
+    def test_sender_email_address_matches_custom_search_term(self):
+        profile = {"terms": ["mpoole@mhatoday.org"], "contacts": []}
+        self.assertEqual(matches(msg("Re: MHA packet", sender="mpoole@mhatoday.org"), profile),
+                         ["mpoole@mhatoday.org"])
+
+    def test_reply_recipient_name_can_match_correspondence(self):
+        profile = {"terms": ["dakesha norman"], "contacts": []}
+        message = msg("RE: MHA packet", "Thank you for the update",
+                      sender="property.owner@example.com")
+        message["toRecipients"] = [{"emailAddress": {
+            "name": "Dakesha Norman", "address": "dakesha@example.com"
+        }}]
+        self.assertEqual(matches(message, profile), ["dakesha norman"])
+
+    def test_unrelated_promotions_are_not_matched(self):
+        profile = {"terms": ["marcus poole", "adair realty", "roxana"], "contacts": []}
+        self.assertEqual(matches(msg("50 percent off appliances", "Holiday sale"), profile), [])
