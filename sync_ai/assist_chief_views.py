@@ -151,8 +151,67 @@ class JarvisChiefBriefingView(APIView):
              "scope":"Suggested verification actions from owner-reviewed emails; no payment, inspection or resolution confirmed."},
             {"key":"email","title":"Email","headline":"Outlook connected; open Mail Desk for an on-demand inbox brief" if outlook_connected else "Outlook is not connected inside SyncWorks","items":[],"scope":"Reviewed property email reference counts only; no direct mailbox scan"},
         ]
+        # Reuse the existing owner-scoped daily context instead of inventing
+        # weather, calendar or finance data. Failure must not hide other work.
+        from .assistant_daily_state import build_daily_state
+        from .assist_growth_prospects import _snapshot as prospect_snapshot
+        from .assist_workday_views import _snapshot as workday_snapshot
+        from zoneinfo import ZoneInfo
+        local = timezone.now().astimezone(ZoneInfo("America/Chicago"))
+        context = {"local_time": local.isoformat(), "local_date": local.date().isoformat(),
+                   "timezone": "America/Chicago", "weather": {"available": False},
+                   "calendar": {"available": False}, "money": {"available": False},
+                   "status": "UNAVAILABLE"}
+        try:
+            state = build_daily_state(request.user)
+            context.update({k: state.get(k) for k in ("local_time", "local_date", "timezone", "weather", "calendar", "money", "business", "personal_requests", "needs_attention")})
+            context["status"] = "CONNECTED_RECORDS"
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("Executive daily context unavailable", exc_info=False)
+        for key, title, summary, link in [
+            ("weather", "Local weather", "Weather forecast", "/customer/calendar"),
+            ("calendar", "Today's schedule", "Calendar appointments", "/customer/calendar"),
+            ("money", "Personal finances", "Recorded accounts and upcoming obligations", "/customer/finance"),
+            ("business", "Business operations", "Recorded business tickets needing attention", "/sbo"),
+            ("personal_requests", "Personal requests", "Open personal service requests", "/customer/requests"),
+        ]:
+            data = context.get(key) or {}
+            available = bool(data.get("available"))
+            items = []
+            if available and key == "weather":
+                period = data.get("current_period") or {}
+                items = [{"title": str(period.get("short_forecast") or "Forecast available"),
+                          "next_action": "Review forecast and alerts", "source": "weather", "category": "PERSONAL"}]
+            elif available and key == "calendar":
+                items = [{"title": row.get("title"), "next_action": row.get("start_at"), "source": "calendar", "category": "PERSONAL"} for row in data.get("events", [])[:5]]
+            elif available and key == "money":
+                items = [{"title": row.get("name"), "next_action": "Review payment due " + str(row.get("due_date")), "source": "finance_records", "category": "FINANCE"} for row in data.get("due_next_7_days", [])[:5]]
+            elif available and key == "business":
+                items = [{"title": row.get("name"), "next_action": f"Review {row.get('needs_attention', 0)} tickets needing attention", "source": "business_records", "category": "BUSINESS"} for row in data.get("businesses", [])[:5]]
+            elif available and key == "personal_requests":
+                items = [{"title": row.get("title"), "next_action": row.get("status_label"), "source": "personal_requests", "category": "PERSONAL"} for row in data.get("items", [])[:5]]
+            sections.append({"key": key, "title": title, "headline": summary if available else "Source unavailable or not configured", "items": items, "scope": "Existing account records; no external actions", "detail_url": link})
+        prospects = prospect_snapshot(request.user)
+        counts = prospects["counts"]
+        actionable = {"RESEARCH", "READY_FOR_REVIEW", "CONTACTED_MANUALLY", "RESPONDED", "DEMO_BOOKED", "TRIAL"}
+        sections.append({"key": "scarlett_sales", "title": "Scarlett · Sales and lead generation",
+            "headline": f"{sum(counts.get(k, 0) for k in actionable)} active prospects in saved pipeline",
+            "items": [{"title": row["company"], "source": "saved_prospect", "category": "GROWTH",
+                       "next_action": "Review pipeline stage: " + row["stage"]} for row in prospects["prospects"] if row.get("stage") in actionable][:8],
+            "scope": "Saved prospects only; no new leads discovered or contacted by this briefing."})
+        goals = workday_snapshot(request.user)["goals"]
+        for role, name, key in [("MARKETING_MANAGER", "Elizabeth · Marketing", "elizabeth_marketing"),
+                                ("RESEARCH_ANALYST", "Sophia · Research", "sophia_research"),
+                                ("CHIEF_OF_STAFF", "Victoria · Product and executive work", "victoria_work")]:
+            work = [(g, s) for g in goals for s in g.get("steps", []) if s.get("role") == role and s.get("status") != "COMPLETED"]
+            sections.append({"key": key, "title": name, "headline": f"{len(work)} recorded assignments needing attention",
+                "items": [{"title": s["task"], "source": "workday_assignment", "category": "BUSINESS",
+                           "next_action": s.get("status"), "goal_id": g["id"], "step_id": s["id"]} for g, s in work[:8]],
+                "scope": "Recorded assignments only; no claim of autonomous execution or completed audits."})
         return Response({
-            "date":daily["date"],"generated_at":timezone.now().isoformat(),"mode":"on_demand",
+            "executive_context": context,
+            "date":context["local_date"],"generated_at":timezone.now().isoformat(),"mode":"on_demand",
             "sections":sections,"counts":{
                 "tasks_open":len(tasks),"tasks_high":len(high),
                 "cases_open":len(open_cases),"cases_high":len(priority_cases),
