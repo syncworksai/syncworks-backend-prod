@@ -15,6 +15,7 @@ VOICE_ROLES = {
     "forge": "ELEVENLABS_FORGE_VOICE_ID",
     "female_assistant": "ELEVENLABS_GEMMA_VOICE_ID",
     "health": "ELEVENLABS_HEALTH_VOICE_ID",
+    "founder_chief": "ELEVENLABS_FOUNDER_CHIEF_VOICE_ID",
 }
 
 
@@ -42,6 +43,8 @@ def configured_voice_id(role: str = "sync") -> str:
     configured = (os.getenv(VOICE_ROLES[role]) or "").strip()
     if configured:
         return configured
+    if role == "founder_chief":
+        return "3F0Z2rlB8b72i7fhQVJ1"
     if role in {"sync", "forge"}:
         # Compatibility fallback, not verified as selected SYNC Voice.
         return (os.getenv("ELEVENLABS_SYNC_VOICE_ID") or DEFAULT_ELEVENLABS_VOICE_ID).strip()
