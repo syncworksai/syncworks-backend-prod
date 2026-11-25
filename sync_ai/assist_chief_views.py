@@ -170,11 +170,11 @@ class JarvisChiefBriefingView(APIView):
             import logging
             logging.getLogger(__name__).warning("Executive daily context unavailable", exc_info=False)
         for key, title, summary, link in [
-            ("weather", "Local weather", "Weather forecast", "/customer/calendar"),
-            ("calendar", "Today's schedule", "Calendar appointments", "/customer/calendar"),
+            ("weather", "Local weather", "Weather forecast", "/customer/weather"),
+            ("calendar", "Today's schedule", "Calendar appointments", "/calendar"),
             ("money", "Personal finances", "Recorded accounts and upcoming obligations", "/customer/finance"),
             ("business", "Business operations", "Recorded business tickets needing attention", "/sbo"),
-            ("personal_requests", "Personal requests", "Open personal service requests", "/customer/requests"),
+            ("personal_requests", "Personal requests", "Open personal service requests", "/customer/tickets"),
         ]:
             data = context.get(key) or {}
             available = bool(data.get("available"))
@@ -195,15 +195,19 @@ class JarvisChiefBriefingView(APIView):
         prospects = prospect_snapshot(request.user)
         counts = prospects["counts"]
         actionable = {"RESEARCH", "READY_FOR_REVIEW", "CONTACTED_MANUALLY", "RESPONDED", "DEMO_BOOKED", "TRIAL"}
-        sections.append({"key": "scarlett_sales", "title": "Scarlett · Sales and lead generation",
+        sections.append({"key": "scarlett_sales", "title": "Olivia · Sales and lead generation",
             "headline": f"{sum(counts.get(k, 0) for k in actionable)} active prospects in saved pipeline",
             "items": [{"title": row["company"], "source": "saved_prospect", "category": "GROWTH",
                        "next_action": "Review pipeline stage: " + row["stage"]} for row in prospects["prospects"] if row.get("stage") in actionable][:8],
             "scope": "Saved prospects only; no new leads discovered or contacted by this briefing."})
         goals = workday_snapshot(request.user)["goals"]
-        for role, name, key in [("MARKETING_MANAGER", "Elizabeth · Marketing", "elizabeth_marketing"),
+        for role, name, key in [("MARKETING_MANAGER", "Naomi · Marketing", "elizabeth_marketing"),
                                 ("RESEARCH_ANALYST", "Sophia · Research", "sophia_research"),
-                                ("CHIEF_OF_STAFF", "Victoria · Product and executive work", "victoria_work")]:
+                                ("CHIEF_OF_STAFF", "Sydney · Product and executive work", "victoria_work"),
+                                ("EXECUTIVE_ASSISTANT", "Christy · Executive assistance", "christy_work"),
+                                ("BUSINESS_MANAGER", "Whitney · Operations", "whitney_work"),
+                                ("TECHNOLOGY_RESEARCH", "Yasmine · Technology research", "yasmine_work"),
+                                ("QUALITY_ASSURANCE", "Kylee · Quality assurance", "kylee_work")]:
             work = [(g, s) for g in goals for s in g.get("steps", []) if s.get("role") == role and s.get("status") != "COMPLETED"]
             sections.append({"key": key, "title": name, "headline": f"{len(work)} recorded assignments needing attention",
                 "items": [{"title": s["task"], "source": "workday_assignment", "category": "BUSINESS",
@@ -220,7 +224,7 @@ class JarvisChiefBriefingView(APIView):
                        "BILLING": "Review the billing record before proposing a response.",
                        "UNLOCK": "Verify account eligibility and escalate access issues.",
                        "FEATURE": "Assess the request for the product backlog."}
-            sections.append({"key": "customer_support", "title": "Customer Support",
+            sections.append({"key": "customer_support", "title": "Rebecca · Customer Support",
                 "headline": f"{support['open']} open · {support['in_progress']} in progress",
                 "items": [{"title": f"Support #{row.id} · {row.title or row.kind}",
                            "source": "platform_support", "category": "BUSINESS",
