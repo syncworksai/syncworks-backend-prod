@@ -294,3 +294,32 @@ class JarvisChiefBriefingView(APIView):
             "scheduled_delivery":False,"verified_health_monitoring":False,
             "notice":"Snapshot from authorized owner records only. No automatic sending, email inspection, market feed or claimed background execution.",
         })
+
+
+class JarvisChiefArchiveView(APIView):
+    """Owner-only saved written briefing, with bounded retention by count."""
+    permission_classes = [IsAuthenticated]
+    action = "sync_assist.chief.briefing_saved"
+
+    def get(self, request):
+        if not _pilot(request.user):
+            return Response({"detail": "Private pilot only."}, status=403)
+        rows = AuditLog.objects.filter(actor=request.user, action=self.action).order_by("-id")[:90]
+        return Response({"briefings": [{"id": row.pk, "saved_at": row.created_at.isoformat(), **(row.metadata or {})} for row in rows]})
+
+    def post(self, request):
+        if not _pilot(request.user):
+            return Response({"detail": "Private pilot only."}, status=403)
+        text = request.data.get("text")
+        generated = request.data.get("generated_at")
+        if not isinstance(text, str) or not 1 <= len(text.strip()) <= 16000 or not isinstance(generated, str) or not 1 <= len(generated) <= 80:
+            return Response({"detail": "Valid briefing text and timestamp required."}, status=400)
+        with transaction.atomic():
+            from django.contrib.auth import get_user_model
+            get_user_model().objects.select_for_update().get(pk=request.user.pk)
+            existing = AuditLog.objects.filter(actor=request.user, action=self.action, metadata__generated_at=generated).first()
+            if existing:
+                return Response({"id": existing.pk, "created": False})
+            row = AuditLog.objects.create(actor=request.user, action=self.action,
+                metadata={"text": text.strip(), "generated_at": generated, "source": "owner_saved_displayed_briefing"})
+        return Response({"id": row.pk, "created": True}, status=201)
