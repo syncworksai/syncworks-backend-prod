@@ -317,6 +317,64 @@ class PropertyHistoricalSearchView(APIView):
             "outlook_modified": False, "model_cost_usd": 0,
         })
 
+
+# Review-only intelligence shared by the property and executive briefing APIs.
+ISSUE_ACTIONS = {
+    "INSPECTION": "Confirm the latest inspection outcome, outstanding corrections and reinspection date.",
+    "PAYMENT": "Reconcile correspondence against the ledger and housing authority statements; confirm abatement or payment status.",
+    "DOCUMENTS": "Identify requested documents and verify receipt and filing.",
+    "TENANT": "Review tenant correspondence and confirm outstanding obligations.",
+    "REVIEW": "Review the source correspondence and determine whether follow-up is required.",
+}
+
+
+def correspondence_intelligence(reports):
+    unique = {}
+    for report in reports:
+        for ref in report.get("references", []):
+            if not ref.get("message_id"):
+                continue
+            key = (str(report.get("mailbox_id") or ""), str(ref["message_id"]))
+            if key not in unique:
+                unique[key] = dict(ref, mailbox_id=key[0], report_id=report.get("report_id"))
+    def date_key(item):
+        try:
+            date = parse_datetime(str(item.get("received_at") or ""))
+            if date:
+                if timezone.is_naive(date):
+                    date = timezone.make_aware(date)
+                return date.timestamp()
+        except (ValueError, OverflowError, TypeError):
+            pass
+        return float("-inf")
+    timeline = sorted(unique.values(), key=date_key)
+    groups = {}
+    for item in timeline:
+        category = item.get("category") or "REVIEW"
+        if category not in ISSUE_ACTIONS:
+            category = "REVIEW"
+        groups.setdefault(category, []).append(item)
+    issues = []
+    for category, items in groups.items():
+        latest = items[-1]
+        issues.append({
+            "category": category,
+            "priority": "HIGH" if any(i.get("priority") == "HIGH" for i in items) else "MEDIUM",
+            "status": "NEEDS_VERIFICATION",
+            "next_action": ISSUE_ACTIONS[category],
+            "email_count": len(items),
+            "latest_subject": latest.get("subject"),
+            "latest_received_at": latest.get("received_at"),
+            "evidence": [{"message_id": i["message_id"], "mailbox_id": i["mailbox_id"],
+                          "report_id": i.get("report_id"), "outlook_url": i.get("outlook_url")}
+                         for i in items],
+        })
+    issues.sort(key=lambda i: (i["priority"] != "HIGH", i["category"]))
+    return {"timeline": timeline, "issues": issues, "unique_email_count": len(timeline),
+            "reports_included": len(reports),
+            "attachment_contents_verified": False, "ledger_reconciled": False,
+            "limitations": "Reviewed correspondence and bounded email previews only; issue suggestions are not verified outstanding obligations."}
+
 class PropertyCorrespondenceReportView(APIView):
     """Attach explicitly reviewed Outlook references to an owned PM property.
 
@@ -332,9 +390,10 @@ class PropertyCorrespondenceReportView(APIView):
             return Response({"detail": "Property not accessible."}, status=404)
         events = AuditLog.objects.filter(actor=request.user, action=REPORT).order_by("-id")
         reports = [(e.metadata or {}) for e in events
-                   if (e.metadata or {}).get("pm_property_id") == prop.id][:15]
+                   if (e.metadata or {}).get("pm_property_id") == prop.id]
         return Response({"property": {"id": prop.id, "name": prop.name},
-                         "reports": reports})
+                         "reports": reports[:15],
+                         "intelligence": correspondence_intelligence(reports)})
 
     def post(self, request, property_id):
         prop = property_for_user(request.user, property_id)
@@ -405,6 +464,9 @@ class PropertyCorrespondenceReportView(APIView):
                     "received_at": m.get("receivedDateTime"),
                     "category": finding["category"] if finding else "REVIEW",
                     "matched_terms": matched[:10],
+                    "preview": re.sub(r"\s+", " ", str(m.get("bodyPreview") or "")).strip()[:500],
+                    "priority": finding["priority"] if finding else "LOW",
+                    "preview_verification": "OUTLOOK_PREVIEW_ONLY",
                     "attachments": attachments,
                     "attachments_status": attachments_status,
                     "outlook_url": m.get("webLink") if str(m.get("webLink") or "").startswith("https://outlook.") else None,
