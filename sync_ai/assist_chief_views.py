@@ -381,3 +381,83 @@ class JarvisChiefArchiveView(APIView):
             row = AuditLog.objects.create(actor=request.user, action=self.action,
                 metadata={"text": text.strip(), "generated_at": generated, "source": "owner_saved_displayed_briefing"})
         return Response({"id": row.pk, "created": True}, status=201)
+
+
+class JarvisChiefScheduleView(APIView):
+    """Private, deterministic weekly planner. Preview is read-only; apply rechecks conflicts."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not _pilot(request.user):
+            return Response({"detail": "Private pilot only."}, status=403)
+        from datetime import datetime, time, timedelta
+        from zoneinfo import ZoneInfo
+        from django.contrib.auth import get_user_model
+        from django.db.models import Q
+        from personal_calendar.models import PersonalCalendarEvent, PersonalCalendarEventAudit
+        from .assistant_daily_state import _finance_state, _health_state, _tz
+        from .jarvis_product import load_profile
+        mode = request.data.get("mode", "preview")
+        if mode not in {"preview", "apply"}:
+            return Response({"detail":"Invalid mode."},status=400)
+        _, profile = load_profile(request.user)
+        tz = _tz(profile)
+        now = timezone.now().astimezone(tz)
+        today = now.date()
+        end = datetime.combine(today+timedelta(days=7),time.min,tzinfo=tz)
+        money = _finance_state(request.user,today)
+        health = _health_state(request.user)
+        def plan():
+            records = PersonalCalendarEvent.objects.filter(owner=request.user,status="ACTIVE")
+            events = list(records.filter(start_at__lt=end).filter(Q(end_at__gt=now)|Q(end_at__isnull=True,start_at__gte=now)).exclude(metadata__entity_type__in=["TASK","PROJECT"]).exclude(metadata__task_unscheduled=True).order_by("start_at"))
+            tasks = list(records.filter(metadata__entity_type="TASK").exclude(metadata__task_status="DONE").order_by("id")[:100])
+            busy = [(e.start_at,e.end_at or e.start_at+timedelta(minutes=30)) for e in events]
+            keys = set(records.filter(metadata__sydney_plan_key__isnull=False).values_list("metadata__sydney_plan_key",flat=True))
+            proposed, skipped = [], []
+            def slot(day,hour,minute,duration,title,url,category,key):
+                if key in keys:
+                    return
+                start = datetime.combine(day,time(hour,minute),tzinfo=tz)
+                finish = start+timedelta(minutes=duration)
+                if start<now:
+                    return
+                if any(start<b and finish>a for a,b in busy):
+                    skipped.append({"title":title,"date":day.isoformat(),"reason":"Conflicts with an existing or proposed event"})
+                    return
+                busy.append((start,finish))
+                proposed.append({"key":key,"title":title,"start_at":start.isoformat(),"end_at":finish.isoformat(),"url":url,"category":category})
+            for offset in range(7):
+                day=today+timedelta(days=offset)
+                prefix=day.isoformat()+":"
+                slot(day,6,30,20,"Sydney morning review","/customer","planning",prefix+"review")
+                slot(day,9,0,60,"Health — workout or recovery plan","/customer/health","health",prefix+"health")
+                if day.weekday()<5:
+                    slot(day,12,30,120,"SyncWorks — focused development","/customer/projects","development",prefix+"build")
+                    slot(day,14,30,30,"Review employee work and leads","/sync/assist/assignments","business",prefix+"employees")
+                slot(day,18,0,20,"Daily progress and tomorrow's priorities","/customer","planning",prefix+"evening")
+            day=today+timedelta(days=(5-today.weekday())%7)
+            slot(day,11,0,45,"Plan groceries and meals","/customer/health","personal",day.isoformat()+":groceries")
+            slot(day,12,0,30,"Review property obligations and Sarah's follow-ups","/pm/properties","property",day.isoformat()+":property")
+            for offset in range(7):
+                day=today+timedelta(days=offset)
+                due=[b for b in money.get("due_next_7_days",[]) if b["due_date"]<=day.isoformat() and (offset==0 or b["due_date"]==day.isoformat())]
+                if due:
+                    slot(day,10,15,20,"Review recorded bills due","/customer/finance","finance",day.isoformat()+":bills")
+            return proposed,skipped,[{"id":e.id,"title":e.title,"start_at":e.start_at.isoformat(),"end_at":e.end_at.isoformat() if e.end_at else None} for e in events],[{"id":t.id,"title":t.title,"note":(t.metadata or {}).get("task_note","")} for t in tasks]
+        created=[]
+        if mode=="apply":
+            approved=request.data.get("approved_keys")
+            if not isinstance(approved,list) or len(approved)>100 or any(not isinstance(k,str) for k in approved):
+                return Response({"detail":"Approved schedule keys required."},status=400)
+            with transaction.atomic():
+                get_user_model().objects.select_for_update().get(pk=request.user.pk)
+                proposed,skipped,existing,tasks=plan()
+                for item in proposed:
+                    if item["key"] not in approved:
+                        continue
+                    row=PersonalCalendarEvent.objects.create(owner=request.user,title=item["title"],start_at=datetime.fromisoformat(item["start_at"]),end_at=datetime.fromisoformat(item["end_at"]),timezone=str(tz),source="SYNC",created_by_sync=True,metadata={"sydney_plan_key":item["key"],"action_url":item["url"],"category":item["category"],"origin":"SYDNEY_WEEKLY_PLAN"})
+                    PersonalCalendarEventAudit.objects.create(event=row,actor=request.user,action="CREATED",changes={"origin":"SYDNEY_WEEKLY_PLAN"})
+                    created.append(row.pk)
+        else:
+            proposed,skipped,existing,tasks=plan()
+        return Response({"mode":mode,"timezone":str(tz),"proposed":proposed,"skipped":skipped,"existing":existing,"tasks":tasks,"created_ids":created,"workout_plan_recorded":bool((health.get("today") or {}).get("planned_workout")),"scope":"Proposed routine blocks only; existing appointments unchanged. No workout, grocery purchase, payment or development completion is inferred."})
