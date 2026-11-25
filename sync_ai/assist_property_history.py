@@ -8,6 +8,7 @@ import logging
 import re
 from collections import Counter
 from datetime import timedelta
+from django.utils.dateparse import parse_datetime
 from uuid import uuid4
 from urllib.parse import urlparse, quote
 from pm_workspace.models import PMProperty
@@ -54,7 +55,8 @@ def matches(message, profile):
     body = str(message.get("bodyPreview") or "")[:1000].lower()
     sender = str(((message.get("from") or {}).get("emailAddress") or {}).get("address") or "").lower()
     sender_name = str(((message.get("from") or {}).get("emailAddress") or {}).get("name") or "").lower()
-    context = subject + " " + body + " " + sender_name
+    recipients = " ".join(str((r.get("emailAddress") or {}).get("name") or "") + " " + str((r.get("emailAddress") or {}).get("address") or "") for field in ("toRecipients", "ccRecipients") for r in (message.get(field) or []) if isinstance(r, dict)).lower()
+    context = subject + " " + body + " " + sender_name + " " + recipients
     matched = []
     for term in profile["terms"]:
         if re.search(r"(?<!\w)" + re.escape(term.lower()) + r"(?!\w)", context):
@@ -181,70 +183,126 @@ class PropertyHistoricalSearchView(APIView):
                   "$orderby": "receivedDateTime desc",
                   "$top": 100,
                   "$select": "id,subject,from,receivedDateTime,bodyPreview,hasAttachments,webLink"}
+        # Search the mailbox index first. Scanning only the newest 300 messages
+        # misses older correspondence when a busy inbox contains promotions.
+        # Microsoft Graph $search covers sender, subject and body across folders.
+        # Each candidate is still review-only until the owner verifies evidence.
         scanned = 0
         findings = []
-        next_page = None
         more = False
+        seen = set()
+        queries = list(dict.fromkeys(
+            [str(c).strip().lower() for c in profile.get("contacts", []) if str(c).strip()]
+            + [str(t).strip().lower() for t in profile.get("terms", []) if str(t).strip()]
+        ))[:12]
+        indexed_hit_count = 0
+        search_errors = 0
+
+        def include_message(message, indexed_term=None):
+            nonlocal scanned, indexed_hit_count
+            identifier = str(message.get("id") or "")
+            if not identifier or identifier in seen or scanned >= MAX_MESSAGES:
+                return
+            seen.add(identifier)
+            scanned += 1
+            received = parse_datetime(str(message.get("receivedDateTime") or ""))
+            if not received:
+                return
+            if timezone.is_naive(received):
+                received = timezone.make_aware(received)
+            if received < timezone.now() - timedelta(days=days):
+                return
+            matched = matches(message, profile)
+            if not matched and indexed_term:
+                # Graph's indexed match may be in the body past bodyPreview.
+                # A full-text hit is a search lead, not independently verified.
+                matched = ["indexed:" + indexed_term[:90]]
+            if not matched:
+                return
+            sender_address = str(((message.get("from") or {}).get("emailAddress") or {}).get("address") or "").lower()
+            verified_contact = sender_address in profile.get("contacts", [])
+            address = str(profile.get("property_address") or "").strip().lower()
+            context = (str(message.get("subject") or "") + " " + str(message.get("bodyPreview") or "")).lower()
+            explicit_property = bool(address and len(address) > 6 and address in context)
+            confidence = "STRONG" if verified_contact or explicit_property else "REVIEW_ONLY"
+            finding = classify(message)
+            if indexed_term:
+                indexed_hit_count += 1
+            findings.append({
+                "message_id": message.get("id"),
+                "subject": str(message.get("subject") or "(No subject)")[:200],
+                "sender": sender_address[:180],
+                "received_at": message.get("receivedDateTime"),
+                "preview": str(message.get("bodyPreview") or "")[:500],
+                "matched_terms": matched,
+                "confidence": confidence,
+                "auto_attach_allowed": False,
+                "category": finding["category"] if finding else "REVIEW",
+                "priority": finding["priority"] if finding else "LOW",
+                "has_attachments": bool(message.get("hasAttachments")),
+                "outlook_url": message.get("webLink") if str(message.get("webLink") or "").startswith("https://outlook.") else None,
+                "verification": "MESSAGE_PREVIEW_ONLY",
+            })
+
         try:
-            for page in range(3):
-                if page == 0:
-                    result = graph(request.user, cfg, str(account_id), "/me/messages", params=params)
-                else:
-                    parsed = urlparse(next_page or "")
+            # Targeted searches first, so spam cannot crowd out relevant mail.
+            for term in queries:
+                if scanned >= MAX_MESSAGES:
+                    more = True
+                    break
+                query_text = term.replace("\\", " ").replace('"', " ").strip()[:100]
+                if not query_text:
+                    continue
+                try:
+                    result = graph(request.user, cfg, str(account_id), "/me/messages",
+                                   params={"$search": '"' + query_text + '"',
+                                           "$top": min(100, MAX_MESSAGES - scanned),
+                                           "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,hasAttachments,webLink"})
+                    for message in result.get("value") or []:
+                        include_message(message, indexed_term=term)
+                    if result.get("@odata.nextLink"):
+                        more = True
+                except (ValueError, requests.RequestException):
+                    search_errors += 1
+                    logger.warning("Outlook indexed property search failed", extra={"term_length": len(term)})
+            # A bounded recent-mail fallback preserves legacy behavior and
+            # handles providers that reject a particular indexed query.
+            if scanned < MAX_MESSAGES:
+                recent = graph(request.user, cfg, str(account_id), "/me/messages", params=params)
+                for message in recent.get("value") or []:
+                    include_message(message)
+                next_page = recent.get("@odata.nextLink")
+                for _ in range(2):
+                    if not next_page or scanned >= MAX_MESSAGES:
+                        break
+                    parsed = urlparse(next_page)
                     if parsed.scheme != "https" or parsed.netloc != "graph.microsoft.com" or not parsed.path.startswith("/v1.0/me/messages"):
                         raise ValueError("Microsoft pagination URL rejected.")
                     token = access_token(request.user, cfg, str(account_id))
                     response = requests.get(next_page, headers={
-                        "Authorization": "Bearer " + token,
-                        "Accept": "application/json",
+                        "Authorization": "Bearer " + token, "Accept": "application/json",
                     }, timeout=20, allow_redirects=False)
                     if response.status_code != 200:
                         raise ValueError("Microsoft historical mail search failed.")
-                    result = response.json()
-                messages = (result.get("value") or [])[:100]
-                scanned += len(messages)
-                for message in messages:
-                    matched = matches(message, profile)
-                    if not matched:
-                        continue
-                    sender_address = str(((message.get("from") or {}).get("emailAddress") or {}).get("address") or "").lower()
-                    verified_contact = sender_address in profile["contacts"]
-                    address = str(profile.get("property_address") or "").strip().lower()
-                    context = (str(message.get("subject") or "") + " " + str(message.get("bodyPreview") or "")).lower()
-                    explicit_property = bool(address and len(address) > 6 and address in context)
-                    confidence = "STRONG" if verified_contact or explicit_property else "REVIEW_ONLY"
-                    finding = classify(message)
-                    findings.append({
-                        "message_id": message.get("id"),
-                        "subject": str(message.get("subject") or "(No subject)")[:200],
-                        "sender": str(((message.get("from") or {}).get("emailAddress") or {}).get("address") or "")[:180],
-                        "received_at": message.get("receivedDateTime"),
-                        "preview": str(message.get("bodyPreview") or "")[:500],
-                        "matched_terms": matched,
-                        "confidence": confidence,
-                        "auto_attach_allowed": False,
-                        "category": finding["category"] if finding else "REVIEW",
-                        "priority": finding["priority"] if finding else "LOW",
-                        "has_attachments": bool(message.get("hasAttachments")),
-                        "outlook_url": message.get("webLink") if str(message.get("webLink") or "").startswith("https://outlook.") else None,
-                        "verification": "MESSAGE_PREVIEW_ONLY",
-                    })
-                next_page = result.get("@odata.nextLink")
-                if not next_page or not messages:
-                    break
-            more = bool(next_page)
+                    recent = response.json()
+                    for message in recent.get("value") or []:
+                        include_message(message)
+                    next_page = recent.get("@odata.nextLink")
+                more = more or bool(next_page)
         except (ValueError, requests.RequestException) as exc:
             logger.warning("Historical property correspondence scan failed")
             return Response({"detail": str(exc) if isinstance(exc, ValueError)
                              else "Microsoft mail search is unavailable."}, status=502)
+        findings.sort(key=lambda item: str(item.get("received_at") or ""), reverse=True)
         counts = dict(Counter(x["category"] for x in findings))
         return Response({
             "property": {"id": profile["profile_id"], "name": profile["name"],
                          "pm_property_id": profile.get("pm_property_id")},
             "mailbox": account["label"], "days": days, "scanned": scanned,
             "findings": findings, "counts": counts, "partial": more,
-            "search_limit": MAX_MESSAGES,
-            "notice": "Read-only historical search of recent messages across Outlook folders. It is limited to 300 messages per run; zero matches does not mean a matter is resolved.",
+            "search_limit": MAX_MESSAGES, "indexed_hits": indexed_hit_count,
+            "indexed_search_errors": search_errors, "search_strategy": "INDEXED_AND_RECENT",
+            "notice": "Read-only indexed search of property terms and contacts plus a bounded recent-mail fallback. Results are review-only; zero matches does not mean the property has no correspondence.",
             "reconciliation": "No property balance or inspection status was independently verified.",
             "outlook_modified": False, "model_cost_usd": 0,
         })
