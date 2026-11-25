@@ -209,7 +209,33 @@ class JarvisChiefBriefingView(APIView):
                 "items": [{"title": s["task"], "source": "workday_assignment", "category": "BUSINESS",
                            "next_action": s.get("status"), "goal_id": g["id"], "step_id": s["id"]} for g, s in work[:8]],
                 "scope": "Recorded assignments only; no claim of autonomous execution or completed audits."})
+        from user_accounts.models.support_requests import SupportRequest
+        from user_accounts.viewsets.support_requests import _is_platform_admin
+        support = {"available": False, "open": None, "in_progress": None}
+        if _is_platform_admin(request.user):
+            queue = SupportRequest.objects.filter(status__in=["OPEN", "IN_PROGRESS"])
+            support = {"available": True, "open": queue.filter(status="OPEN").count(),
+                       "in_progress": queue.filter(status="IN_PROGRESS").count()}
+            actions = {"BUG": "Reproduce the reported issue and register verified defects for product review.",
+                       "BILLING": "Review the billing record before proposing a response.",
+                       "UNLOCK": "Verify account eligibility and escalate access issues.",
+                       "FEATURE": "Assess the request for the product backlog."}
+            sections.append({"key": "customer_support", "title": "Customer Support",
+                "headline": f"{support['open']} open · {support['in_progress']} in progress",
+                "items": [{"title": f"Support #{row.id} · {row.title or row.kind}",
+                           "source": "platform_support", "category": "BUSINESS",
+                           "next_action": actions.get(row.kind, "Review the request and prepare an appropriate response."),
+                           "detail_url": "/platform/support", "support_id": row.id,
+                           "status": row.status}
+                          for row in queue.order_by("created_at", "id")[:10]],
+                "scope": "Platform-admin-only active support queue; no responses sent or ticket status changes.",
+                "detail_url": "/platform/support"})
+        else:
+            sections.append({"key": "customer_support", "title": "Customer Support",
+                "headline": "Platform administrator access required", "items": [],
+                "scope": "No platform support records accessed."})
         return Response({
+            "support": support,
             "executive_context": context,
             "date":context["local_date"],"generated_at":timezone.now().isoformat(),"mode":"on_demand",
             "sections":sections,"counts":{
