@@ -351,7 +351,7 @@ class JarvisChiefDailyReviewView(APIView):
                 PersonalCalendarEventAudit.objects.create(event=row,actor=request.user,action="UPDATED",changes={"task_status":"DONE","completion_source":evidence})
         last = AuditLog.objects.filter(actor=request.user,action="sync_assist.chief.briefing_saved").order_by("-id").first()
         cutoff = last.created_at if last else now-timedelta(days=1)
-        return Response({"created":created,"since":cutoff.isoformat(),"tasks":[{"id":t.pk,"title":t.title,"status":(t.metadata or {}).get("task_status","OPEN"),"url":(t.metadata or {}).get("action_url"),"due_date":(t.metadata or {}).get("due_date"),"recently_completed":(t.metadata or {}).get("task_status")=="DONE" and t.updated_at>=cutoff} for t in tasks],"scope":"Recorded obligations and workout planning; no payments or completed workouts inferred."})
+        return Response({"created":created,"since":cutoff.isoformat(),"tasks":[{"id":t.pk,"title":t.title,"status":(t.metadata or {}).get("task_status","OPEN"),"url":(t.metadata or {}).get("action_url"),"note":(t.metadata or {}).get("task_note",""),"due_date":(t.metadata or {}).get("due_date"),"recently_completed":(t.metadata or {}).get("task_status")=="DONE" and t.updated_at>=cutoff} for t in tasks],"scope":"Recorded obligations and workout planning; no payments or completed workouts inferred."})
 
 
 class JarvisChiefArchiveView(APIView):
