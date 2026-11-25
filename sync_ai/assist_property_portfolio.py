@@ -16,7 +16,7 @@ from pm_workspace.models import PMProperty, PMProject, PMTenant
 from user_accounts.models import AuditLog
 from .assist_pilot_views import _pilot
 from .assist_property_history import (
-    PROFILE, REPORT, MAX_PROFILES, profiles, mailbox, property_for_user
+    PROFILE, REPORT, MAX_PROFILES, profiles, mailbox, property_for_user, correspondence_intelligence
 )
 
 
@@ -116,7 +116,7 @@ class PropertyPortfolioBriefView(APIView):
             if resident.lease_end and today <= resident.lease_end <= today + timedelta(days=60):
                 leases_ending[resident.property_id].append(resident.lease_end.isoformat())
         reports = {}
-        events = AuditLog.objects.filter(actor=request.user, action=REPORT).order_by("-id")[:2500]
+        events = AuditLog.objects.filter(actor=request.user, action=REPORT).order_by("-id").iterator()
         for event in events:
             row = event.metadata or {}
             prop_id = row.get("pm_property_id")
@@ -125,14 +125,9 @@ class PropertyPortfolioBriefView(APIView):
         properties = []
         totals = Counter()
         for prop in owned:
-            history = reports.get(prop.id, [])[:15]
-            references = {}
-            for report in history:
-                for item in report.get("references", []):
-                    key = item.get("message_id")
-                    if key:
-                        references.setdefault(key, item)
-            items = sorted(references.values(), key=lambda r: r.get("received_at") or "", reverse=True)
+            history = reports.get(prop.id, [])
+            intelligence = correspondence_intelligence(history)
+            items = list(reversed(intelligence["timeline"]))
             counts = Counter(str(item.get("category") or "REVIEW") for item in items)
             totals.update(counts)
             properties.append({
@@ -140,6 +135,7 @@ class PropertyPortfolioBriefView(APIView):
                 "status": prop.status, "correspondence_count": len(items),
                 "latest_correspondence_at": items[0].get("received_at") if items else None,
                 "categories": dict(counts),
+                "correspondence_issues": [{k: v for k, v in issue.items() if k != "evidence"} for issue in intelligence["issues"]],
                 "operations": {
                     "open_projects": project_counts[prop.id],
                     "overdue_projects": overdue_projects[prop.id],
