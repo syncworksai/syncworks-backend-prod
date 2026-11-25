@@ -154,6 +154,14 @@ class PropertySearchProfilesView(APIView):
                     or "@" not in t or " " in t for t in contacts):
                 return Response({"detail": "Provide up to 12 complete sender email addresses."}, status=400)
             prior["contacts"] = list(dict.fromkeys(t.strip().lower() for t in contacts))
+        if "excluded_senders" in request.data:
+            excluded = request.data["excluded_senders"]
+            if not isinstance(excluded, list) or len(excluded) > 100 or any(
+                not isinstance(e, str) or not (3 <= len(e.strip()) <= 180)
+                or "@" not in e or " " in e for e in excluded
+            ):
+                return Response({"detail": "Provide up to 100 exact sender email addresses to exclude from this property search."}, status=400)
+            prior["excluded_senders"] = list(dict.fromkeys(e.strip().lower() for e in excluded))
         AuditLog.objects.create(actor=request.user, action=PROFILE, metadata=prior)
         return Response({"profile": prior, "notice": "Property search updated; Outlook not modified."})
 
@@ -220,6 +228,8 @@ class PropertyHistoricalSearchView(APIView):
             if not matched:
                 return
             sender_address = str(((message.get("from") or {}).get("emailAddress") or {}).get("address") or "").lower()
+            if sender_address in profile.get("excluded_senders", []):
+                return
             verified_contact = sender_address in profile.get("contacts", [])
             address = str(profile.get("property_address") or "").strip().lower()
             context = (str(message.get("subject") or "") + " " + str(message.get("bodyPreview") or "")).lower()
@@ -365,6 +375,8 @@ class PropertyCorrespondenceReportView(APIView):
                 if not matched:
                     return Response({"detail": "A selected email no longer matches the property search.", "hint": "Refine property contacts and search terms."}, status=409)
                 sender = str(((m.get("from") or {}).get("emailAddress") or {}).get("address") or "")
+                if sender.lower() in profile.get("excluded_senders", []):
+                    return Response({"detail": "A selected sender was excluded from this property search."}, status=409)
                 finding = classify(m)
                 # Index attachment metadata for review; never download or interpret
                 # financial documents without explicit user approval.
