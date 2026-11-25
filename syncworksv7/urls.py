@@ -7,8 +7,10 @@ from django.urls import include, path, re_path
 from django.views.static import serve
 
 from .charlotte_market import daily_history
+from .charlotte_fundamentals import fundamentals
 
 urlpatterns = [
+    path("api/v1/me/charlotte/fundamentals/", fundamentals),
     path("api/v1/me/charlotte/history/", daily_history),
     path("api/v1/business/technician/time/", include("technician_time.urls")),
     path("api/v1/feature-entitlements/", include("feature_entitlements.urls")),
