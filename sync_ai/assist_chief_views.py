@@ -137,6 +137,18 @@ class JarvisChiefBriefingView(APIView):
                 {"title":p["name"],"source":"property_management_and_reviewed_correspondence","category":"PROPERTY",
                  "next_action":f"Review {p['operations']['overdue_projects']} overdue projects, {p['operations']['recorded_leases_ending_within_60_days']} upcoming lease end dates, {p['correspondence_count']} reviewed email references"}
                 for p in pm_actions[:5]],"scope":"Owner-scoped PM project status, recorded lease dates and reviewed email references; no payment or inspection verification"},
+            {"key":"sarah_correspondence","title":"Sarah · Correspondence follow-ups",
+             "headline":f"{sum(len(p.get('correspondence_issues', [])) for p in pm_properties)} issue categories to verify",
+             "items":[{"title":f"{p['name']} · {issue['category'].title()}",
+                       "source":"sarah_reviewed_correspondence","category":"PROPERTY",
+                       "next_action":issue["next_action"],"priority":issue["priority"],
+                       "detail_url":p["detail_url"],"latest_subject":issue.get("latest_subject"),
+                       "email_count":issue["email_count"]}
+                      for p, issue in sorted(
+                          [(p, i) for p in pm_properties for i in p.get("correspondence_issues", [])],
+                          key=lambda pair: (pair[1]["priority"] != "HIGH", pair[0]["id"], pair[1]["category"])
+                      )[:15]],
+             "scope":"Suggested verification actions from owner-reviewed emails; no payment, inspection or resolution confirmed."},
             {"key":"email","title":"Email","headline":"Outlook connected; open Mail Desk for an on-demand inbox brief" if outlook_connected else "Outlook is not connected inside SyncWorks","items":[],"scope":"Reviewed property email reference counts only; no direct mailbox scan"},
         ]
         return Response({
