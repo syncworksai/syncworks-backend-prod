@@ -45,8 +45,8 @@ class SyncVoiceStatusView(APIView):
                     role: {"configured": bool(configured_voice_id(role)) and elevenlabs_configured(),
                            "label": {"sync": "SYNC", "forge": "SYNC Voice / Forge",
                                      "female_assistant": "Gemma / Female Assistant",
-                                     "health": "Female Workout Voice / Health"}[role]}
-                    for role in VOICE_ROLES
+                                     "health": "Female Workout Voice / Health", "founder_chief": "Sydney"}[role]}
+                    for role in VOICE_ROLES if role != "founder_chief" or str(request.user.email or "").strip().lower() == "jacoblord7@outlook.com"
                 },
             }
         )
@@ -58,6 +58,8 @@ class SyncVoiceSynthesizeView(APIView):
 
     def post(self, request):
         role = str(request.data.get("role") or "sync").strip()
+        if role == "founder_chief" and str(request.user.email or "").strip().lower() != "jacoblord7@outlook.com":
+            return Response({"detail": "Private pilot only."}, status=403)
         if role not in VOICE_ROLES:
             return Response({"detail": "Unsupported voice role."}, status=400)
         text = str(request.data.get("text") or "").strip()
