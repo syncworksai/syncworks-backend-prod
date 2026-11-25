@@ -253,7 +253,36 @@ class JarvisChiefBriefingView(APIView):
             sections.append({"key": "customer_support", "title": "Customer Support",
                 "headline": "Platform administrator access required", "items": [],
                 "scope": "No platform support records accessed."})
+        from personal_calendar.models import PersonalCalendarEvent
+        from datetime import timedelta
+        rows = PersonalCalendarEvent.objects.filter(owner=request.user, status="ACTIVE")
+        workspace = list(rows.filter(metadata__entity_type__in=["PROJECT", "TASK"]).order_by("id")[:1000])
+        projects = []
+        for row in workspace:
+            meta = row.metadata or {}
+            if meta.get("entity_type") != "PROJECT":
+                continue
+            linked = [t for t in workspace if (t.metadata or {}).get("entity_type") == "TASK" and str((t.metadata or {}).get("project_id")) == str(row.pk)]
+            done = sum((t.metadata or {}).get("task_status") == "DONE" for t in linked)
+            projects.append({"id": row.pk, "title": row.title, "status": meta.get("project_status", "ACTIVE"),
+                             "total": len(linked), "done": done, "next_tasks": [{"id": t.pk, "title": t.title} for t in linked if (t.metadata or {}).get("task_status", "OPEN") == "OPEN"][:5]})
+        active_projects = [p for p in projects if p["status"] == "ACTIVE"]
+        sections.append({"key":"production_project","title":"Active projects",
+                         "headline":f"{len(active_projects)} active projects in the workspace",
+                         "items":[{"title": t["title"], "next_action": "Review project: " + p["title"], "detail_url":"/customer/projects"} for p in active_projects for t in p["next_tasks"]][:10],
+                         "scope":"Recorded task completion only; not a software readiness audit."})
+        schedule = []
+        for event in rows.filter(start_at__lt=local + timedelta(days=31), end_at__gt=local-timedelta(days=1)).order_by("start_at")[:300]:
+            meta = event.metadata or {}
+            if meta.get("entity_type") in {"PROJECT","TASK"} or meta.get("task_unscheduled"):
+                continue
+            start, end = event.start_at, event.end_at
+            status = "ENDED" if end and end <= local else "IN_PROGRESS" if start <= local else "UPCOMING"
+            schedule.append({"id":event.pk,"title":event.title,"start_at":start.isoformat(),"end_at":end.isoformat() if end else None,
+                             "status":status,"minutes_until":int((start-local).total_seconds()/60)})
         return Response({
+            "project_progress": projects,
+            "schedule_outlook": schedule,
             "support": support,
             "executive_context": context,
             "date":context["local_date"],"generated_at":timezone.now().isoformat(),"mode":"on_demand",
