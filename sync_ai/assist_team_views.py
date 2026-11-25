@@ -15,19 +15,23 @@ from .assist_pilot_views import _pilot
 
 ACTION = "sync_assist.team.config_updated"
 SLOTS = {
-    "executive-female": {"name": "Victoria", "role": "CHIEF_OF_STAFF"},
+    "executive-female": {"name": "Sydney", "role": "CHIEF_OF_STAFF"},
     "executive-male": {"name": "Scarlett", "role": "SALES_MANAGER"},
-    "future-female": {"name": "Elizabeth", "role": "MARKETING_MANAGER"},
+    "future-female": {"name": "Naomi", "role": "MARKETING_MANAGER"},
     "future-male": {"name": "Sophia", "role": "RESEARCH_ANALYST"},
     "executive-assistant": {"name": "Executive Assistant", "role": "EXECUTIVE_ASSISTANT"},
     "business-manager": {"name": "Business Operations", "role": "BUSINESS_MANAGER"},
-    "finance-manager": {"name": "Charlotte", "role": "FINANCE_MANAGER"},
+    "finance-manager": {"name": "Olivia", "role": "FINANCE_MANAGER"},
     "property-manager": {"name": "Sarah", "role": "PROPERTY_MANAGER"},
-    "customer-service": {"name": "Customer Service", "role": "CUSTOMER_SERVICE"},
+    "customer-service": {"name": "Rebecca", "role": "CUSTOMER_SERVICE"},
     "personal-trainer": {"name": "Fitness Coach", "role": "PERSONAL_TRAINER"},
 }
 MAX_NAME_LENGTH = 32
 PHOTO_CHOICES = {
+    "/jarvis-avatars/newvictoria.png", "/jarvis-avatars/newsophia.png",
+    "/jarvis-avatars/naomi.png", "/jarvis-avatars/newscarlett.png",
+    "/jarvis-avatars/customersupport1.png", "/jarvis-avatars/yasmine.png",
+    "/jarvis-avatars/christy2.png", "/jarvis-avatars/kylee.png",
     "", # Intentional placeholder until the approved portrait is uploaded.
     "/jarvis-avatars/victoria.jpeg", "/jarvis-avatars/james.jpeg",
     "/jarvis-avatars/elizabeth.jpeg", "/jarvis-avatars/william.jpeg",
@@ -40,15 +44,15 @@ PHOTO_CHOICES = {
     "/jarvis-avatars/Sarah.png",
 }
 DEFAULT_PHOTOS = {
-    "executive-female": "/jarvis-avatars/Victoria.png",
-    "executive-male": "/jarvis-avatars/Scarlett.png",
-    "future-female": "/jarvis-avatars/Elizabeth.png",
-    "future-male": "/jarvis-avatars/Sophia.png",
+    "executive-female": "/jarvis-avatars/newvictoria.png",
+    "executive-male": "/jarvis-avatars/newscarlett.png",
+    "future-female": "/jarvis-avatars/naomi.png",
+    "future-male": "/jarvis-avatars/newsophia.png",
     "executive-assistant": "/jarvis-avatars/victoria.jpeg",
     "business-manager": "/jarvis-avatars/james.jpeg",
     "finance-manager": "/jarvis-avatars/Charlotte.png",
     "property-manager": "/jarvis-avatars/Sarah.png",
-    "customer-service": "/jarvis-avatars/victoria.jpeg",
+    "customer-service": "/jarvis-avatars/customersupport1.png",
     "personal-trainer": "/jarvis-avatars/james.jpeg",
 }
 
@@ -73,6 +77,14 @@ def team_snapshot(user):
                     if photo in PHOTO_CHOICES:
                         old_photos = {"executive-male": "/jarvis-avatars/james.jpeg", "future-male": "/jarvis-avatars/william.jpeg", "finance-manager": "/jarvis-avatars/william.jpeg"}
                         items[key]["photo"] = DEFAULT_PHOTOS[key] if photo == old_photos.get(key) or (photo == "" and key in {"executive-male","future-male","finance-manager"}) else photo
+    # Explicit founder identity revision: stable slot IDs and role permissions
+    # remain intact; legacy names and portraits are migrated on read.
+    identity_revision = {"executive-female":{"old_name":"Victoria","old_photo":"/jarvis-avatars/Victoria.png"},"future-female":{"old_name":"Elizabeth","old_photo":"/jarvis-avatars/Elizabeth.png"},"finance-manager":{"old_name":"Charlotte","old_photo":"/jarvis-avatars/Charlotte.png"},"customer-service":{"old_name":"Customer Service","old_photo":"/jarvis-avatars/victoria.jpeg"},"executive-male":{"old_name":"Scarlett","old_photo":"/jarvis-avatars/Scarlett.png"},"future-male":{"old_name":"Sophia","old_photo":"/jarvis-avatars/Sophia.png"}}
+    for key, previous in identity_revision.items():
+        if items[key]["name"] == previous["old_name"]:
+            items[key]["name"] = SLOTS[key]["name"]
+        if items[key]["photo"] == previous["old_photo"]:
+            items[key]["photo"] = DEFAULT_PHOTOS[key]
     return {
         "employees": [
             {**item, "execution_status": "internal_pilot" if item["role"] in EXECUTABLE_ROLES else "not_implemented"}
