@@ -56,7 +56,7 @@ def matches(message, profile):
     sender = str(((message.get("from") or {}).get("emailAddress") or {}).get("address") or "").lower()
     sender_name = str(((message.get("from") or {}).get("emailAddress") or {}).get("name") or "").lower()
     recipients = " ".join(str((r.get("emailAddress") or {}).get("name") or "") + " " + str((r.get("emailAddress") or {}).get("address") or "") for field in ("toRecipients", "ccRecipients") for r in (message.get(field) or []) if isinstance(r, dict)).lower()
-    context = subject + " " + body + " " + sender_name + " " + recipients
+    context = subject + " " + body + " " + sender_name + " " + sender + " " + recipients
     matched = []
     for term in profile["terms"]:
         if re.search(r"(?<!\w)" + re.escape(term.lower()) + r"(?!\w)", context):
@@ -353,10 +353,17 @@ class PropertyCorrespondenceReportView(APIView):
             for identifier in ids:
                 m = graph(request.user, cfg, mailbox_id,
                           "/me/messages/" + quote(identifier, safe=""),
-                          params={"$select": "id,subject,from,receivedDateTime,bodyPreview,webLink,hasAttachments"})
+                          params={"$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,body,webLink,hasAttachments"})
                 matched = matches(m, profile)
                 if not matched:
-                    return Response({"detail": "A selected email no longer matches the property search."}, status=409)
+                    # Indexed search can match mail body beyond bodyPreview.
+                    # Revalidate against Graph original body at attach time.
+                    plain = re.sub(r"<[^>]+>", " ", str((m.get("body") or {}).get("content") or "")).lower()
+                    for term in profile.get("terms", []):
+                        if re.search(r"(?<!\\w)" + re.escape(term.lower()) + r"(?!\\w)", plain):
+                            matched.append("body:" + term)
+                if not matched:
+                    return Response({"detail": "A selected email no longer matches the property search.", "hint": "Refine property contacts and search terms."}, status=409)
                 sender = str(((m.get("from") or {}).get("emailAddress") or {}).get("address") or "")
                 finding = classify(m)
                 # Index attachment metadata for review; never download or interpret
