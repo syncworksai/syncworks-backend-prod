@@ -398,7 +398,7 @@ class JarvisChiefScheduleView(APIView):
         from .assistant_daily_state import _finance_state, _health_state, _tz
         from .jarvis_product import load_profile
         mode = request.data.get("mode", "preview")
-        if mode not in {"preview", "apply"}:
+        if mode not in {"preview", "apply", "auto"}:
             return Response({"detail":"Invalid mode."},status=400)
         _, profile = load_profile(request.user)
         tz = _tz(profile)
@@ -412,7 +412,7 @@ class JarvisChiefScheduleView(APIView):
             events = list(records.filter(start_at__lt=end).filter(Q(end_at__gt=now)|Q(end_at__isnull=True,start_at__gte=now)).exclude(metadata__entity_type__in=["TASK","PROJECT"]).exclude(metadata__task_unscheduled=True).order_by("start_at"))
             tasks = list(records.filter(metadata__entity_type="TASK").exclude(metadata__task_status="DONE").order_by("id")[:100])
             busy = [(e.start_at,e.end_at or e.start_at+timedelta(minutes=30)) for e in events]
-            keys = set(records.filter(metadata__sydney_plan_key__isnull=False).values_list("metadata__sydney_plan_key",flat=True))
+            keys = set(PersonalCalendarEvent.objects.filter(owner=request.user,metadata__sydney_plan_key__isnull=False).values_list("metadata__sydney_plan_key",flat=True))
             proposed, skipped = [], []
             def slot(day,hour,minute,duration,title,url,category,key):
                 if key in keys:
@@ -445,19 +445,20 @@ class JarvisChiefScheduleView(APIView):
                     slot(day,10,15,20,"Review recorded bills due","/customer/finance","finance",day.isoformat()+":bills")
             return proposed,skipped,[{"id":e.id,"title":e.title,"start_at":e.start_at.isoformat(),"end_at":e.end_at.isoformat() if e.end_at else None} for e in events],[{"id":t.id,"title":t.title,"note":(t.metadata or {}).get("task_note","")} for t in tasks]
         created=[]
-        if mode=="apply":
+        if mode in {"apply","auto"}:
             approved=request.data.get("approved_keys")
-            if not isinstance(approved,list) or len(approved)>100 or any(not isinstance(k,str) for k in approved):
+            if mode=="apply" and (not isinstance(approved,list) or len(approved)>100 or any(not isinstance(k,str) for k in approved)):
                 return Response({"detail":"Approved schedule keys required."},status=400)
             with transaction.atomic():
                 get_user_model().objects.select_for_update().get(pk=request.user.pk)
                 proposed,skipped,existing,tasks=plan()
                 for item in proposed:
-                    if item["key"] not in approved:
+                    if mode=="apply" and item["key"] not in approved:
                         continue
-                    row=PersonalCalendarEvent.objects.create(owner=request.user,title=item["title"],start_at=datetime.fromisoformat(item["start_at"]),end_at=datetime.fromisoformat(item["end_at"]),timezone=str(tz),source="SYNC",created_by_sync=True,metadata={"sydney_plan_key":item["key"],"action_url":item["url"],"category":item["category"],"origin":"SYDNEY_WEEKLY_PLAN"})
+                    row=PersonalCalendarEvent.objects.create(owner=request.user,title=item["title"],start_at=datetime.fromisoformat(item["start_at"]),end_at=datetime.fromisoformat(item["end_at"]),timezone=str(tz),source="SYNC",created_by_sync=True,metadata={"sydney_plan_key":item["key"],"action_url":item["url"],"deep_link":item["url"],"fixed":False,"category":item["category"],"origin":"SYDNEY_WEEKLY_PLAN"})
                     PersonalCalendarEventAudit.objects.create(event=row,actor=request.user,action="CREATED",changes={"origin":"SYDNEY_WEEKLY_PLAN"})
                     created.append(row.pk)
+                proposed,skipped,existing,tasks=plan()
         else:
             proposed,skipped,existing,tasks=plan()
         return Response({"mode":mode,"timezone":str(tz),"proposed":proposed,"skipped":skipped,"existing":existing,"tasks":tasks,"created_ids":created,"workout_plan_recorded":bool((health.get("today") or {}).get("planned_workout")),"scope":"Proposed routine blocks only; existing appointments unchanged. No workout, grocery purchase, payment or development completion is inferred."})
