@@ -22,7 +22,7 @@ from .assist_internal_connections import SyncAssistInternalConnectionsView
 from .assist_growth_prospects import SyncAssistGrowthProspectsView, SyncAssistGrowthProspectStageView
 from .assist_growth_operations_views import SyncAssistGrowthCampaignView, SyncAssistOperationsBriefView
 from .assist_daily_views import SyncAssistDailyView, SyncAssistDailyItemView
-from .assist_chief_views import JarvisCasesView, JarvisCaseDecisionView, JarvisChiefBriefingView, JarvisChiefArchiveView, JarvisChiefDailyReviewView, JarvisChiefScheduleView
+from .assist_chief_views import JarvisCasesView, JarvisCaseDecisionView, JarvisChiefBriefingView, JarvisChiefArchiveView, JarvisChiefDailyReviewView, JarvisChiefScheduleView, JarvisChiefExecutionView
 from .assist_outlook_views import OutlookStatus, OutlookConnect, OutlookCallback, OutlookInbox, OutlookDraft, OutlookSend, OutlookDisconnect
 from .assist_multi_mailbox_views import MultiMailboxView, MultiMailboxConnect, MultiMailboxCallback, MultiMailboxInbox
 from .assist_property_mail_analysis import SarahPropertyMailAnalysisView
@@ -99,6 +99,7 @@ urlpatterns = [
     path("assist/pilot/workday/jobs/<str:goal_id>/cancel/", SyncAssistJobCancelView.as_view(), name="sync-assist-job-cancel"),
     path("assist/pilot/workday/", SyncAssistWorkdayView.as_view(), name="sync-assist-workday"),
     path("assist/pilot/workday/<str:goal_id>/steps/<str:step_id>/", SyncAssistWorkdayProgressView.as_view(), name="sync-assist-workday-progress"),
+    path("assist/pilot/chief/execute/", JarvisChiefExecutionView.as_view(), name="assist-chief-execute"),
     path("assist/pilot/chief/schedule/", JarvisChiefScheduleView.as_view(), name="assist-chief-schedule"),
     path("assist/pilot/chief/daily-review/", JarvisChiefDailyReviewView.as_view(), name="assist-chief-daily-review"),
     path("assist/pilot/chief/archive/", JarvisChiefArchiveView.as_view(), name="assist-chief-archive"),
