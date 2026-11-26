@@ -90,10 +90,10 @@ def synthesize_sync_voice(text: str, role: str = "sync") -> SyncVoiceAudio:
                 "text": text,
                 "model_id": model_id,
                 "voice_settings": {
-                    "stability": 0.42 if role == "founder_chief" else 0.55,
+                    "stability": 0.68 if role == "founder_chief" else 0.55,
                     **({"speed": 0.88} if role == "founder_chief" else {}),
-                    "similarity_boost": 0.78,
-                    "style": 0.18,
+                    "similarity_boost": 0.88 if role == "founder_chief" else 0.78,
+                    "style": 0.05 if role == "founder_chief" else 0.18,
                     "use_speaker_boost": True,
                 },
             },
