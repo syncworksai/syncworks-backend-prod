@@ -585,3 +585,52 @@ class JarvisChiefExecutionView(APIView):
                     conflicts.append({"game":row.title,"with":other.title,"event_id":row.pk})
             receipt=AuditLog.objects.create(actor=request.user,action="sync_assist.chief.sports_import",metadata={"created_ids":created,"updated_ids":updated,"unchanged_ids":unchanged,"failed_feeds":failures})
         return Response({"receipt_id":receipt.pk,"created_ids":created,"updated_ids":updated,"unchanged_ids":unchanged,"failed_feeds":failures,"undated_skipped":undated,"conflicts":conflicts[:30],"conflict_count":len(conflicts),"coverage":"NFL, Alabama football and men's basketball, Vanderbilt baseball only; remaining Alabama sports not connected","outlook_writeback":False,"automatic_refresh":False,"email_sent":False})
+
+
+class JarvisChiefAgentView(APIView):
+    """Bounded owner-scoped memory and read-only planning; writes require explicit commands."""
+    permission_classes = [IsAuthenticated]
+    memory_action = "sync_assist.chief.memory.v1"
+    reset_action = "sync_assist.chief.memory_reset.v1"
+
+    def _history(self,user):
+        reset=AuditLog.objects.filter(actor=user,action=self.reset_action).order_by("-id").first()
+        rows=AuditLog.objects.filter(actor=user,action=self.memory_action)
+        if reset: rows=rows.filter(id__gt=reset.pk)
+        return [r.metadata for r in reversed(list(rows.order_by("-id")[:12]))]
+
+    def get(self,request):
+        if not _pilot(request.user):
+            return Response({"detail":"Private pilot only."},status=403)
+        from personal_calendar.models import PersonalCalendarEvent
+        from django.db.models import Q
+        now=timezone.now()
+        records=PersonalCalendarEvent.objects.filter(owner=request.user,status="ACTIVE")
+        tasks=records.filter(metadata__entity_type="TASK").filter(Q(metadata__task_status="OPEN")|Q(metadata__task_status__isnull=True))
+        upcoming=records.filter(start_at__gte=now).exclude(metadata__entity_type__in=["TASK","PROJECT"]).order_by("start_at")
+        return Response({"history":self._history(request.user),"open_task_count":tasks.count(),
+            "tasks":list(tasks.order_by("start_at").values("id","title")[:12]),
+            "upcoming":list(upcoming.values("id","title","start_at")[:8])})
+
+    def post(self,request):
+        if not _pilot(request.user):
+            return Response({"detail":"Private pilot only."},status=403)
+        from django.contrib.auth import get_user_model
+        action=request.data.get("action")
+        if action=="reset":
+            AuditLog.objects.create(actor=request.user,action=self.reset_action,metadata={})
+            return Response({"reset":True})
+        if action!="remember_turn":
+            return Response({"detail":"Unsupported memory action."},status=400)
+        question=request.data.get("question")
+        answer=request.data.get("answer")
+        if not isinstance(question,str) or not isinstance(answer,str) or not question.strip() or not answer.strip():
+            return Response({"detail":"A conversation turn is required."},status=400)
+        # Explicitly opt-in conversation memory; avoid persisting likely credentials.
+        import re
+        if re.search(r"(?i)(password|passcode|api[_ -]?key|secret|access[_ -]?token|recovery code|social security|routing number|account number)\s*(?:is|=|:)",question+" "+answer):
+            return Response({"saved":False,"reason":"Potential credential omitted."})
+        with transaction.atomic():
+            get_user_model().objects.select_for_update().get(pk=request.user.pk)
+            row=AuditLog.objects.create(actor=request.user,action=self.memory_action,metadata={"question":question[:1000],"answer":answer[:1200],"recorded_at":timezone.now().isoformat(),"source":"conversation_not_verified"})
+        return Response({"saved":True,"receipt_id":row.pk})
