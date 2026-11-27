@@ -515,8 +515,24 @@ class JarvisChiefExecutionView(APIView):
             from .assist_assignment_views import _snapshot
             reports=[a["audit_receipt"] for a in _snapshot(request.user)["assignments"] if a.get("role")=="QUALITY_ASSURANCE" and a.get("audit_receipt") and a.get("state")!="ARCHIVED"]
             return Response({"reports":reports[:5]})
+        if command in {"enable_property_review","disable_property_review"}:
+            enabled=command=="enable_property_review"
+            with transaction.atomic():
+                get_user_model().objects.select_for_update().get(pk=request.user.pk)
+                if property_monitor_status(request.user)["enabled"]!=enabled:
+                    AuditLog.objects.create(actor=request.user,action=PROPERTY_MONITOR,metadata={"enabled":enabled})
+            return Response(property_monitor_status(request.user))
+        if command=="run_property_review":
+            return Response(run_property_review(request.user))
+        if command=="show_property_findings":
+            row=AuditLog.objects.filter(actor=request.user,action=PROPERTY_RECEIPT).order_by("-id").first()
+            return Response({"report":row.metadata if row else None})
+        if command=="employee_status":
+            from .assist_assignment_views import _snapshot
+            items=_snapshot(request.user)["assignments"]
+            return Response({"pending":sum(a.get("state")=="AWAITING_REVIEW" and not a.get("audit_receipt") for a in items),"qa_reports":sum(bool(a.get("audit_receipt")) and a.get("state")!="ARCHIVED" for a in items),"reports_awaiting_review":sum(bool(a.get("audit_receipt")) and a.get("state")=="AWAITING_REVIEW" for a in items)})
         if command=="list_responsibilities":
-            return Response({"responsibilities":[sports_monitor_status(request.user),daily_monitor_status(request.user)]})
+            return Response({"responsibilities":[sports_monitor_status(request.user),daily_monitor_status(request.user),property_monitor_status(request.user)]})
 
         if command not in {"save_preferences","import_sports","complete_task","enable_sports_refresh","disable_sports_refresh"}:
             return Response({"detail":"Unsupported command."},status=400)
@@ -711,7 +727,7 @@ class JarvisChiefAgentView(APIView):
         tasks=records.filter(metadata__entity_type="TASK").filter(Q(metadata__task_status="OPEN")|Q(metadata__task_status__isnull=True))
         upcoming=records.filter(start_at__gte=now).exclude(metadata__entity_type__in=["TASK","PROJECT"]).order_by("start_at")
         if request.query_params.get("view")=="responsibilities":
-            return Response({"responsibilities":[sports_monitor_status(request.user),daily_monitor_status(request.user)],"notice":"Sports and daily task review have registered recurring handlers."})
+            return Response({"responsibilities":[sports_monitor_status(request.user),daily_monitor_status(request.user),property_monitor_status(request.user)],"notice":"Sports, daily task review and property review have registered recurring handlers."})
         if request.query_params.get("view")=="conversations":
             return Response({"conversations":self._conversations(request.user)})
         return Response({"history":self._history(request.user),"open_task_count":tasks.count(),
@@ -867,4 +883,59 @@ def refresh_due_sydney_daily_review():
             receipt={"ok":False,"reason":"Daily review failed; retry on next cycle."}
         AuditLog.objects.create(actor=user,action=DAILY_MONITOR_RECEIPT,metadata=receipt)
         return {"processed":1,**receipt}
+    return {"processed":0}
+
+
+PROPERTY_MONITOR="sync_assist.chief.property_monitor.v1"
+PROPERTY_RECEIPT="sync_assist.chief.property_monitor.receipt"
+PROPERTY_CLAIM="sync_assist.chief.property_monitor.claim"
+
+def property_monitor_status(user):
+    from datetime import timedelta
+    setting=AuditLog.objects.filter(actor=user,action=PROPERTY_MONITOR).order_by("-id").first()
+    enabled=bool(setting and (setting.metadata or {}).get("enabled") is True)
+    claim=AuditLog.objects.filter(actor=user,action=PROPERTY_CLAIM).order_by("-id").first()
+    receipt=AuditLog.objects.filter(actor=user,action=PROPERTY_RECEIPT).order_by("-id").first()
+    return {"kind":"standing","objective":"Sarah's property review","enabled":enabled,"interval_hours":24,
+        "next_due_at":max(timezone.now(),claim.created_at+timedelta(hours=24)).isoformat() if enabled and claim else timezone.now().isoformat() if enabled else None,
+        "last_success_at":receipt.created_at.isoformat() if receipt and receipt.metadata.get("ok") else None,"requires_runtime":True}
+
+def run_property_review(user):
+    from .assist_property_portfolio import build_property_review
+    from django.contrib.auth import get_user_model
+    with transaction.atomic():
+        get_user_model().objects.select_for_update().get(pk=user.pk)
+        result=build_property_review(user)
+        properties=result["properties"]
+        flags=[{"id":p["id"],"name":p["name"],"detail_url":p["detail_url"],
+            "overdue_projects":p["operations"]["overdue_projects"],
+            "leases_ending":p["operations"]["recorded_leases_ending_within_60_days"],
+            "correspondence_issues":p["correspondence_issues"]} for p in properties
+            if p["operations"]["overdue_projects"] or p["operations"]["recorded_leases_ending_within_60_days"] or p["correspondence_issues"]]
+        previous=AuditLog.objects.filter(actor=user,action=PROPERTY_RECEIPT).order_by("-id").first()
+        changed=not previous or (previous.metadata or {}).get("flags")!=flags
+        report={"ok":True,"property_count":len(properties),"flags":flags,"changed":changed,
+            "generated_at":timezone.now().isoformat(),"coverage_note":result["coverage_note"],
+            "ledger_verified":False,"mailbox_scanned":False,"model_calls":0}
+        AuditLog.objects.create(actor=user,action=PROPERTY_RECEIPT,metadata=report)
+        return report
+
+def refresh_due_sydney_property_review():
+    from django.contrib.auth import get_user_model
+    from datetime import timedelta
+    import logging
+    ids=AuditLog.objects.filter(action=PROPERTY_MONITOR).order_by().values_list("actor_id",flat=True).distinct()[:20]
+    for user in get_user_model().objects.filter(pk__in=list(ids),is_active=True):
+        if not _pilot(user): continue
+        with transaction.atomic():
+            get_user_model().objects.select_for_update().get(pk=user.pk)
+            if not property_monitor_status(user)["enabled"]: continue
+            if AuditLog.objects.filter(actor=user,action=PROPERTY_CLAIM,created_at__gte=timezone.now()-timedelta(hours=24)).exists(): continue
+            AuditLog.objects.create(actor=user,action=PROPERTY_CLAIM,metadata={})
+        try:
+            report=run_property_review(user)
+            return {"processed":1,"properties":report["property_count"],"flagged":len(report["flags"]),"changed":report["changed"]}
+        except Exception:
+            logging.getLogger(__name__).exception("Sarah property review failed")
+            return {"processed":1,"failed":True}
     return {"processed":0}
