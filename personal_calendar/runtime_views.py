@@ -47,6 +47,8 @@ class CalendarRuntimeAPIView(APIView):
         from sync_ai.assist_chief_views import refresh_due_sydney_sports, refresh_due_sydney_daily_review
         sports_result = refresh_due_sydney_sports()
         daily_result = refresh_due_sydney_daily_review()
+        from sync_ai.assist_assignment_views import run_pending_sydney_qa
+        qa_result = run_pending_sydney_qa()
         return Response(
             {
                 "ok": True,
@@ -58,5 +60,6 @@ class CalendarRuntimeAPIView(APIView):
                 "sync_operational_alerts": operational_alert_result,
                 "sydney_sports": sports_result,
                 "sydney_daily_review": daily_result,
+                "sydney_qa": qa_result,
             }
         )
