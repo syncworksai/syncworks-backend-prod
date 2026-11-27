@@ -303,55 +303,62 @@ class JarvisChiefDailyReviewView(APIView):
     def post(self, request):
         if not _pilot(request.user):
             return Response({"detail": "Private pilot only."}, status=403)
-        from personal_calendar.models import PersonalCalendarEvent, PersonalCalendarEventAudit
-        from django.contrib.auth import get_user_model
-        from datetime import timedelta
-        from zoneinfo import ZoneInfo
-        from .assistant_daily_state import _finance_state, _health_state
-        now = timezone.now()
-        today = now.astimezone(ZoneInfo("America/Chicago")).date()
-        money = _finance_state(request.user, today)
-        health = _health_state(request.user)
-        proposals = []
-        for bill in money.get("due_next_7_days", []):
-            amount = bill.get("amount")
-            title = "Review " + str(bill["name"]) + (" payment of $" + format(amount, ",.2f") if amount is not None else " payment") + " due " + bill["due_date"]
-            proposals.append(("bill:"+bill["type"]+":"+str(bill["id"])+":"+bill["due_date"], title, "/customer/finance", bill["due_date"]))
-        if not (health.get("today") or {}).get("planned_workout"):
-            proposals.append(("health:plan:"+today.isoformat(), "Set today's workout plan", "/customer/health", today.isoformat()))
-        confirmed = request.data.get("completed_task_ids", [])
-        if not isinstance(confirmed, list) or len(confirmed)>100 or any(not isinstance(i,int) or isinstance(i,bool) for i in confirmed):
-            return Response({"detail":"Invalid task IDs."},status=400)
-        with transaction.atomic():
-            get_user_model().objects.select_for_update().get(pk=request.user.pk)
-            qs = PersonalCalendarEvent.objects.filter(owner=request.user,status="ACTIVE",metadata__entity_type="TASK")
-            tasks = list(qs.select_for_update())
-            keys = {str((t.metadata or {}).get("sydney_action_key")) for t in tasks}
-            created = 0
-            for key,title,url,due in proposals:
-                if key in keys:
-                    continue
-                row = PersonalCalendarEvent.objects.create(owner=request.user,title=title[:180],start_at=now,end_at=now+timedelta(minutes=30),source="SYNC",created_by_sync=True,metadata={"entity_type":"TASK","task_status":"OPEN","task_unscheduled":True,"origin":"SYDNEY","sydney_action_key":key,"action_url":url,"due_date":due})
-                PersonalCalendarEventAudit.objects.create(event=row,actor=request.user,action="CREATED",changes={"origin":"SYDNEY_DAILY_REVIEW"})
-                tasks.append(row)
-                keys.add(key)
-                created += 1
-            for row in tasks:
-                meta = row.metadata or {}
-                if meta.get("task_status","OPEN")!="OPEN":
-                    continue
-                key = str(meta.get("sydney_action_key",""))
-                owner_confirmed = row.pk in confirmed
-                workout_planned = key=="health:plan:"+today.isoformat() and bool((health.get("today") or {}).get("planned_workout"))
-                if not (owner_confirmed or workout_planned):
-                    continue
-                evidence = "owner_confirmation" if owner_confirmed else "recorded_workout_plan"
-                row.metadata = {**meta,"task_status":"DONE","completed_at":now.isoformat(),"completion_source":evidence}
-                row.save(update_fields=["metadata","updated_at"])
-                PersonalCalendarEventAudit.objects.create(event=row,actor=request.user,action="UPDATED",changes={"task_status":"DONE","completion_source":evidence})
-        last = AuditLog.objects.filter(actor=request.user,action="sync_assist.chief.briefing_saved").order_by("-id").first()
-        cutoff = last.created_at if last else now-timedelta(days=1)
-        return Response({"created":created,"since":cutoff.isoformat(),"tasks":[{"id":t.pk,"title":t.title,"status":(t.metadata or {}).get("task_status","OPEN"),"url":(t.metadata or {}).get("action_url"),"note":(t.metadata or {}).get("task_note",""),"due_date":(t.metadata or {}).get("due_date"),"recently_completed":(t.metadata or {}).get("task_status")=="DONE" and t.updated_at>=cutoff} for t in tasks],"scope":"Recorded obligations and workout planning; no payments or completed workouts inferred."})
+        try:
+            return Response(reconcile_sydney_daily_tasks(request.user,request.data.get("completed_task_ids", [])))
+        except ValueError:
+            return Response({"detail":"Invalid task IDs or invalid source data."},status=400)
+
+
+def reconcile_sydney_daily_tasks(user, confirmed=None):
+    confirmed=[] if confirmed is None else confirmed
+    from personal_calendar.models import PersonalCalendarEvent, PersonalCalendarEventAudit
+    from django.contrib.auth import get_user_model
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+    from .assistant_daily_state import _finance_state, _health_state
+    now = timezone.now()
+    today = now.astimezone(ZoneInfo("America/Chicago")).date()
+    money = _finance_state(user, today)
+    health = _health_state(user)
+    proposals = []
+    for bill in money.get("due_next_7_days", []):
+        amount = bill.get("amount")
+        title = "Review " + str(bill["name"]) + (" payment of $" + format(amount, ",.2f") if amount is not None else " payment") + " due " + bill["due_date"]
+        proposals.append(("bill:"+bill["type"]+":"+str(bill["id"])+":"+bill["due_date"], title, "/customer/finance", bill["due_date"]))
+    if not (health.get("today") or {}).get("planned_workout"):
+        proposals.append(("health:plan:"+today.isoformat(), "Set today's workout plan", "/customer/health", today.isoformat()))
+    if not isinstance(confirmed, list) or len(confirmed)>100 or any(not isinstance(i,int) or isinstance(i,bool) for i in confirmed):
+        raise ValueError("Invalid task IDs.")
+    with transaction.atomic():
+        get_user_model().objects.select_for_update().get(pk=user.pk)
+        qs = PersonalCalendarEvent.objects.filter(owner=user,status="ACTIVE",metadata__entity_type="TASK")
+        tasks = list(qs.select_for_update())
+        keys = {str((t.metadata or {}).get("sydney_action_key")) for t in tasks}
+        created = 0
+        for key,title,url,due in proposals:
+            if key in keys:
+                continue
+            row = PersonalCalendarEvent.objects.create(owner=user,title=title[:180],start_at=now,end_at=now+timedelta(minutes=30),source="SYNC",created_by_sync=True,metadata={"entity_type":"TASK","task_status":"OPEN","task_unscheduled":True,"origin":"SYDNEY","sydney_action_key":key,"action_url":url,"due_date":due})
+            PersonalCalendarEventAudit.objects.create(event=row,actor=user,action="CREATED",changes={"origin":"SYDNEY_DAILY_REVIEW"})
+            tasks.append(row)
+            keys.add(key)
+            created += 1
+        for row in tasks:
+            meta = row.metadata or {}
+            if meta.get("task_status","OPEN")!="OPEN":
+                continue
+            key = str(meta.get("sydney_action_key",""))
+            owner_confirmed = row.pk in confirmed
+            workout_planned = key=="health:plan:"+today.isoformat() and bool((health.get("today") or {}).get("planned_workout"))
+            if not (owner_confirmed or workout_planned):
+                continue
+            evidence = "owner_confirmation" if owner_confirmed else "recorded_workout_plan"
+            row.metadata = {**meta,"task_status":"DONE","completed_at":now.isoformat(),"completion_source":evidence}
+            row.save(update_fields=["metadata","updated_at"])
+            PersonalCalendarEventAudit.objects.create(event=row,actor=user,action="UPDATED",changes={"task_status":"DONE","completion_source":evidence})
+    last = AuditLog.objects.filter(actor=user,action="sync_assist.chief.briefing_saved").order_by("-id").first()
+    cutoff = last.created_at if last else now-timedelta(days=1)
+    return {"created":created,"since":cutoff.isoformat(),"tasks":[{"id":t.pk,"title":t.title,"status":(t.metadata or {}).get("task_status","OPEN"),"url":(t.metadata or {}).get("action_url"),"note":(t.metadata or {}).get("task_note",""),"due_date":(t.metadata or {}).get("due_date"),"recently_completed":(t.metadata or {}).get("task_status")=="DONE" and t.updated_at>=cutoff} for t in tasks],"scope":"Recorded obligations and workout planning; no payments or completed workouts inferred."}
 
 
 class JarvisChiefArchiveView(APIView):
@@ -687,7 +694,7 @@ class JarvisChiefAgentView(APIView):
         tasks=records.filter(metadata__entity_type="TASK").filter(Q(metadata__task_status="OPEN")|Q(metadata__task_status__isnull=True))
         upcoming=records.filter(start_at__gte=now).exclude(metadata__entity_type__in=["TASK","PROJECT"]).order_by("start_at")
         if request.query_params.get("view")=="responsibilities":
-            return Response({"responsibilities":[sports_monitor_status(request.user)],"notice":"Only the sports monitor has a registered recurring handler. Other monitoring objectives are not yet executable."})
+            return Response({"responsibilities":[sports_monitor_status(request.user),daily_monitor_status(request.user)],"notice":"Sports and daily task review have registered recurring handlers."})
         if request.query_params.get("view")=="conversations":
             return Response({"conversations":self._conversations(request.user)})
         return Response({"history":self._history(request.user),"open_task_count":tasks.count(),
@@ -699,6 +706,9 @@ class JarvisChiefAgentView(APIView):
             return Response({"detail":"Private pilot only."},status=403)
         from django.contrib.auth import get_user_model
         action=request.data.get("action")
+        if action in {"enable_daily_review","disable_daily_review"}:
+            AuditLog.objects.create(actor=request.user,action=DAILY_MONITOR_ACTION,metadata={"enabled":action=="enable_daily_review"})
+            return Response(daily_monitor_status(request.user))
         if action=="reset":
             AuditLog.objects.create(actor=request.user,action=self.reset_action,metadata={})
             return Response({"reset":True})
@@ -803,4 +813,41 @@ def refresh_due_sydney_sports():
         except Exception:
             AuditLog.objects.create(actor=user,action="sync_assist.chief.sports_refresh_error",metadata={"reason":"Refresh failed; retry on next daily cycle."})
             return {"processed":1,"failed":True}
+    return {"processed":0}
+
+
+DAILY_MONITOR_ACTION="sync_assist.chief.daily_monitor.v1"
+DAILY_MONITOR_RECEIPT="sync_assist.chief.daily_monitor.receipt"
+DAILY_MONITOR_CLAIM="sync_assist.chief.daily_monitor.claim"
+
+def daily_monitor_status(user):
+    from datetime import timedelta
+    setting=AuditLog.objects.filter(actor=user,action=DAILY_MONITOR_ACTION).order_by("-id").first()
+    enabled=bool(setting and (setting.metadata or {}).get("enabled") is True)
+    claim=AuditLog.objects.filter(actor=user,action=DAILY_MONITOR_CLAIM).order_by("-id").first()
+    receipt=AuditLog.objects.filter(actor=user,action=DAILY_MONITOR_RECEIPT).order_by("-id").first()
+    return {"kind":"standing","objective":"Daily executive task review","enabled":enabled,"interval_hours":24,
+        "next_due_at":max(timezone.now(),claim.created_at+timedelta(hours=24)).isoformat() if enabled and claim else timezone.now().isoformat() if enabled else None,
+        "last_success_at":receipt.created_at.isoformat() if receipt and receipt.metadata.get("ok") else None,
+        "last_result":receipt.metadata if receipt else None,"requires_runtime":True}
+
+def refresh_due_sydney_daily_review():
+    from datetime import timedelta
+    from django.contrib.auth import get_user_model
+    now=timezone.now()
+    ids=AuditLog.objects.filter(action=DAILY_MONITOR_ACTION).order_by().values_list("actor_id",flat=True).distinct()[:20]
+    for user in get_user_model().objects.filter(pk__in=list(ids),is_active=True):
+        if not _pilot(user): continue
+        with transaction.atomic():
+            get_user_model().objects.select_for_update().get(pk=user.pk)
+            if not daily_monitor_status(user)["enabled"]: continue
+            if AuditLog.objects.filter(actor=user,action=DAILY_MONITOR_CLAIM,created_at__gte=now-timedelta(hours=24)).exists(): continue
+            AuditLog.objects.create(actor=user,action=DAILY_MONITOR_CLAIM,metadata={})
+        try:
+            result=reconcile_sydney_daily_tasks(user)
+            receipt={"ok":True,"created":result["created"],"open_tasks":sum(t["status"]=="OPEN" for t in result["tasks"])}
+        except Exception:
+            receipt={"ok":False,"reason":"Daily review failed; retry on next cycle."}
+        AuditLog.objects.create(actor=user,action=DAILY_MONITOR_RECEIPT,metadata=receipt)
+        return {"processed":1,**receipt}
     return {"processed":0}
