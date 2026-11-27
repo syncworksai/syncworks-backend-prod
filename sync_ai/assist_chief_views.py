@@ -634,3 +634,61 @@ class JarvisChiefAgentView(APIView):
             get_user_model().objects.select_for_update().get(pk=request.user.pk)
             row=AuditLog.objects.create(actor=request.user,action=self.memory_action,metadata={"question":question[:1000],"answer":answer[:1200],"recorded_at":timezone.now().isoformat(),"source":"conversation_not_verified"})
         return Response({"saved":True,"receipt_id":row.pk})
+
+
+class JarvisChiefOrchestratorView(APIView):
+    """Deterministic tool selection for explicit, supported internal objectives."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not _pilot(request.user):
+            return Response({"detail":"Private pilot only."},status=403)
+        from uuid import UUID
+        from .assist_workday_views import CREATED as GOAL_CREATED, MAX_GOALS, _snapshot
+        from .assist_job_queue import enqueue_goal, serialize_job
+        from .assist_assignment_views import CREATED as ASSIGNMENT_CREATED, MAX_ITEMS
+        from django.contrib.auth import get_user_model
+        import re
+        text=request.data.get("objective")
+        if not isinstance(text,str) or not 1<=len(text.strip())<=500:
+            return Response({"detail":"Provide an objective of 1–500 characters."},status=400)
+        try: key=str(UUID(str(request.data.get("request_id"))))
+        except (ValueError,TypeError,AttributeError):
+            return Response({"detail":"Stable request ID required."},status=400)
+        objective=text.strip()
+        # Allow only positively identified, explicit owner requests; no inferred
+        # permissions, arbitrary model-selected code, payment or outbound actions.
+        match=re.fullmatch(r"(?:please )?(?:assign|ask|delegate to)\s+(sarah|kylee|yasmine|christy|whitney|olivia|naomi|rebecca|sophia|fitness coach)\s+(?:to\s+)?(.+)",objective,re.I)
+        roles={"sarah":"PROPERTY_MANAGER","kylee":"QUALITY_ASSURANCE","yasmine":"TECHNOLOGY_RESEARCH","christy":"EXECUTIVE_ASSISTANT","whitney":"BUSINESS_MANAGER","olivia":"SALES_MANAGER","naomi":"MARKETING_MANAGER","rebecca":"CUSTOMER_SERVICE","sophia":"RESEARCH_ANALYST","fitness coach":"PERSONAL_TRAINER"}
+        growth=bool(re.fullmatch(r"(?:please )?(?:coordinate|run|prepare|review) (?:my |the )?(?:internal )?(?:prospect|sales) (?:review|outreach review|research workflow)[.!]?",objective,re.I))
+        if not match and not growth:
+            return Response({"handled":False,"reason":"No supported execution objective matched."})
+        with transaction.atomic():
+            get_user_model().objects.select_for_update().get(pk=request.user.pk)
+            prior=AuditLog.objects.filter(actor=request.user,action__in=[GOAL_CREATED,ASSIGNMENT_CREATED],metadata__sydney_request_id=key).first()
+            if prior:
+                m=prior.metadata
+                if m.get("sydney_objective")!=objective:
+                    return Response({"detail":"Request ID reused for a different objective."},status=409)
+                return Response({"handled":True,"kind":"goal" if prior.action==GOAL_CREATED else "assignment","id":m.get("goal_id") or m.get("assignment_id"),"created":False,"message":"This request was already recorded. Check the existing work queue."})
+            if match:
+                name=match.group(1).lower()
+                task=match.group(2).strip()
+                if AuditLog.objects.filter(actor=request.user,action=ASSIGNMENT_CREATED).count()>=MAX_ITEMS:
+                    return Response({"detail":"Pilot assignment limit reached."},status=429)
+                identifier=str(uuid4())
+                AuditLog.objects.create(actor=request.user,action=ASSIGNMENT_CREATED,metadata={"request_id":key,"sydney_request_id":key,"sydney_objective":objective,"assignment_id":identifier,"role":roles[name],"kind":"TASK","description":task,"ticket_id":None,"requires_approval":True,"suggested_next_action":"Review assignment scope and available tools before execution."})
+                return Response({"handled":True,"kind":"assignment","id":identifier,"created":True,"message":name.title()+" has a saved assignment awaiting review. Work has not yet been executed.","url":"/sync/assist/assignments"},status=201)
+            if AuditLog.objects.filter(actor=request.user,action=GOAL_CREATED).count()>=MAX_GOALS:
+                return Response({"detail":"Pilot goal limit reached."},status=429)
+            identifier=str(uuid4())
+            steps=[{"id":str(uuid4()),"role":role,"task":task} for role,task in [
+                ("RESEARCH_ANALYST","Review existing internal prospect records."),
+                ("SALES_MANAGER","Prepare unsent outreach from approved research."),
+                ("CHIEF_OF_STAFF","Summarize approved results and decisions.")]]
+            AuditLog.objects.create(actor=request.user,action=GOAL_CREATED,metadata={"goal_id":identifier,"goal":objective,"steps":steps,"source_mode":"INTERNAL_ONLY","public_search_query":"","sydney_request_id":key,"sydney_objective":objective})
+            job,result=enqueue_goal(request.user,identifier)
+            if job is None:
+                transaction.set_rollback(True)
+                return Response({"detail":"Could not enroll internal workflow."},status=409)
+            return Response({"handled":True,"kind":"goal","id":identifier,"created":True,"job":serialize_job(job),"message":"Internal prospect review queued with research, sales drafts and executive review. Each handoff requires review. No external messages will be sent.","url":"/sync/assist/daily"},status=201)
