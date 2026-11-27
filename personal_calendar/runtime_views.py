@@ -44,8 +44,9 @@ class CalendarRuntimeAPIView(APIView):
             user_offset=slot * alert_batch_size,
         )
         operational_alert_result = refresh_operational_sync_alerts()
-        from sync_ai.assist_chief_views import refresh_due_sydney_sports
+        from sync_ai.assist_chief_views import refresh_due_sydney_sports, refresh_due_sydney_daily_review
         sports_result = refresh_due_sydney_sports()
+        daily_result = refresh_due_sydney_daily_review()
         return Response(
             {
                 "ok": True,
@@ -56,5 +57,6 @@ class CalendarRuntimeAPIView(APIView):
                 "sync_alerts": alert_result,
                 "sync_operational_alerts": operational_alert_result,
                 "sydney_sports": sports_result,
+                "sydney_daily_review": daily_result,
             }
         )
