@@ -483,7 +483,7 @@ class JarvisChiefExecutionView(APIView):
         rows = PersonalCalendarEvent.objects.filter(owner=request.user, status="ACTIVE", metadata__origin="SYDNEY_SPORTS", start_at__gte=timezone.now())
         return Response({"preferences": saved.metadata if saved else None, "upcoming_saved": rows.count(),
                          "events": list(rows.order_by("start_at").values("id","title","start_at")[:20]),
-                         "outlook_writeback": False, "automatic_refresh": sports_refresh_enabled(request.user), "last_refresh": AuditLog.objects.filter(actor=request.user,action=SPORTS_IMPORT_ACTION).order_by("-id").values_list("created_at",flat=True).first()})
+                         "outlook_writeback": False, "monitor": sports_monitor_status(request.user), "automatic_refresh": sports_refresh_enabled(request.user), "last_refresh": AuditLog.objects.filter(actor=request.user,action=SPORTS_IMPORT_ACTION).order_by("-id").values_list("created_at",flat=True).first()})
 
     def post(self, request):
         if not _pilot(request.user):
@@ -530,6 +530,15 @@ SPORTS_IMPORT_ACTION = "sync_assist.chief.sports_import"
 def sports_refresh_enabled(user):
     row=AuditLog.objects.filter(actor=user,action=SPORTS_AUTO_ACTION).order_by("-id").first()
     return bool(row and (row.metadata or {}).get("enabled") is True)
+
+def sports_monitor_status(user):
+    from datetime import timedelta
+    enabled=sports_refresh_enabled(user)
+    latest=AuditLog.objects.filter(actor=user,action__in=[SPORTS_IMPORT_ACTION,"sync_assist.chief.sports_refresh_claim"]).order_by("-id").first()
+    receipt=AuditLog.objects.filter(actor=user,action=SPORTS_IMPORT_ACTION).order_by("-id").first()
+    error=AuditLog.objects.filter(actor=user,action="sync_assist.chief.sports_refresh_error").order_by("-id").first()
+    next_due=max(timezone.now(),latest.created_at+timedelta(hours=24)) if latest else timezone.now()
+    return {"kind":"standing","objective":"Maintain sports calendar","enabled":enabled,"interval_hours":24,"next_due_at":next_due.isoformat() if enabled else None,"last_success_at":receipt.created_at.isoformat() if receipt else None,"last_error_at":error.created_at.isoformat() if error else None,"last_feed_results":(receipt.metadata or {}).get("feed_results",[]) if receipt else [],"last_failed_feeds":(receipt.metadata or {}).get("failed_feeds",[]) if receipt else [],"requires_runtime":True}
 
 def import_sydney_sports(user):
     from django.contrib.auth import get_user_model
