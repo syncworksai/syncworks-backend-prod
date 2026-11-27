@@ -508,6 +508,13 @@ class JarvisChiefExecutionView(APIView):
                 if daily_monitor_status(request.user)["enabled"] != enabled:
                     AuditLog.objects.create(actor=request.user,action=DAILY_MONITOR_ACTION,metadata={"enabled":enabled})
             return Response(daily_monitor_status(request.user))
+        if command=="run_kylee_audit":
+            from .assist_assignment_views import execute_dashboard_audit
+            return Response(execute_dashboard_audit(request.user))
+        if command=="show_kylee_findings":
+            from .assist_assignment_views import _snapshot
+            reports=[a["audit_receipt"] for a in _snapshot(request.user)["assignments"] if a.get("role")=="QUALITY_ASSURANCE" and a.get("audit_receipt") and a.get("state")!="ARCHIVED"]
+            return Response({"reports":reports[:5]})
         if command=="list_responsibilities":
             return Response({"responsibilities":[sports_monitor_status(request.user),daily_monitor_status(request.user)]})
 
