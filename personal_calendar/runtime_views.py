@@ -44,6 +44,8 @@ class CalendarRuntimeAPIView(APIView):
             user_offset=slot * alert_batch_size,
         )
         operational_alert_result = refresh_operational_sync_alerts()
+        from sync_ai.assist_chief_views import refresh_due_sydney_sports
+        sports_result = refresh_due_sydney_sports()
         return Response(
             {
                 "ok": True,
@@ -53,5 +55,6 @@ class CalendarRuntimeAPIView(APIView):
                 "travel_monitoring": travel_result,
                 "sync_alerts": alert_result,
                 "sync_operational_alerts": operational_alert_result,
+                "sydney_sports": sports_result,
             }
         )
