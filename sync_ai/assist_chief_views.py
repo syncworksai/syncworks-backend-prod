@@ -735,3 +735,27 @@ class JarvisChiefOrchestratorView(APIView):
                 transaction.set_rollback(True)
                 return Response({"detail":"Could not enroll internal workflow."},status=409)
             return Response({"handled":True,"kind":"goal","id":identifier,"created":True,"job":serialize_job(job),"message":"Internal prospect review queued with research, sales drafts and executive review. Each handoff requires review. No external messages will be sent.","url":"/sync/assist/daily"},status=201)
+
+
+def refresh_due_sydney_sports():
+    """One opted-in pilot per invocation, with atomic daily claim before network I/O."""
+    from datetime import timedelta
+    from django.contrib.auth import get_user_model
+    from .assist_pilot_views import _pilot
+    claim_action="sync_assist.chief.sports_refresh_claim"
+    now=timezone.now()
+    ids=AuditLog.objects.filter(action=SPORTS_AUTO_ACTION).order_by().values_list("actor_id",flat=True).distinct()[:20]
+    for user in get_user_model().objects.filter(pk__in=list(ids),is_active=True):
+        if not _pilot(user): continue
+        with transaction.atomic():
+            get_user_model().objects.select_for_update().get(pk=user.pk)
+            if not sports_refresh_enabled(user): continue
+            if AuditLog.objects.filter(actor=user,action__in=[claim_action,SPORTS_IMPORT_ACTION],created_at__gte=now-timedelta(hours=24)).exists(): continue
+            AuditLog.objects.create(actor=user,action=claim_action,metadata={"claimed_at":now.isoformat()})
+        try:
+            result=import_sydney_sports(user)
+            return {"processed":1,"created":len(result["created_ids"]),"updated":len(result["updated_ids"]),"failed_feeds":result["failed_feeds"]}
+        except Exception:
+            AuditLog.objects.create(actor=user,action="sync_assist.chief.sports_refresh_error",metadata={"reason":"Refresh failed; retry on next daily cycle."})
+            return {"processed":1,"failed":True}
+    return {"processed":0}
