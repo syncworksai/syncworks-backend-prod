@@ -23,8 +23,8 @@ ELEVENLABS_TTS_URL = (
     "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 )
 
-DEFAULT_HEALTH_VOICE_ID = "jQQiXyFE3PBHLF8znAIb"
-DEFAULT_HEALTH_VOICE_NAME = "Gemma - SYNC Fitness Coach"
+DEFAULT_HEALTH_VOICE_ID = "6fLd3vCll0LutxnciLI8"
+DEFAULT_HEALTH_VOICE_NAME = "Tiffany - SYNCFIT Coach"
 
 ALLOWED_EVENT_TYPES = {
     "voice_preview",
