@@ -483,7 +483,7 @@ class JarvisChiefExecutionView(APIView):
         rows = PersonalCalendarEvent.objects.filter(owner=request.user, status="ACTIVE", metadata__origin="SYDNEY_SPORTS", start_at__gte=timezone.now())
         return Response({"preferences": saved.metadata if saved else None, "upcoming_saved": rows.count(),
                          "events": list(rows.order_by("start_at").values("id","title","start_at")[:20]),
-                         "outlook_writeback": False, "automatic_refresh": False})
+                         "outlook_writeback": False, "automatic_refresh": sports_refresh_enabled(request.user), "last_refresh": AuditLog.objects.filter(actor=request.user,action=SPORTS_IMPORT_ACTION).order_by("-id").values_list("created_at",flat=True).first()})
 
     def post(self, request):
         if not _pilot(request.user):
@@ -494,7 +494,7 @@ class JarvisChiefExecutionView(APIView):
         from django.utils.dateparse import parse_datetime
         import requests
         command = request.data.get("command")
-        if command not in {"save_preferences","import_sports","complete_task"}:
+        if command not in {"save_preferences","import_sports","complete_task","enable_sports_refresh","disable_sports_refresh"}:
             return Response({"detail":"Unsupported command."},status=400)
         if command == "complete_task":
             title = request.data.get("title")
@@ -515,76 +515,96 @@ class JarvisChiefExecutionView(APIView):
             get_user_model().objects.select_for_update().get(pk=request.user.pk)
             if not AuditLog.objects.filter(actor=request.user,action=self.preference_action).exists():
                 AuditLog.objects.create(actor=request.user,action=self.preference_action,metadata=self.preferences)
+        if command in {"enable_sports_refresh","disable_sports_refresh"}:
+            enabled=command=="enable_sports_refresh"
+            AuditLog.objects.create(actor=request.user,action=SPORTS_AUTO_ACTION,metadata={"enabled":enabled})
+            return Response({"automatic_refresh":enabled,"interval_hours":24})
         if command=="save_preferences":
             return Response({"saved":True,"preferences":self.preferences})
-        # Initial coverage intentionally limited to four leagues; no paid API,
-        # arbitrary URL input, account credentials, or speculative fixtures.
-        feeds = [
-            ("Pittsburgh Steelers","football","nfl","23",180),
-            ("Alabama football","football","college-football","333",210),
-            ("Alabama men's basketball","basketball","mens-college-basketball","333",135),
-            ("Vanderbilt baseball","baseball","college-baseball","238",180),
-        ]
-        fixtures, failures, undated = {}, [], 0
-        now=timezone.now()
-        for label,sport,league,team,duration in feeds:
-            try:
-                response=requests.get(f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/teams/{team}/schedule",timeout=(4,8))
-                response.raise_for_status()
-                payload=response.json()
-                events=payload.get("events")
-                if not isinstance(events,list):
-                    raise ValueError("Invalid schedule")
-                for event in events[:250]:
-                    comps=event.get("competitions") or []
-                    if not comps: continue
-                    comp=comps[0]
-                    state=(comp.get("status") or event.get("status") or {}).get("type") or {}
-                    if state.get("completed") or state.get("state") in {"post","in"} or any(word in str(state.get("name","")).upper() for word in ("CANCEL","POSTPON","SUSPEND")):
-                        continue
-                    if comp.get("timeValid") is False or event.get("timeValid") is False or comp.get("date") is None:
-                        undated+=1
-                        continue
-                    start=parse_datetime(str(comp.get("date") or event.get("date") or ""))
-                    if start is None or timezone.is_naive(start) or start<now:
-                        continue
-                    eid=str(event.get("id") or "")
-                    if not eid.isdigit(): continue
-                    broadcasters=[]
-                    for broadcast in comp.get("broadcasts") or []:
-                        broadcasters.extend(str(v) for v in (broadcast.get("names") or []) if isinstance(v,str))
-                    for broadcast in comp.get("geoBroadcasts") or []:
-                        name=(broadcast.get("media") or {}).get("shortName")
-                        if name: broadcasters.append(str(name))
-                    tv=", ".join(dict.fromkeys(broadcasters))[:300]
-                    title=str(event.get("name") or event.get("shortName") or label)[:180]
-                    fixtures[f"{league}:{eid}"]={"title":title,"start_at":start,"end_at":start+timedelta(minutes=duration),"description":"TV: "+(tv or "Not yet published")+". End time is estimated. Regional blackout and odds data not verified.","metadata":{"origin":"SYDNEY_SPORTS","sport":sport,"league":league,"team":label,"busy":True,"fixed":True,"estimated_end":True,"tv":tv,"source_provider":"ESPN","source_event_id":eid,"deep_link":"/calendar"}}
-            except (requests.RequestException,ValueError,TypeError,AttributeError):
-                failures.append(label)
-        created,updated,unchanged,conflicts=[],[],[],[]
-        with transaction.atomic():
-            get_user_model().objects.select_for_update().get(pk=request.user.pk)
-            for key,values in fixtures.items():
-                row=PersonalCalendarEvent.objects.filter(owner=request.user,source="SYNC",external_calendar_id="sydney-sports",external_event_id=key).first()
-                if row and row.status!="ACTIVE":
+        return Response(import_sydney_sports(request.user))
+
+
+SPORTS_AUTO_ACTION = "sync_assist.chief.sports_auto.v1"
+SPORTS_IMPORT_ACTION = "sync_assist.chief.sports_import"
+
+def sports_refresh_enabled(user):
+    row=AuditLog.objects.filter(actor=user,action=SPORTS_AUTO_ACTION).order_by("-id").first()
+    return bool(row and (row.metadata or {}).get("enabled") is True)
+
+def import_sydney_sports(user):
+    from django.contrib.auth import get_user_model
+    from personal_calendar.models import PersonalCalendarEvent, PersonalCalendarEventAudit
+    from datetime import timedelta
+    from django.utils.dateparse import parse_datetime
+    import requests
+    # Initial coverage intentionally limited to four leagues; no paid API,
+    # arbitrary URL input, account credentials, or speculative fixtures.
+    feeds = [
+        ("Pittsburgh Steelers","football","nfl","23",180),
+        ("Alabama football","football","college-football","333",210),
+        ("Alabama men's basketball","basketball","mens-college-basketball","333",135),
+        ("Vanderbilt baseball","baseball","college-baseball","238",180),
+    ]
+    fixtures, failures, undated = {}, [], 0
+    now=timezone.now()
+    for label,sport,league,team,duration in feeds:
+        try:
+            response=requests.get(f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/teams/{team}/schedule",timeout=(2,4))
+            response.raise_for_status()
+            payload=response.json()
+            events=payload.get("events")
+            if not isinstance(events,list):
+                raise ValueError("Invalid schedule")
+            for event in events[:250]:
+                comps=event.get("competitions") or []
+                if not comps: continue
+                comp=comps[0]
+                state=(comp.get("status") or event.get("status") or {}).get("type") or {}
+                if state.get("completed") or state.get("state") in {"post","in"} or any(word in str(state.get("name","")).upper() for word in ("CANCEL","POSTPON","SUSPEND")):
                     continue
-                if row:
-                    changes={k:v for k,v in values.items() if getattr(row,k)!=v}
-                    if changes:
-                        for k,v in changes.items(): setattr(row,k,v)
-                        row.save(update_fields=[*changes,"updated_at"])
-                        updated.append(row.pk)
-                        PersonalCalendarEventAudit.objects.create(event=row,actor=request.user,action="UPDATED",changes={"origin":"SYDNEY_SPORTS","fields":list(changes)})
-                    else: unchanged.append(row.pk)
-                else:
-                    row=PersonalCalendarEvent.objects.create(owner=request.user,source="SYNC",external_calendar_id="sydney-sports",external_event_id=key,created_by_sync=True,reminder_minutes=15,**values)
-                    created.append(row.pk)
-                    PersonalCalendarEventAudit.objects.create(event=row,actor=request.user,action="CREATED",changes={"origin":"SYDNEY_SPORTS"})
-                overlaps=PersonalCalendarEvent.objects.filter(owner=request.user,status="ACTIVE",start_at__lt=row.end_at,end_at__gt=row.start_at).exclude(pk=row.pk).exclude(metadata__entity_type__in=["TASK","PROJECT"])
-                for other in overlaps[:10]:
-                    conflicts.append({"game":row.title,"with":other.title,"event_id":row.pk})
-            receipt=AuditLog.objects.create(actor=request.user,action="sync_assist.chief.sports_import",metadata={"created_ids":created,"updated_ids":updated,"unchanged_ids":unchanged,"failed_feeds":failures})
-        return Response({"receipt_id":receipt.pk,"created_ids":created,"updated_ids":updated,"unchanged_ids":unchanged,"failed_feeds":failures,"undated_skipped":undated,"conflicts":conflicts[:30],"conflict_count":len(conflicts),"coverage":"NFL, Alabama football and men's basketball, Vanderbilt baseball only; remaining Alabama sports not connected","outlook_writeback":False,"automatic_refresh":False,"email_sent":False})
+                if comp.get("timeValid") is False or event.get("timeValid") is False or comp.get("date") is None:
+                    undated+=1
+                    continue
+                start=parse_datetime(str(comp.get("date") or event.get("date") or ""))
+                if start is None or timezone.is_naive(start) or start<now:
+                    continue
+                eid=str(event.get("id") or "")
+                if not eid.isdigit(): continue
+                broadcasters=[]
+                for broadcast in comp.get("broadcasts") or []:
+                    broadcasters.extend(str(v) for v in (broadcast.get("names") or []) if isinstance(v,str))
+                for broadcast in comp.get("geoBroadcasts") or []:
+                    name=(broadcast.get("media") or {}).get("shortName")
+                    if name: broadcasters.append(str(name))
+                tv=", ".join(dict.fromkeys(broadcasters))[:300]
+                title=str(event.get("name") or event.get("shortName") or label)[:180]
+                fixtures[f"{league}:{eid}"]={"title":title,"start_at":start,"end_at":start+timedelta(minutes=duration),"description":"TV: "+(tv or "Not yet published")+". End time is estimated. Regional blackout and odds data not verified.","metadata":{"origin":"SYDNEY_SPORTS","sport":sport,"league":league,"team":label,"busy":True,"fixed":True,"estimated_end":True,"tv":tv,"source_provider":"ESPN","source_event_id":eid,"deep_link":"/calendar"}}
+        except (requests.RequestException,ValueError,TypeError,AttributeError):
+            failures.append(label)
+    created,updated,unchanged,conflicts=[],[],[],[]
+    with transaction.atomic():
+        get_user_model().objects.select_for_update().get(pk=user.pk)
+        for key,values in fixtures.items():
+            row=PersonalCalendarEvent.objects.filter(owner=request.user,source="SYNC",external_calendar_id="sydney-sports",external_event_id=key).first()
+            if row and row.status!="ACTIVE":
+                continue
+            if row:
+                changes={k:v for k,v in values.items() if getattr(row,k)!=v}
+                if changes:
+                    for k,v in changes.items(): setattr(row,k,v)
+                    row.save(update_fields=[*changes,"updated_at"])
+                    updated.append(row.pk)
+                    PersonalCalendarEventAudit.objects.create(event=row,actor=request.user,action="UPDATED",changes={"origin":"SYDNEY_SPORTS","fields":list(changes)})
+                else: unchanged.append(row.pk)
+            else:
+                row=PersonalCalendarEvent.objects.create(owner=request.user,source="SYNC",external_calendar_id="sydney-sports",external_event_id=key,created_by_sync=True,reminder_minutes=15,**values)
+                created.append(row.pk)
+                PersonalCalendarEventAudit.objects.create(event=row,actor=request.user,action="CREATED",changes={"origin":"SYDNEY_SPORTS"})
+            overlaps=PersonalCalendarEvent.objects.filter(owner=request.user,status="ACTIVE",start_at__lt=row.end_at,end_at__gt=row.start_at).exclude(pk=row.pk).exclude(metadata__entity_type__in=["TASK","PROJECT"])
+            for other in overlaps[:10]:
+                conflicts.append({"game":row.title,"with":other.title,"event_id":row.pk})
+        receipt=AuditLog.objects.create(actor=request.user,action="sync_assist.chief.sports_import",metadata={"created_ids":created,"updated_ids":updated,"unchanged_ids":unchanged,"failed_feeds":failures})
+    return {"receipt_id":receipt.pk,"created_ids":created,"updated_ids":updated,"unchanged_ids":unchanged,"failed_feeds":failures,"undated_skipped":undated,"conflicts":conflicts[:30],"conflict_count":len(conflicts),"coverage":"NFL, Alabama football and men's basketball, Vanderbilt baseball only; remaining Alabama sports not connected","outlook_writeback":False,"automatic_refresh":sports_refresh_enabled(user),"email_sent":False}
 
 
 class JarvisChiefAgentView(APIView):
