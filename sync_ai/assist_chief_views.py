@@ -686,6 +686,8 @@ class JarvisChiefAgentView(APIView):
         records=PersonalCalendarEvent.objects.filter(owner=request.user,status="ACTIVE")
         tasks=records.filter(metadata__entity_type="TASK").filter(Q(metadata__task_status="OPEN")|Q(metadata__task_status__isnull=True))
         upcoming=records.filter(start_at__gte=now).exclude(metadata__entity_type__in=["TASK","PROJECT"]).order_by("start_at")
+        if request.query_params.get("view")=="responsibilities":
+            return Response({"responsibilities":[sports_monitor_status(request.user)],"notice":"Only the sports monitor has a registered recurring handler. Other monitoring objectives are not yet executable."})
         if request.query_params.get("view")=="conversations":
             return Response({"conversations":self._conversations(request.user)})
         return Response({"history":self._history(request.user),"open_task_count":tasks.count(),
