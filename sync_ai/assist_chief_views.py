@@ -599,6 +599,21 @@ class JarvisChiefAgentView(APIView):
         if reset: rows=rows.filter(id__gt=reset.pk)
         return [r.metadata for r in reversed(list(rows.order_by("-id")[:12]))]
 
+    def _conversations(self,user):
+        reset=AuditLog.objects.filter(actor=user,action=self.reset_action).order_by("-id").first()
+        rows=AuditLog.objects.filter(actor=user,action=self.memory_action)
+        if reset: rows=rows.filter(id__gt=reset.pk)
+        groups={}
+        for row in reversed(list(rows.order_by("-id")[:240])):
+            data=row.metadata or {}
+            key=data.get("conversation_id") or "legacy"
+            if key not in groups:
+                groups[key]={"id":key,"title":str(data.get("question") or "Conversation")[:90],"turns":[],"updated_at":""}
+            groups[key]["turns"].append({"question":data.get("question",""),"answer":data.get("answer","")})
+            groups[key]["updated_at"]=row.created_at.isoformat()
+        return sorted(groups.values(),key=lambda g:g["updated_at"],reverse=True)[:30]
+
+
     def get(self,request):
         if not _pilot(request.user):
             return Response({"detail":"Private pilot only."},status=403)
@@ -608,6 +623,8 @@ class JarvisChiefAgentView(APIView):
         records=PersonalCalendarEvent.objects.filter(owner=request.user,status="ACTIVE")
         tasks=records.filter(metadata__entity_type="TASK").filter(Q(metadata__task_status="OPEN")|Q(metadata__task_status__isnull=True))
         upcoming=records.filter(start_at__gte=now).exclude(metadata__entity_type__in=["TASK","PROJECT"]).order_by("start_at")
+        if request.query_params.get("view")=="conversations":
+            return Response({"conversations":self._conversations(request.user)})
         return Response({"history":self._history(request.user),"open_task_count":tasks.count(),
             "tasks":list(tasks.order_by("start_at").values("id","title")[:12]),
             "upcoming":list(upcoming.values("id","title","start_at")[:8])})
@@ -624,6 +641,12 @@ class JarvisChiefAgentView(APIView):
             return Response({"detail":"Unsupported memory action."},status=400)
         question=request.data.get("question")
         answer=request.data.get("answer")
+        from uuid import UUID
+        raw_id=request.data.get("conversation_id")
+        try: conversation_id=str(UUID(str(raw_id))) if raw_id else "legacy"
+        except (ValueError,TypeError,AttributeError):
+            return Response({"detail":"Invalid conversation identifier."},status=400)
+
         if not isinstance(question,str) or not isinstance(answer,str) or not question.strip() or not answer.strip():
             return Response({"detail":"A conversation turn is required."},status=400)
         # Explicitly opt-in conversation memory; avoid persisting likely credentials.
@@ -632,7 +655,7 @@ class JarvisChiefAgentView(APIView):
             return Response({"saved":False,"reason":"Potential credential omitted."})
         with transaction.atomic():
             get_user_model().objects.select_for_update().get(pk=request.user.pk)
-            row=AuditLog.objects.create(actor=request.user,action=self.memory_action,metadata={"question":question[:1000],"answer":answer[:1200],"recorded_at":timezone.now().isoformat(),"source":"conversation_not_verified"})
+            row=AuditLog.objects.create(actor=request.user,action=self.memory_action,metadata={"conversation_id":conversation_id,"question":question[:1000],"answer":answer[:1200],"recorded_at":timezone.now().isoformat(),"source":"conversation_not_verified"})
         return Response({"saved":True,"receipt_id":row.pk})
 
 
