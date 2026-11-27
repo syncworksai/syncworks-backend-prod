@@ -16,6 +16,7 @@ from .assist_pilot_views import _pilot
 
 CREATED="sync_assist.assignment.created"
 REVIEWED="sync_assist.assignment.reviewed"
+AUDITED="sync_assist.assignment.qa_receipt"
 ROLES={"CHIEF_OF_STAFF","SALES_MANAGER","MARKETING_MANAGER","RESEARCH_ANALYST","FINANCE_MANAGER","BUSINESS_MANAGER","CUSTOMER_SERVICE","PROPERTY_MANAGER","EXECUTIVE_ASSISTANT","TECHNOLOGY_RESEARCH","QUALITY_ASSURANCE"}
 KINDS={"TICKET","SUPPORT","TASK","JOB"}
 MAX_ITEMS=150
@@ -79,16 +80,19 @@ def _suggest(ticket):
 
 def _snapshot(user):
     states={}
-    for event in AuditLog.objects.filter(actor=user,action__in=[CREATED,REVIEWED]).order_by("id"):
+    for event in AuditLog.objects.filter(actor=user,action__in=[CREATED,REVIEWED,AUDITED]).order_by("id"):
         data=event.metadata or {}
         key=str(data.get("assignment_id") or "")
         if event.action==CREATED and key:
             states[key]={**data,"state":"AWAITING_REVIEW","created_at":event.created_at.isoformat()}
+        elif event.action==AUDITED and key in states:
+            states[key]["audit_receipt"]={**data,"recorded_at":event.created_at.isoformat()}
+            if states[key]["state"]!="ARCHIVED": states[key]["state"]="AWAITING_REVIEW"
         elif event.action==REVIEWED and key in states:
             states[key]["state"]=data.get("state","AWAITING_REVIEW")
             states[key]["updated_at"]=event.created_at.isoformat()
     return {"assignments":list(reversed(list(states.values())))[:MAX_ITEMS],
-            "execution_mode":"REVIEW_ONLY",
+            "execution_mode":"BOUNDED_QA_AND_REVIEW",
             "notice":"Suggestions are informational. No auto-dispatch, payment, email or external AI call is performed."}
 
 class SyncAssistAssignmentsView(APIView):
@@ -209,6 +213,7 @@ class SyncAssistEmployeeWorkView(APIView):
                 "ticket_status": current_status,
                 "status_changed_since_review": bool(live_ticket and old_status != current_status),
                 "recommendation_is_historical": True,
+                "audit_receipt": item.get("audit_receipt"),
             })
         return Response({
             "role": role,
@@ -218,3 +223,40 @@ class SyncAssistEmployeeWorkView(APIView):
             "execution_mode": "REVIEW_ONLY",
             "notice": "Assignment suggestions are historical review notes, not fresh scheduling or payment instructions. No actions were run.",
         })
+
+
+def execute_dashboard_audit(user):
+    """Read-only audit of owner calendar/task data, not a browser or visual UI test."""
+    import re
+    from datetime import timedelta
+    from personal_calendar.models import PersonalCalendarEvent
+    from django.db.models import Count, Q, F
+    if not _pilot(user):
+        return {"executed":False,"reason":"not_authorized"}
+    with transaction.atomic():
+        get_user_model().objects.select_for_update().get(pk=user.pk)
+        item=next((a for a in _snapshot(user)["assignments"]
+            if a.get("role")=="QUALITY_ASSURANCE" and a.get("kind")=="TASK"
+            and a.get("state") in {"AWAITING_REVIEW","ACKNOWLEDGED"}
+            and not a.get("audit_receipt")
+            and re.fullmatch(r"audit (?:the )?(?:syncworks )?customer dashboard[.!]?",str(a.get("description","")),re.I)),None)
+        if not item:
+            return {"executed":False,"reason":"No eligible unaudited customer dashboard assignment."}
+        records=PersonalCalendarEvent.objects.filter(owner=user,status="ACTIVE")
+        tasks=records.filter(metadata__entity_type="TASK")
+        now=timezone.now()
+        missing_title=records.filter(Q(title="")|Q(title__isnull=True)).count()
+        invalid_duration=records.filter(end_at__lt=F("start_at")).count()
+        duplicates=list(records.filter(metadata__sydney_action_key__isnull=False).values("metadata__sydney_action_key").annotate(n=Count("id")).filter(n__gt=1)[:20])
+        sports_duplicates=list(records.filter(external_calendar_id="sydney-sports").values("external_event_id").annotate(n=Count("id")).filter(n__gt=1)[:20])
+        stale_workouts=tasks.filter(metadata__task_status="OPEN",metadata__sydney_action_key__startswith="health:plan:",start_at__lt=now-timedelta(days=2)).count()
+        findings=[
+            {"check":"Blank record titles","count":missing_title},
+            {"check":"End before start","count":invalid_duration},
+            {"check":"Duplicate Sydney action keys (up to 20 groups)","count":len(duplicates)},
+            {"check":"Duplicate sports IDs (up to 20 groups)","count":len(sports_duplicates)},
+            {"check":"Open workout planning tasks older than two days","count":stale_workouts},
+        ]
+        receipt={"assignment_id":item["assignment_id"],"receipt_id":str(uuid4()),"scope":"Owner-scoped calendar and task data integrity only","findings":findings,"records_checked":records.count(),"tasks_checked":tasks.count(),"requires_review":True,"browser_tested":False,"external_actions":0,"model_calls":0}
+        AuditLog.objects.create(actor=user,action=AUDITED,metadata=receipt)
+        return {"executed":True,**receipt}
