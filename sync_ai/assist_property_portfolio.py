@@ -149,7 +149,7 @@ def build_property_review(user):
             },
             "requires_review": any(r.get("status") == "CORRESPONDENCE_REVIEW_ONLY" for r in history),
             "detail_url": f"/pm/properties/{prop.id}?tab=correspondence",
-        }
+        })
     return {
         "generated_at": timezone.now().isoformat(),
         "properties": properties, "portfolio_property_count": len(owned),
@@ -163,4 +163,4 @@ def build_property_review(user):
         "coverage_note": "Only explicitly reviewed correspondence is included; no automated inbox scan was run.",
         "caveat": "No receivable, inspection, lease renewal or work-order conclusion can be inferred from reviewed email subjects alone.",
         "mail_sent": False, "ledger_modified": False,
-    })
+    }
