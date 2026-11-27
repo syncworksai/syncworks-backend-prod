@@ -225,7 +225,7 @@ class SyncAssistEmployeeWorkView(APIView):
         })
 
 
-def execute_dashboard_audit(user):
+def execute_dashboard_audit(user, automatic=False):
     """Read-only audit of owner calendar/task data, not a browser or visual UI test."""
     import re
     from datetime import timedelta
@@ -239,6 +239,7 @@ def execute_dashboard_audit(user):
             if a.get("role")=="QUALITY_ASSURANCE" and a.get("kind")=="TASK"
             and a.get("state") in {"AWAITING_REVIEW","ACKNOWLEDGED"}
             and not a.get("audit_receipt")
+            and (not automatic or bool(a.get("sydney_request_id")))
             and re.fullmatch(r"audit (?:the )?(?:syncworks )?customer dashboard[.!]?",str(a.get("description","")),re.I)),None)
         if not item:
             return {"executed":False,"reason":"No eligible unaudited customer dashboard assignment."}
@@ -260,3 +261,20 @@ def execute_dashboard_audit(user):
         receipt={"assignment_id":item["assignment_id"],"receipt_id":str(uuid4()),"scope":"Owner-scoped calendar and task data integrity only","findings":findings,"records_checked":records.count(),"tasks_checked":tasks.count(),"requires_review":True,"browser_tested":False,"external_actions":0,"model_calls":0}
         AuditLog.objects.create(actor=user,action=AUDITED,metadata=receipt)
         return {"executed":True,**receipt}
+
+
+def run_pending_sydney_qa():
+    """Run one explicitly delegated, allowlisted read-only audit per runtime call."""
+    import logging
+    logger=logging.getLogger(__name__)
+    ids=AuditLog.objects.filter(action=CREATED,metadata__role="QUALITY_ASSURANCE",metadata__sydney_request_id__isnull=False).order_by().values_list("actor_id",flat=True).distinct()[:20]
+    for user in get_user_model().objects.filter(pk__in=list(ids),is_active=True):
+        if not _pilot(user): continue
+        try:
+            result=execute_dashboard_audit(user,automatic=True)
+        except Exception:
+            logger.exception("Sydney QA worker failed")
+            return {"processed":0,"failed":True}
+        if result.get("executed"):
+            return {"processed":1,"receipt_id":result["receipt_id"]}
+    return {"processed":0}
