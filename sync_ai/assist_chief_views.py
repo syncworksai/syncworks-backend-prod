@@ -501,6 +501,16 @@ class JarvisChiefExecutionView(APIView):
         from django.utils.dateparse import parse_datetime
         import requests
         command = request.data.get("command")
+        if command in {"enable_daily_review","disable_daily_review"}:
+            enabled=command=="enable_daily_review"
+            with transaction.atomic():
+                get_user_model().objects.select_for_update().get(pk=request.user.pk)
+                if daily_monitor_status(request.user)["enabled"] != enabled:
+                    AuditLog.objects.create(actor=request.user,action=DAILY_MONITOR_ACTION,metadata={"enabled":enabled})
+            return Response(daily_monitor_status(request.user))
+        if command=="list_responsibilities":
+            return Response({"responsibilities":[sports_monitor_status(request.user),daily_monitor_status(request.user)]})
+
         if command not in {"save_preferences","import_sports","complete_task","enable_sports_refresh","disable_sports_refresh"}:
             return Response({"detail":"Unsupported command."},status=400)
         if command == "complete_task":
