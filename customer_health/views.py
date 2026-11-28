@@ -18,6 +18,7 @@ from user_accounts.models.customer_settings import CustomerSettings
 
 from .models import CustomerHealthFeedback, CustomerHealthProfile
 from .calendar_sync import sync_health_plan_to_calendar
+from personal_calendar.models import PersonalCalendarEvent
 from .serializers import (
     CustomerHealthFeedbackSerializer,
     CustomerHealthProfileSerializer,
@@ -498,10 +499,23 @@ class CustomerHealthMeView(APIView):
         )
 
         serializer.is_valid(raise_exception=True)
-        profile = serializer.save()
-        sync_health_plan_to_calendar(profile)
-
-        return Response(serializer.data)
+        with transaction.atomic():
+            profile = serializer.save()
+            sync_health_plan_to_calendar(profile)
+            profile.refresh_from_db()
+            plan = profile.snapshot_json.get("week_plan", []) if isinstance(profile.snapshot_json, dict) else []
+            expected = {str(item["id"]) for item in plan if isinstance(item, dict) and item.get("id") and item.get("ymd") and (item.get("workout_name") or item.get("name")) and str(item.get("status", "")).lower() not in {"skipped", "rescheduled", "cancelled", "canceled"} } if isinstance(plan, list) else set()
+            events = list(PersonalCalendarEvent.objects.filter(
+                owner=request.user, source=PersonalCalendarEvent.Source.HEALTH,
+                external_calendar_id="health-plan", status=PersonalCalendarEvent.Status.ACTIVE,
+                external_event_id__in=expected,
+            ).values("id", "external_event_id", "title", "start_at", "end_at"))
+            verified = {event["external_event_id"] for event in events}
+            receipt = {"saved": True, "expected_workout_ids": sorted(expected),
+                       "verified_workout_ids": sorted(verified),
+                       "missing_workout_ids": sorted(expected - verified),
+                       "calendar_events": events, "calendar_verified": expected == verified}
+        return Response({**CustomerHealthProfileSerializer(profile).data, "execution_receipt": receipt})
 
 
 class NutritionAnalyzeView(APIView):
