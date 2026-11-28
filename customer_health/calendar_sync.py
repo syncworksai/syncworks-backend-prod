@@ -76,3 +76,44 @@ def sync_health_plan_to_calendar(profile) -> None:
         source=PersonalCalendarEvent.Source.HEALTH,
         external_calendar_id="health-plan",
     ).exclude(external_event_id__in=active_ids).update(status=PersonalCalendarEvent.Status.ARCHIVED)
+
+
+def sync_nutrition_plan_to_calendar(profile) -> list[str]:
+    snapshot = profile.snapshot_json if isinstance(profile.snapshot_json, dict) else {}
+    plan = snapshot.get("nutrition_week_plan")
+    if not isinstance(plan, list):
+        return []
+    data = profile.profile_json if isinstance(profile.profile_json, dict) else {}
+    zone_name = str(data.get("timezone") or snapshot.get("timezone") or "America/Chicago")
+    try:
+        zone = ZoneInfo(zone_name)
+    except ZoneInfoNotFoundError:
+        zone_name = "America/Chicago"
+        zone = ZoneInfo(zone_name)
+    ids = []
+    for meal in plan:
+        if not isinstance(meal, dict) or not meal.get("id") or not meal.get("name"):
+            continue
+        if str(meal.get("status", "")).lower() in {"cancelled", "canceled", "skipped"}:
+            continue
+        try:
+            start = datetime.fromisoformat(f"{meal['ymd']}T{_time_value(meal.get('time'))}:00").replace(tzinfo=zone)
+        except (KeyError, TypeError, ValueError):
+            continue
+        meal_id = str(meal["id"])[:255]
+        PersonalCalendarEvent.objects.update_or_create(
+            owner=profile.user, source=PersonalCalendarEvent.Source.HEALTH,
+            external_calendar_id="nutrition-plan", external_event_id=meal_id,
+            defaults={"title": ("Nutrition: " + str(meal.get("meal_type", "Meal")).title())[:180],
+                      "description": str(meal["name"]), "start_at": start,
+                      "end_at": start + timedelta(minutes=30), "timezone": zone_name,
+                      "status": PersonalCalendarEvent.Status.ACTIVE,
+                      "metadata": {"calendar_owner": "HEALTH", "meal_plan_id": meal_id,
+                                   "activity_type": "nutrition", "deep_link": "/customer/health"}},
+        )
+        ids.append(meal_id)
+    PersonalCalendarEvent.objects.filter(owner=profile.user, source=PersonalCalendarEvent.Source.HEALTH,
+        external_calendar_id="nutrition-plan").exclude(external_event_id__in=ids).update(status=PersonalCalendarEvent.Status.ARCHIVED)
+    return list(PersonalCalendarEvent.objects.filter(owner=profile.user, source=PersonalCalendarEvent.Source.HEALTH,
+        external_calendar_id="nutrition-plan", status=PersonalCalendarEvent.Status.ACTIVE,
+        external_event_id__in=ids).values_list("external_event_id", flat=True))
